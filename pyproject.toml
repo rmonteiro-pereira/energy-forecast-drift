@@ -10,6 +10,8 @@ dependencies = [
     "pyarrow>=16.0",
     "numpy>=1.26",
     "python-dotenv>=1.0",
+    "lightgbm>=4.3",
+    "mlflow>=2.16",
 ]
 
 [project.optional-dependencies]

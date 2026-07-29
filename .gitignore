@@ -6,6 +6,13 @@
 # --- data lake (never committed; metrics/ is the only published artifact area) ---
 data/
 
+# --- MLflow: local run state, never a published artifact ---
+mlruns/
+mlartifacts/
+*.db
+*.sqlite
+*.sqlite3
+
 # --- python ---
 __pycache__/
 *.py[cod]
