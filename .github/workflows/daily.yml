@@ -1,0 +1,101 @@
+# ============================================================================
+# INACTIVE UNTIL PUBLISHED — this is the M5 "live" cron, drafted early on
+# purpose (the value of the project is drift accumulating over weeks, so the
+# clock should start as soon as the repo goes public).
+#
+# It cannot run yet because:
+#   1. the repo has no remote — nothing to schedule against;
+#   2. EIA_API_KEY does not exist yet, so the demand leg would skip.
+#      See docs/BLOCKED.md.
+#
+# TO ACTIVATE (in order):
+#   [ ] push the repo to GitHub (public => Actions minutes are free)
+#   [ ] Settings > Secrets and variables > Actions > New repository secret:
+#         EIA_API_KEY = <your key from eia.gov/opendata/register.php>
+#   [ ] Settings > Actions > General > Workflow permissions:
+#         "Read and write permissions"  (needed to commit metrics/)
+#   [ ] uncomment the `schedule:` block below
+#   [ ] run it once manually via the Actions tab to confirm it is green
+#
+# Note on scheduling: the EIA publishes ~2x/day, so a single daily run is the
+# right cadence to start. 06:20 UTC is deliberately off the hour — GitHub
+# throttles the top-of-hour stampede and delays those runs.
+# ============================================================================
+
+name: daily (ingest -> score -> commit metrics)
+
+on:
+  # schedule:
+  #   - cron: "20 6 * * *"
+  workflow_dispatch:
+    inputs:
+      full_refresh:
+        description: "Re-pull the whole backfill window instead of the delta"
+        type: boolean
+        default: false
+
+permissions:
+  contents: write # to commit metrics/ back to the repo
+
+concurrency:
+  # Never let two runs write metrics/ at the same time.
+  group: daily-pipeline
+  cancel-in-progress: false
+
+jobs:
+  pipeline:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - name: Install dependencies
+        run: uv sync --extra dev --frozen
+
+      # ------------------------------------------------------------------
+      # The lake itself is gitignored, so a runner starts empty and would
+      # re-backfill 2 years every day. Caching it keeps each run to a delta
+      # pull, which is the whole point of incremental + idempotent ingestion.
+      # ------------------------------------------------------------------
+      - name: Restore data lake
+        uses: actions/cache/restore@v4
+        with:
+          path: data
+          key: lake-${{ github.run_id }}
+          restore-keys: lake-
+
+      - name: Ingest delta (EIA demand + Open-Meteo temperature)
+        env:
+          EIA_API_KEY: ${{ secrets.EIA_API_KEY }}
+        run: uv run python -m ingest ${{ inputs.full_refresh && '--full-refresh' || '' }}
+
+      - name: Save data lake
+        uses: actions/cache/save@v4
+        if: always()
+        with:
+          path: data
+          key: lake-${{ github.run_id }}
+
+      # M1: "score" is the seasonal-naive backtest. From M2 this step also
+      # scores the champion model and, from M4, computes drift.
+      - name: Score (walk-forward backtest)
+        run: uv run python -m models --source real
+
+      - name: Commit refreshed metrics
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          # Explicit paths only: raw parquet must never reach the repo.
+          git add metrics/baseline.json metrics/baseline_table.md
+          if git diff --staged --quiet; then
+            echo "metrics unchanged — nothing to commit"
+          else
+            git commit -m "chore(metrics): daily refresh [skip ci]"
+            git push
+          fi
