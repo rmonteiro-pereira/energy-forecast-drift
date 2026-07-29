@@ -1,0 +1,139 @@
+{
+  "milestone": "M5",
+  "generated_at_utc": "2026-07-29T04:49:49+00:00",
+  "is_real": false,
+  "warning": "These numbers come from a SEEDED SYNTHETIC FIXTURE, not from EIA data. They are a smoke test of the pipeline, NOT a benchmark. The real baseline is pending the EIA API key \u2014 see docs/BLOCKED.md.",
+  "status": "ok",
+  "error": null,
+  "started_at_utc": "2026-07-29T04:49:43+00:00",
+  "seconds": 5.87,
+  "entrypoint": "python -m pipeline.daily",
+  "verdict": {
+    "should_retrain": false,
+    "action": "watch",
+    "severity": "alert",
+    "rule": "R4_watch",
+    "rationale": "Drift is visible but no rule for retraining is satisfied: a single distribution signal without measured degradation is a leading indicator, not proof of harm. Recorded and charted, not acted on.",
+    "signals": {
+      "feature": "alert",
+      "target": "ok",
+      "prediction": "ok",
+      "performance": "ok"
+    },
+    "reasons": [
+      {
+        "drift_type": "feature",
+        "severity": "alert",
+        "metric": "psi",
+        "value": 6.655401,
+        "threshold": 0.2,
+        "detail": "8/14 feature(s) above PSI 0.2; worst is demand_roll_min_24h at PSI 6.655"
+      }
+    ],
+    "evaluated_at_utc": "2026-07-29T04:49:46+00:00"
+  },
+  "served_model": {
+    "source": "mlflow_registry",
+    "uri": "models:/energy-demand-forecaster@champion",
+    "registered_model": "energy-demand-forecaster",
+    "alias": "champion",
+    "version": "2",
+    "run_id": "46f32658b4774ea5bb8c7e0119bd20d3",
+    "trained_on_real_data": false,
+    "data_kind": "synthetic_fixture",
+    "train_data_end_utc": "2026-07-28T00:00:00+00:00",
+    "n_features": 20
+  },
+  "monitoring_model": {
+    "source": "fitted_on_train_window",
+    "reason": "the champion was trained on data up to 2026-07-28T00:00:00+00:00, which covers the reference window opening at 2026-06-16T00:00:00+00:00; scoring it there would be in-sample",
+    "champion_version": "2",
+    "champion_train_data_end_utc": "2026-07-28T00:00:00+00:00"
+  },
+  "steps": [
+    {
+      "step": "ingest",
+      "status": "skipped",
+      "seconds": 0.0,
+      "reason": "--skip-ingest"
+    },
+    {
+      "step": "features",
+      "status": "degraded",
+      "seconds": 0.0,
+      "kind": "synthetic_fixture",
+      "is_real": false,
+      "panel": {
+        "rows": 4801,
+        "start_utc": "2026-01-09T00:00:00+00:00",
+        "end_utc": "2026-07-28T00:00:00+00:00",
+        "missing_demand_hours": 0,
+        "has_temperature": true
+      }
+    },
+    {
+      "step": "score",
+      "status": "ok",
+      "seconds": 2.79,
+      "served_model": {
+        "source": "mlflow_registry",
+        "uri": "models:/energy-demand-forecaster@champion",
+        "registered_model": "energy-demand-forecaster",
+        "alias": "champion",
+        "version": "2",
+        "run_id": "46f32658b4774ea5bb8c7e0119bd20d3",
+        "trained_on_real_data": false,
+        "data_kind": "synthetic_fixture",
+        "train_data_end_utc": "2026-07-28T00:00:00+00:00",
+        "n_features": 20
+      },
+      "monitoring_model": {
+        "source": "fitted_on_train_window",
+        "reason": "the champion was trained on data up to 2026-07-28T00:00:00+00:00, which covers the reference window opening at 2026-06-16T00:00:00+00:00; scoring it there would be in-sample",
+        "champion_version": "2",
+        "champion_train_data_end_utc": "2026-07-28T00:00:00+00:00"
+      },
+      "rows": {
+        "train": 12440,
+        "reference": 2688,
+        "current": 1312
+      }
+    },
+    {
+      "step": "forecast",
+      "status": "ok",
+      "seconds": 0.27,
+      "history_points": 505,
+      "forward_points": 24
+    },
+    {
+      "step": "monitor",
+      "status": "ok",
+      "seconds": 0.15,
+      "severity": "ok",
+      "days": 43
+    },
+    {
+      "step": "drift",
+      "status": "ok",
+      "seconds": 2.66,
+      "action": "watch",
+      "should_retrain": false,
+      "signals": {
+        "feature": "alert",
+        "target": "ok",
+        "prediction": "ok",
+        "performance": "ok"
+      }
+    }
+  ],
+  "artifacts": [
+    "drift.json",
+    "drift_summary.md",
+    "forecast.json",
+    "forecast_vs_actual.png",
+    "monitor.json",
+    "pipeline.json",
+    "rolling_mae.png"
+  ]
+}

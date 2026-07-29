@@ -65,6 +65,38 @@ jobs:
             exit 1
           fi
 
+      # M5: the whole loop through the entrypoint the daily cron calls — ingest
+      # is skipped so CI touches no network. This is the step that would catch a
+      # broken chain before the cron does.
+      - name: Daily pipeline smoke test (synthetic fixture, no network)
+        run: |
+          uv run python -m pipeline.daily --source synthetic --skip-ingest \
+            --no-evidently --train-stride-hours 12 --num-boost-round 60 \
+            --out-dir /tmp/smoke/metrics
+          test -s /tmp/smoke/metrics/forecast.json
+          test -s /tmp/smoke/metrics/monitor.json
+          test -s /tmp/smoke/metrics/drift.json
+          test -s /tmp/smoke/metrics/forecast_vs_actual.png
+
+      # The workflow's own fail-fast. Without a key and with --require-eia-key
+      # the entrypoint must exit 2 and write nothing at all.
+      - name: The daily entrypoint must refuse to publish without a key
+        env:
+          EIA_API_KEY: ""
+        run: |
+          set +e
+          uv run python -m pipeline.daily --require-eia-key --out-dir /tmp/nokey
+          code=$?
+          set -e
+          if [ "$code" != "2" ]; then
+            echo "::error::--require-eia-key should exit 2 without a key, got $code"
+            exit 1
+          fi
+          if [ -d /tmp/nokey ] && [ -n "$(ls -A /tmp/nokey)" ]; then
+            echo "::error::the pipeline wrote artifacts despite refusing to run"
+            exit 1
+          fi
+
       - name: MLflow run state must never be committed
         run: |
           if git ls-files | grep -E '^(mlruns|mlartifacts)/|\.db$'; then

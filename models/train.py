@@ -241,6 +241,12 @@ def _track(
                 "protocol": "walk-forward",
                 "data_kind": provenance["kind"],
                 "is_real": str(provenance["is_real"]).lower(),
+                # The last hour this model was allowed to learn from. The drift
+                # monitor reads it to decide whether it may score a window with
+                # this model at all: a window inside the training span would be
+                # in-sample, and in-sample errors make every later window look
+                # degraded forever. See pipeline.daily.
+                "train_data_end_utc": panel.index.max().isoformat(),
             }
         )
         mlflow.log_params(

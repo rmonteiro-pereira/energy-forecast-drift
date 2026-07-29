@@ -1,12 +1,11 @@
 # ============================================================================
-# INACTIVE UNTIL PUBLISHED — this is the M5 "live" cron, drafted early on
-# purpose (the value of the project is drift accumulating over weeks, so the
-# clock should start as soon as the repo goes public).
+# INACTIVE UNTIL PUBLISHED — this is the M5 "live" cron. It is drafted early on
+# purpose: the value of the project is drift accumulating over weeks, so the
+# clock should start the moment the repo goes public.
 #
 # It cannot run yet because:
 #   1. the repo has no remote — nothing to schedule against;
-#   2. EIA_API_KEY does not exist yet, so the demand leg would skip.
-#      See docs/BLOCKED.md.
+#   2. EIA_API_KEY does not exist yet. See docs/BLOCKED.md.
 #
 # TO ACTIVATE (in order):
 #   [ ] push the repo to GitHub (public => Actions minutes are free)
@@ -20,9 +19,14 @@
 # Note on scheduling: the EIA publishes ~2x/day, so a single daily run is the
 # right cadence to start. 06:20 UTC is deliberately off the hour — GitHub
 # throttles the top-of-hour stampede and delays those runs.
+#
+# Note on shape: this workflow runs ONE command. Everything the cron does —
+# ingest, features, score, the rolling-MAE monitor, drift, the artifacts and
+# the PNGs — lives in `pipeline/daily.py`, which has tests and runs locally.
+# A pipeline spread across ten YAML steps can only be debugged by pushing.
 # ============================================================================
 
-name: daily (ingest -> score -> commit metrics)
+name: daily (ingest -> score -> drift -> commit metrics)
 
 on:
   # schedule:
@@ -45,7 +49,7 @@ concurrency:
 jobs:
   pipeline:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 30
 
     steps:
       - uses: actions/checkout@v4
@@ -62,37 +66,71 @@ jobs:
       # The lake itself is gitignored, so a runner starts empty and would
       # re-backfill 2 years every day. Caching it keeps each run to a delta
       # pull, which is the whole point of incremental + idempotent ingestion.
+      # The MLflow registry is cached alongside it: without it every run
+      # would have no champion to serve and would refit from scratch.
       # ------------------------------------------------------------------
-      - name: Restore data lake
+      - name: Restore data lake and MLflow state
         uses: actions/cache/restore@v4
         with:
-          path: data
+          path: |
+            data
+            mlflow.db
+            mlruns
           key: lake-${{ github.run_id }}
           restore-keys: lake-
 
-      - name: Ingest delta (EIA demand + Open-Meteo temperature)
+      # ------------------------------------------------------------------
+      # The whole loop, in one command that also runs on a laptop.
+      #
+      # `--require-eia-key` makes a missing key a hard failure with printed
+      # instructions instead of a silent fall back to the synthetic fixture.
+      # A cron that quietly publishes fixture numbers as if they were data is
+      # the single worst failure mode this repo has, so it is made impossible
+      # here rather than warned about.
+      # ------------------------------------------------------------------
+      - name: Run the daily pipeline
         env:
           EIA_API_KEY: ${{ secrets.EIA_API_KEY }}
-        run: uv run python -m ingest ${{ inputs.full_refresh && '--full-refresh' || '' }}
+        run: |
+          uv run python -m pipeline.daily \
+            --require-eia-key \
+            --source real \
+            ${{ inputs.full_refresh && '--full-refresh' || '' }}
 
-      - name: Save data lake
+      - name: Save data lake and MLflow state
         uses: actions/cache/save@v4
         if: always()
         with:
-          path: data
+          path: |
+            data
+            mlflow.db
+            mlruns
           key: lake-${{ github.run_id }}
 
-      # M1: "score" is the seasonal-naive backtest. From M2 this step also
-      # scores the champion model and, from M4, computes drift.
-      - name: Score (walk-forward backtest)
-        run: uv run python -m models --source real
+      # The run record is written even when the pipeline fails, so upload it
+      # either way — a red run that explains itself is worth keeping.
+      - name: Upload the run record
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: pipeline-run-${{ github.run_id }}
+          path: metrics/pipeline.json
+          if-no-files-found: warn
 
       - name: Commit refreshed metrics
         run: |
           git config user.name  "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          # Explicit paths only: raw parquet must never reach the repo.
-          git add metrics/baseline.json metrics/baseline_table.md
+          # Explicit paths only: raw parquet and MLflow state must never reach
+          # the repo, and a wildcard `git add metrics/` would be one .gitignore
+          # mistake away from committing the lake.
+          git add metrics/forecast.json \
+                  metrics/monitor.json \
+                  metrics/drift.json \
+                  metrics/drift_summary.md \
+                  metrics/pipeline.json \
+                  metrics/forecast_vs_actual.png \
+                  metrics/rolling_mae.png
           if git diff --staged --quiet; then
             echo "metrics unchanged — nothing to commit"
           else
