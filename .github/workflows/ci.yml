@@ -1,0 +1,47 @@
+# Tests + the no-leakage guarantees. Runs on every push once the repo is
+# published; it needs no secrets and touches no network (the API clients are
+# exercised against httpx.MockTransport).
+
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - name: Install dependencies
+        run: uv sync --extra dev --frozen
+
+      - name: Lint
+        run: |
+          uv run ruff check .
+          uv run ruff format --check .
+
+      - name: Tests
+        run: uv run pytest -v
+
+      # Smoke test the whole M1 path on the synthetic fixture, so a broken
+      # backtest is caught here rather than by the daily cron.
+      - name: Backtest smoke test (synthetic fixture)
+        run: uv run python -m models --source synthetic --weeks 2 --out-dir /tmp/smoke
+
+      - name: Metrics must stay small (this folder is the published artifact)
+        run: |
+          if find metrics -type f -size +5M | grep -q .; then
+            echo "::error::a file in metrics/ exceeds 5MB"
+            exit 1
+          fi
