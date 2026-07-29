@@ -475,6 +475,14 @@ class DailyPipeline:
             "monitoring_model": self.monitor_model_info,
             "served_model": self.model_info,
             "drift": {name: section.as_dict() for name, section in self.sections.items()},
+            "timeline": {
+                "description": (
+                    "PSI of a trailing 7-day window against the whole reference window, "
+                    "one point per day — the drift-over-time series the dashboard plots"
+                ),
+                "trailing_window_days": 7,
+                "points": detectors.drift_timeline(self.windows, self.thresholds),
+            },
             "evidently": evidently,
         }
         self._write(DRIFT_JSON, payload)

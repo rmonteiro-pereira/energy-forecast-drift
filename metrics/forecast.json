@@ -1,6 +1,6 @@
 {
   "milestone": "M5",
-  "generated_at_utc": "2026-07-29T04:49:46+00:00",
+  "generated_at_utc": "2026-07-29T04:54:24+00:00",
   "is_real": false,
   "warning": "These numbers come from a SEEDED SYNTHETIC FIXTURE, not from EIA data. They are a smoke test of the pipeline, NOT a benchmark. The real baseline is pending the EIA API key \u2014 see docs/BLOCKED.md.",
   "units": "MWh",

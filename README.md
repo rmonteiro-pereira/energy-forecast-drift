@@ -8,11 +8,13 @@ cron pulls fresh demand and weather every day, re-scores the model against the
 actuals that arrive, and commits the metrics back to the repo — so drift
 accumulates in public, week after week, and can be pointed at.
 
-> **Milestone status: M0 → M5 complete** — ingestion, the seasonal-naive
+> **Milestone status: M0 → M6 complete** — ingestion, the seasonal-naive
 > baseline, a global LightGBM scored on the same walk-forward folds, MLflow
 > tracking + registry, the four-way drift suite with its retrain trigger, the
-> single-command daily pipeline behind `daily.yml`, and a FastAPI `/forecast`
-> served from the registry alias. The dashboard is M6.
+> single-command daily pipeline behind `daily.yml`, a FastAPI `/forecast` served
+> from the registry alias, and the React dashboard over `metrics/`. The only
+> thing left is real data — see **[docs/writeup.md](docs/writeup.md)** for what
+> is real, what is fixture, and what a real drift episode will look like.
 
 ---
 
@@ -71,7 +73,7 @@ flowchart LR
 
     CRON["daily.yml<br/><i>inert until published</i>"] --> PIPE["pipeline.daily<br/>one entrypoint,<br/>six stages"]
     PIPE --> ING
-    METRICS -.->|"M6"| DASH["React dashboard<br/><i>not built yet</i>"]
+    METRICS --> DASH["dashboard/<br/>Vite · React · ECharts<br/>banner driven by <b>is_real</b>"]
 ```
 
 ## Quickstart
@@ -92,6 +94,8 @@ uv run python -m pipeline.daily  # M5: the whole loop -> metrics/*.json + PNGs
 uv run python -m serving         # M5: FastAPI on :8000, /forecast from @champion
 
 uv run pytest -v               # 157 tests, no network
+
+cd dashboard && npm ci && npm run build   # M6: static dist/ over metrics/*.json
 ```
 
 `python -m models.train` is the train/eval entrypoint: it scores **both** models
@@ -411,6 +415,42 @@ panel *and* the model are real. A champion trained on the fixture keeps the
 response synthetic even after real demand lands in the lake — until it is
 retrained, the forecast is still a fixture artifact.
 
+## M6 — the dashboard
+
+```bash
+cd dashboard && npm ci && npm run build && npx serve dist
+```
+
+Vite + React + ECharts, static output, **no deploy step in this repo**. The build
+copies `metrics/*.json` into `dist/data/`, so the result is a directory that can
+be served from anywhere — and because the data is *fetched* rather than inlined
+into the bundle, pointing it at a fresher `metrics/` needs no rebuild.
+
+**The banner is driven by the flag, not by copy.** While `"is_real"` is false,
+the page leads with a red banner saying plainly that every number came from a
+seeded synthetic fixture and quoting the artifact's own `warning` field. There is
+no prop or build flag that overrides it — `ProvenanceBanner` branches on the
+artifact and nothing else. Flip `is_real` on a *copy* of `dist/data` and the same
+code renders a green "Live data" banner instead; `dashboard/README.md` has the
+one-liner. That is the whole demonstration: same code, same numbers, the banner
+follows the data.
+
+Four charts, and the decisions behind them:
+
+| Chart | Reads | Why it looks like that |
+|---|---|---|
+| Forecast vs actual | `forecast.json` | The live forecast keeps the *forecast* hue and is separated by dash pattern and a shaded band — it is the same entity as the scored forecast, it just has no actual yet. A third colour would claim otherwise. |
+| Drift over time | `drift.json` → `timeline` | Feature PSI runs ~100× the target and prediction PSI. **Not** a second y-axis — that would invent an alignment between two scales. A log axis keeps one scale, with the warn/alert thresholds drawn so the eye reads distance from the line. |
+| Rolling forecast error | `monitor.json` | Daily MAE as thin bars, rolling mean as a line, reference level and retrain line as dashed rules, current window shaded. One axis, two marks. |
+| Feature drift right now | `drift.json` | **Dots, not bars.** PSI spans three orders of magnitude here, so the axis has to be logarithmic — and a bar's length on a log axis is measured from the axis minimum, which would make a feature at PSI 0.02 look two thirds as drifted as one at 6.7. A dot encodes value by position, which survives any scale. |
+
+Every chart has a table-view toggle, because a tooltip must never be the only path
+to a value. The palette lives once in `styles.css` as CSS custom properties and is
+read back at render time — ECharts needs literal hex, and a second copy in
+TypeScript would drift from the stylesheet, most visibly in dark mode. Three
+categorical slots plus a reserved status palette, validated in both modes against
+both surfaces (worst all-pairs CVD ΔE 9.2 light / 9.4 dark).
+
 ## Design decisions worth defending
 
 **Ingestion is incremental *and* idempotent.** The store de-duplicates on
@@ -492,26 +532,33 @@ pipeline/   daily.py  the six-stage entrypoint daily.yml calls
 serving/    app.py    FastAPI /forecast /model /health from the registry alias
 metrics/    committed artifacts: baseline.json, model.json, drift.json,
             forecast.json, monitor.json, pipeline.json + tables + 2 PNGs
+dashboard/  Vite + React + ECharts over metrics/*.json — no deploy step here
 tests/      157 tests: idempotency, leakage (backtest *and* features), retries,
             secret redaction, registry wiring, PSI/KS vs scipy, drift injection,
             the daily chain, the HTTP surface, and both workflow YAMLs
-docs/       spec.md (original brief), BLOCKED.md (the EIA key)
+docs/       writeup.md (real vs fixture, three bugs, what a real episode looks
+            like) · spec.md (original brief) · BLOCKED.md (the EIA key)
 .github/    ci.yml (active on publish) · daily.yml (inert until published)
 mlruns/     MLflow artifacts — gitignored, never committed (nor is mlflow.db)
 reports/    Evidently HTML (~5MB of inlined plotly) — gitignored
 ```
 
-## Next milestones
+## What is left
 
-| | | |
-|---|---|---|
-| **M6** | Dashboard | React + ECharts reading `metrics/`, with a banner driven by `is_real` |
-| **M7** | Writeup | one real drift episode, captured end to end |
-| **gated** | Real data | the EIA key: backfill, then every artifact flips to `is_real: true` |
+Exactly one thing: **real data.**
 
-Full brief: [`docs/spec.md`](docs/spec.md).
+| | |
+|---|---|
+| **gated on the EIA key** | backfill two years of hourly PJM demand, re-run `models.train` and `pipeline.daily` against it, and every artifact flips to `"is_real": true` — the banner turns green, the watermark disappears, and the numbers in this README become results |
+| **then** | uncomment the `schedule:` block in `daily.yml` and let drift accumulate in public |
+| **M7** | one real drift episode, captured end to end, appended to the writeup |
+
+The five steps to unblock it are in [`docs/BLOCKED.md`](docs/BLOCKED.md); what
+will change, and what a real episode is predicted to look like, is in
+[`docs/writeup.md`](docs/writeup.md). Full brief:
+[`docs/spec.md`](docs/spec.md).
 
 ## Cost
 
 R$0. EIA and Open-Meteo are free, GitHub Actions is free on a public repo, and
-the future dashboard is static hosting. No server stays on.
+the dashboard is a static `dist/`. No server stays on.

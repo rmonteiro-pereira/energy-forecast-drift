@@ -438,6 +438,79 @@ def performance_drift(
     )
 
 
+# ---------------------------------------------------------------------------
+# drift over time
+# ---------------------------------------------------------------------------
+def drift_timeline(
+    windows: ScoredWindows,
+    thresholds: DriftThresholds = DEFAULT_THRESHOLDS,
+    window_days: int = 7,
+) -> list[dict]:
+    """PSI of a trailing window against the reference, one point per day.
+
+    The four sections above answer "is there drift *now*". This answers "since
+    when", which is the question anyone actually asks when an alarm goes off —
+    and it is the series the dashboard plots.
+
+    Each point compares the trailing `window_days` ending that day against the
+    **whole reference window**. Points that fall inside the reference are
+    therefore partly self-comparisons, and that is deliberate: they show what
+    normal PSI wobble looks like for this data, which is the only way to read
+    whether a later excursion is large. The alternative — starting the series at
+    the current window — gives a chart with no baseline on it.
+    """
+    frame = pd.concat(
+        [windows.reference.assign(window="reference"), windows.current.assign(window="current")],
+        ignore_index=True,
+    )
+    if frame.empty:
+        return []
+
+    targets = pd.DatetimeIndex(frame["target_utc"])
+    frame = frame.assign(day=targets.floor("D"))
+
+    reference = windows.reference
+    scored_features = [
+        name
+        for name in build_mod.FEATURE_COLUMNS
+        if name not in DETERMINISTIC_COLUMNS and name in reference.columns
+    ]
+
+    span = pd.Timedelta(days=window_days)
+    points: list[dict] = []
+
+    for day, rows in frame.groupby("day", sort=True):
+        trailing = frame[(frame["day"] <= day) & (frame["day"] > day - span)]
+        if len(trailing) < thresholds.min_samples:
+            continue
+
+        def psi(column: str, trailing: pd.DataFrame = trailing) -> float:
+            return stats.population_stability_index(
+                reference[column],
+                trailing[column],
+                bins=thresholds.psi_bins,
+                max_categorical_levels=thresholds.max_categorical_levels,
+            ).psi
+
+        feature_psis = {name: psi(name) for name in scored_features}
+        worst = max(feature_psis, key=feature_psis.get) if feature_psis else None
+
+        points.append(
+            {
+                "day_utc": pd.Timestamp(day).isoformat(),
+                "window": rows["window"].iloc[-1],
+                "n": len(trailing),
+                "target_psi": round(psi(build_mod.TARGET_COLUMN), 6),
+                "prediction_psi": round(psi(PREDICTION_COLUMN), 6),
+                "feature_max_psi": round(float(feature_psis[worst]), 6) if worst else None,
+                "feature_max_column": worst,
+                "mae": round(float(rows[ABS_ERROR_COLUMN].mean()), 2),
+            }
+        )
+
+    return points
+
+
 def run_all(
     windows: ScoredWindows,
     thresholds: DriftThresholds = DEFAULT_THRESHOLDS,

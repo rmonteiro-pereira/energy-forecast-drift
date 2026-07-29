@@ -124,6 +124,14 @@ def build_artifact(
         "windows": windows.split,
         "data": {**provenance, "panel": panel_mod.describe_panel(panel)},
         "drift": {name: section.as_dict() for name, section in sections.items()},
+        "timeline": {
+            "description": (
+                "PSI of a trailing 7-day window against the whole reference window, "
+                "one point per day — the 'since when' the four sections above cannot answer"
+            ),
+            "trailing_window_days": 7,
+            "points": detectors.drift_timeline(windows, thresholds),
+        },
         "evidently": evidently,
     }
     if shift is not None:
