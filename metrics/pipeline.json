@@ -1,12 +1,12 @@
 {
   "milestone": "M5",
-  "generated_at_utc": "2026-07-29T04:49:49+00:00",
+  "generated_at_utc": "2026-07-29T04:54:29+00:00",
   "is_real": false,
   "warning": "These numbers come from a SEEDED SYNTHETIC FIXTURE, not from EIA data. They are a smoke test of the pipeline, NOT a benchmark. The real baseline is pending the EIA API key \u2014 see docs/BLOCKED.md.",
   "status": "ok",
   "error": null,
-  "started_at_utc": "2026-07-29T04:49:43+00:00",
-  "seconds": 5.87,
+  "started_at_utc": "2026-07-29T04:54:19+00:00",
+  "seconds": 10.02,
   "entrypoint": "python -m pipeline.daily",
   "verdict": {
     "should_retrain": false,
@@ -30,7 +30,7 @@
         "detail": "8/14 feature(s) above PSI 0.2; worst is demand_roll_min_24h at PSI 6.655"
       }
     ],
-    "evaluated_at_utc": "2026-07-29T04:49:46+00:00"
+    "evaluated_at_utc": "2026-07-29T04:54:25+00:00"
   },
   "served_model": {
     "source": "mlflow_registry",
@@ -74,7 +74,7 @@
     {
       "step": "score",
       "status": "ok",
-      "seconds": 2.79,
+      "seconds": 4.91,
       "served_model": {
         "source": "mlflow_registry",
         "uri": "models:/energy-demand-forecaster@champion",
@@ -102,21 +102,21 @@
     {
       "step": "forecast",
       "status": "ok",
-      "seconds": 0.27,
+      "seconds": 0.34,
       "history_points": 505,
       "forward_points": 24
     },
     {
       "step": "monitor",
       "status": "ok",
-      "seconds": 0.15,
+      "seconds": 0.22,
       "severity": "ok",
       "days": 43
     },
     {
       "step": "drift",
       "status": "ok",
-      "seconds": 2.66,
+      "seconds": 4.54,
       "action": "watch",
       "should_retrain": false,
       "signals": {
