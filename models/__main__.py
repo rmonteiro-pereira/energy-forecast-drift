@@ -21,19 +21,14 @@ from pathlib import Path
 import pandas as pd
 
 from features import panel as panel_mod
-from ingest.config import BALANCING_AUTHORITY, METRICS_DIR, WEATHER_SITE
+from ingest.config import METRICS_DIR
 from models import backtest, baseline, fixtures
+from models.data import SYNTHETIC_WARNING, NoRealDataError, resolve_panel
 
 log = logging.getLogger("models")
 
 BASELINE_JSON = METRICS_DIR / "baseline.json"
 BASELINE_TABLE = METRICS_DIR / "baseline_table.md"
-
-SYNTHETIC_WARNING = (
-    "These numbers come from a SEEDED SYNTHETIC FIXTURE, not from EIA data. "
-    "They are a smoke test of the pipeline, NOT a benchmark. The real baseline "
-    "is pending the EIA API key — see docs/BLOCKED.md."
-)
 
 
 def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
@@ -66,40 +61,10 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 
 def resolve_series(args: argparse.Namespace) -> tuple[pd.DataFrame, dict]:
     """Return the modelling panel plus a provenance block for the artifact."""
-    if args.source in ("auto", "real"):
-        demand = panel_mod.load_demand(BALANCING_AUTHORITY)
-        if not demand.empty:
-            temperature = panel_mod.load_temperature(WEATHER_SITE)
-            panel = panel_mod.build_panel(demand, temperature)
-            provenance = {
-                "kind": "eia_api_v2",
-                "is_real": True,
-                "respondent": BALANCING_AUTHORITY,
-                "weather_site": WEATHER_SITE,
-                "warning": None,
-            }
-            return panel, provenance
-
-        if args.source == "real":
-            raise SystemExit(
-                "No EIA demand in the lake. Run `uv run python -m ingest` first "
-                "(requires EIA_API_KEY — see docs/BLOCKED.md), or use "
-                "`--source synthetic`."
-            )
-        log.warning("No real demand in the lake -> falling back to the SYNTHETIC fixture.")
-
-    frame = fixtures.synthetic_series(days=args.fixture_days)
-    panel = panel_mod.build_panel(frame["demand_mwh"], frame["temperature_c"])
-    provenance = {
-        "kind": "synthetic_fixture",
-        "is_real": False,
-        "generator": "models.fixtures.synthetic_series",
-        "seed": fixtures.SEED,
-        "anchor_end_utc": fixtures.ANCHOR_END.isoformat(),
-        "label": fixtures.SYNTHETIC_LABEL,
-        "warning": SYNTHETIC_WARNING,
-    }
-    return panel, provenance
+    try:
+        return resolve_panel(args.source, fixture_days=args.fixture_days)
+    except NoRealDataError as exc:
+        raise SystemExit(str(exc)) from exc
 
 
 def main(argv: list[str] | None = None) -> int:
