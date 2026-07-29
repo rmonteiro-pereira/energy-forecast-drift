@@ -1,0 +1,38 @@
+[project]
+name = "energy-forecast-drift"
+version = "0.1.0"
+description = "Hourly electricity demand forecasting with live drift monitoring (EIA + Open-Meteo)"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "httpx>=0.27",
+    "pandas>=2.2",
+    "pyarrow>=16.0",
+    "numpy>=1.26",
+    "python-dotenv>=1.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0",
+    "ruff>=0.6",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["ingest", "features", "models"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+# Pinned explicitly so a ruff upgrade cannot silently change what CI enforces.
+select = ["E", "F", "I", "UP", "B", "SIM", "RUF"]

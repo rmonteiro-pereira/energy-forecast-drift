@@ -1,0 +1,24 @@
+# --- secrets ---
+.env
+.env.*
+!.env.example
+
+# --- data lake (never committed; metrics/ is the only published artifact area) ---
+data/
+
+# --- python ---
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+.pytest_cache/
+.ruff_cache/
+.ipynb_checkpoints/
+# uv.lock IS committed on purpose: reproducible CI runs.
+
+# --- os / editors ---
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
