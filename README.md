@@ -8,10 +8,10 @@ cron pulls fresh demand and weather every day, re-scores the model against the
 actuals that arrive, and commits the metrics back to the repo — so drift
 accumulates in public, week after week, and can be pointed at.
 
-> **Milestone status: M0 → M3 complete** — ingestion, the seasonal-naive
-> baseline, a global LightGBM scored on the same walk-forward folds, and MLflow
-> tracking + registry. Drift detection, the live cron and the dashboard are
-> M4–M6 and are deliberately not built yet.
+> **Milestone status: M0 → M4 complete** — ingestion, the seasonal-naive
+> baseline, a global LightGBM scored on the same walk-forward folds, MLflow
+> tracking + registry, and the four-way drift suite with its retrain trigger.
+> The live cron, serving and the dashboard are M5–M6.
 
 ---
 
@@ -23,10 +23,11 @@ baseline MAE**.
 
 - The Open-Meteo leg is **real and running today** — no key needed.
 - The EIA client is **finished, not stubbed**, and runs the moment a key lands.
-- `metrics/baseline.json` and `metrics/model.json` currently hold numbers
-  computed from a **seeded synthetic fixture**. They prove the pipeline executes
-  end to end. They are **not a result and must not be quoted** — including the
-  LightGBM-vs-baseline delta below. Every artifact says so (`"is_real": false`).
+- `metrics/baseline.json`, `metrics/model.json` and `metrics/drift.json`
+  currently hold numbers computed from a **seeded synthetic fixture**. They
+  prove the pipeline executes end to end. They are **not a result and must not
+  be quoted** — including the LightGBM-vs-baseline delta and the drift verdict
+  below. Every artifact says so (`"is_real": false`).
 
 Four steps to unblock it: **[docs/BLOCKED.md](docs/BLOCKED.md)**.
 
@@ -46,6 +47,7 @@ flowchart LR
         LAKE[("data/<br/>partitioned parquet<br/><i>gitignored</i>")]
         FEAT["features/<br/>gapless panel + calendar<br/>+ origin-stamped design matrix"]
         MODEL["models/<br/>seasonal naive · LightGBM<br/>walk-forward backtest"]
+        DRIFT["drift/<br/>own PSI + KS · Evidently<br/>feature · target · prediction<br/>· performance"]
     end
 
     subgraph mlops["MLflow · local, gitignored"]
@@ -54,13 +56,16 @@ flowchart LR
     end
 
     subgraph published["Committed artifacts"]
-        METRICS["metrics/baseline.json<br/>metrics/model.json<br/>MAE + MAPE per horizon"]
+        METRICS["metrics/baseline.json<br/>metrics/model.json<br/>metrics/drift.json<br/>MAE + MAPE + drift verdict"]
     end
 
     EIA --> ING
     OM --> ING
     ING --> LAKE --> FEAT --> MODEL --> METRICS
+    FEAT --> DRIFT --> METRICS
+    MODEL --> DRIFT
     MODEL --> TRACK --> REG
+    DRIFT -->|"retrain verdict"| REG
     REG -.->|"M6"| SERVE["FastAPI /forecast<br/><i>not built yet</i>"]
 
     CRON["daily.yml<br/><i>drafted · inactive</i>"] -.->|"M5"| ING
@@ -79,7 +84,8 @@ uv run python -m ingest        # re-run: reports +0 new rows — it is idempoten
 
 uv run python -m models        # M1: walk-forward backtest -> metrics/baseline.json
 uv run python -m models.train  # M2+M3: LightGBM vs baseline, MLflow -> metrics/model.json
-uv run pytest -v               # 62 tests, no network
+uv run python -m drift.run --out metrics/drift.json   # M4: 4 drift types + retrain verdict
+uv run pytest -v               # 115 tests, no network
 ```
 
 `python -m models.train` is the train/eval entrypoint: it scores **both** models
@@ -99,6 +105,10 @@ Useful flags:
 | `python -m models.train --no-mlflow` | score only; skip tracking and the registry |
 | `python -m models.train --train-stride-hours 24` | fewer training origins → faster, weaker |
 | `python -m models.train --num-boost-round 600` | longer boosting |
+| `python -m drift.run --simulate-shift 12000` | inject a +12 GW level shift to watch the alarm fire (artifact is stamped `simulated_shift`) |
+| `python -m drift.run --fail-on-retrain` | exit 1 when the verdict says retrain — usable as a CI gate |
+| `python -m drift.run --no-evidently` | skip the optional second opinion |
+| `DRIFT_PSI_ALERT=0.15 python -m drift.run` | override any threshold from the environment |
 | `uv run mlflow ui --backend-store-uri sqlite:///mlflow.db` | browse the runs and the registry |
 
 ## Baseline (M1)
@@ -204,6 +214,100 @@ uv run mlflow ui --backend-store-uri sqlite:///mlflow.db   # runs, metrics, regi
 local run state. `metrics/*.json` stays the only published surface, and CI fails
 the build if either ever gets tracked.
 
+## M4 — the drift suite
+
+```bash
+uv run python -m drift.run --out metrics/drift.json
+```
+
+**Four drift types, because they are four different failure modes.** A monitor
+that implements one of them is the usual mistake:
+
+| | what moved | needs labels? | what it tells you |
+|---|---|---|---|
+| **feature** | the model inputs | no | leading indicator — the model may still be fine, if it does not lean on the column that moved |
+| **target** | the observed demand | yes | a load regime the model was never fitted on |
+| **prediction** | the model output | **no** | the *earliest* signal available in production, because actuals arrive late |
+| **performance** | rolling MAE / MAPE | yes | the only signal that proves harm — and the slowest |
+
+**PSI and KS are written out, not imported.** Both are three-line formulas
+wrapped in a lot of edge cases, and the edge cases are where drift detectors
+quietly stop working: a bin with zero reference mass makes PSI infinite, a
+constant column collapses the quantile edges, a 30-row window makes everything
+significant. `drift/stats.py` names and handles each one — reference-defined
+bin edges open at ±∞ so out-of-range values are not silently dropped, shares
+floored rather than skipped (a bin that lost all its mass is the event PSI
+exists to catch), category binning for low-cardinality columns. The tests check
+`D` against `scipy.stats.ks_2samp` to 1e-12 and the p-value to 1e-3, plus a
+two-bin PSI worked out on paper.
+
+**Evidently runs next to it, not instead of it.** It is an independent second
+opinion with its own tests and thresholds; a disagreement would mean a bug in
+our number. It is recorded in the artifact and **not** wired into the trigger,
+and it is an optional dependency — a missing Evidently produces
+`"status": "unavailable"`, never a failed pipeline.
+
+**Calendar features are reported but never vote.** A 28-day reference against a
+14-day current window necessarily spans different months, so `month` scores
+PSI ≈ 7 on every healthy run and `is_holiday` swings on the luck of the
+calendar. Letting deterministic functions of the timestamp drive the alarm
+would mean firing every single day. They stay in the artifact — useful for
+sanity-checking the window geometry — and are excluded from the verdict.
+
+**Both scored windows are out of sample.** The history is cut three ways —
+train / reference / current — and the booster is fitted on the train slice
+*only*. Scoring the reference window with a model fitted on it would make the
+reference errors flatteringly small and every later window look degraded
+forever.
+
+**The trigger is a policy, not a threshold.** Retraining on every PSI excursion
+means retraining constantly — and often on a window too short to have learned
+the new regime, producing a champion worse than the one it replaced. So:
+
+| rule | condition | verdict |
+|---|---|---|
+| **R1** | performance alerts | **retrain** — measured harm, nothing else needed |
+| **R2** | a distribution signal alerts *and* performance warns | **retrain** — cause plus visible effect |
+| **R3** | two or more distribution signals alert | **retrain** — a regime change, act before the errors confirm it |
+| **R4** | anything else non-`ok` | **watch** — charted, not acted on |
+| **R5** | all four `ok` | **healthy** |
+
+The verdict is a structure, never a bare bool: `should_retrain`, the rule that
+fired, every reason as a metric/threshold pair, and a per-signal map. A pipeline
+branches on one field; a human audits the rest.
+
+**The alarm is tested in both directions.** `drift/simulate.py` injects a shift
+of a stated size, and the tests assert the alarm fires on it — then run the
+identical code path on the untouched fixture and assert it does not. A detector
+that never fires is useless; one that always fires is worse, because it trains
+people to ignore it.
+
+<details>
+<summary><b>⚠️ SYNTHETIC — pipeline smoke test, NOT a result. Click to expand.</b></summary>
+
+On the fixture the current verdict is **WATCH**: feature drift alerts (the
+fixture carries a real annual cycle, so mid-June-vs-mid-July temperature and
+rolling-level features genuinely move), while target, prediction and
+performance stay quiet. That is exactly the case R4 exists for — a leading
+indicator with no measured harm behind it.
+
+Injecting a +12,000 MW level shift over the current window flips all four
+signals to `alert` and the verdict to **RETRAIN** under R1, with the reference
+MAE roughly tripling. Reproduce with `--simulate-shift 12000`; the artifact is
+stamped `simulated_shift` so a demo can never be mistaken for an observation.
+
+Full report: [`metrics/drift_summary.md`](metrics/drift_summary.md); machine
+readable [`metrics/drift.json`](metrics/drift.json).
+
+One honest caveat visible in that artifact: PSI is scale-free *relative to the
+reference spread*, so heavily smoothed features (`demand_roll_mean_168h`) show
+enormous PSI for level moves that are small in MW. Narrow reference bins make
+small absolute moves look catastrophic. That is a property of PSI, not a bug —
+it is why the section verdict uses the share of drifted columns rather than the
+maximum, and why a distribution alert alone does not retrain.
+
+</details>
+
 ## Design decisions worth defending
 
 **Ingestion is incremental *and* idempotent.** The store de-duplicates on
@@ -275,20 +379,25 @@ features/   panel.py  gapless hourly panel, weather join, calendar
 models/     baseline.py seasonal naive · lgbm.py global LightGBM
             backtest.py walk-forward protocol (shared by both models)
             tracking.py MLflow sqlite + registry · train.py the M2/M3 entrypoint
-metrics/    committed artifacts (baseline.json, model.json + their .md tables)
-tests/      62 tests: idempotency, leakage (backtest *and* features), retries,
-            secret redaction, registry wiring
+drift/      stats.py  own PSI + two-sample KS (no scipy at runtime)
+            windows.py train/reference/current split, both scored out of sample
+            detectors.py the four drift types · trigger.py the retrain policy
+            config.py every threshold · evidently_report.py second opinion
+            simulate.py injected shifts (tests + demo) · run.py the M4 entrypoint
+metrics/    committed artifacts (baseline.json, model.json, drift.json + tables)
+tests/      115 tests: idempotency, leakage (backtest *and* features), retries,
+            secret redaction, registry wiring, PSI/KS vs scipy, drift injection
 docs/       spec.md (original brief), BLOCKED.md (the EIA key)
 .github/    ci.yml (active on publish) · daily.yml (drafted, inactive)
 mlruns/     MLflow artifacts — gitignored, never committed (nor is mlflow.db)
+reports/    Evidently HTML (~5MB of inlined plotly) — gitignored
 ```
 
 ## Next milestones
 
 | | | |
 |---|---|---|
-| **M4** | Drift | feature / target / prediction / **performance** drift (PSI + KS), thresholds, retrain trigger |
-| **M5** | Live cron | activate `daily.yml`: ingest → score → commit `metrics/` |
+| **M5** | Live cron | activate `daily.yml`: ingest → score → drift → commit `metrics/` |
 | **M6** | Dashboard + serving | React reading `metrics/`, FastAPI `/forecast` loading `models:/energy-demand-forecaster@champion` |
 | **M7** | Writeup | one real drift episode, captured end to end |
 

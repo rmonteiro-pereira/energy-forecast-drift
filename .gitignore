@@ -6,6 +6,9 @@
 # --- data lake (never committed; metrics/ is the only published artifact area) ---
 data/
 
+# --- local reports (Evidently HTML is ~5MB of inlined plotly) ---
+reports/
+
 # --- MLflow: local run state, never a published artifact ---
 mlruns/
 mlartifacts/

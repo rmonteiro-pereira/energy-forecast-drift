@@ -45,6 +45,26 @@ jobs:
       - name: LightGBM + MLflow smoke test (synthetic fixture)
         run: uv run python -m models.train --source synthetic --weeks 2 --out-dir /tmp/smoke
 
+      # M4: the four detectors + the retrain verdict, on the same fixture.
+      # `--no-evidently` because the second opinion is an optional dependency
+      # and its HTML report is ~5MB — the unit suite covers it separately.
+      - name: Drift suite smoke test (synthetic fixture)
+        run: |
+          uv run python -m drift.run --source synthetic --no-evidently \
+            --train-stride-hours 12 --num-boost-round 60 --out /tmp/smoke/drift.json
+
+      # The alarm has to fire, not just run. An injected level shift must flip
+      # the verdict to `retrain`, which `--fail-on-retrain` turns into exit 1 —
+      # so this step passing means the detector went off.
+      - name: Drift alarm must fire on an injected shift
+        run: |
+          if uv run python -m drift.run --source synthetic --no-evidently \
+               --train-stride-hours 12 --num-boost-round 60 \
+               --simulate-shift 12000 --fail-on-retrain --out /tmp/smoke/drift_shift.json; then
+            echo "::error::a +12,000 MW injected level shift did NOT trigger a retrain verdict"
+            exit 1
+          fi
+
       - name: MLflow run state must never be committed
         run: |
           if git ls-files | grep -E '^(mlruns|mlartifacts)/|\.db$'; then
