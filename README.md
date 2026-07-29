@@ -8,9 +8,10 @@ cron pulls fresh demand and weather every day, re-scores the model against the
 actuals that arrive, and commits the metrics back to the repo — so drift
 accumulates in public, week after week, and can be pointed at.
 
-> **Milestone status: M0 + M1 complete** — ingestion and the seasonal-naive
-> baseline with a walk-forward backtest. LightGBM, MLflow, drift detection and
-> the dashboard are M2–M6 and are deliberately not built yet.
+> **Milestone status: M0 → M3 complete** — ingestion, the seasonal-naive
+> baseline, a global LightGBM scored on the same walk-forward folds, and MLflow
+> tracking + registry. Drift detection, the live cron and the dashboard are
+> M4–M6 and are deliberately not built yet.
 
 ---
 
@@ -22,10 +23,10 @@ baseline MAE**.
 
 - The Open-Meteo leg is **real and running today** — no key needed.
 - The EIA client is **finished, not stubbed**, and runs the moment a key lands.
-- `metrics/baseline.json` currently holds numbers computed from a **seeded
-  synthetic fixture**. They prove the pipeline executes end to end. They are
-  **not a result and must not be quoted.** Every artifact says so
-  (`"is_real": false`).
+- `metrics/baseline.json` and `metrics/model.json` currently hold numbers
+  computed from a **seeded synthetic fixture**. They prove the pipeline executes
+  end to end. They are **not a result and must not be quoted** — including the
+  LightGBM-vs-baseline delta below. Every artifact says so (`"is_real": false`).
 
 Four steps to unblock it: **[docs/BLOCKED.md](docs/BLOCKED.md)**.
 
@@ -43,17 +44,24 @@ flowchart LR
     subgraph pipeline["Local pipeline"]
         ING["ingest/<br/>incremental · idempotent"]
         LAKE[("data/<br/>partitioned parquet<br/><i>gitignored</i>")]
-        FEAT["features/<br/>gapless hourly panel<br/>+ calendar"]
-        MODEL["models/<br/>seasonal naive<br/>+ walk-forward backtest"]
+        FEAT["features/<br/>gapless panel + calendar<br/>+ origin-stamped design matrix"]
+        MODEL["models/<br/>seasonal naive · LightGBM<br/>walk-forward backtest"]
+    end
+
+    subgraph mlops["MLflow · local, gitignored"]
+        TRACK[("mlflow.db + mlruns/<br/>runs · params · metrics")]
+        REG["registry<br/><b>@champion</b>"]
     end
 
     subgraph published["Committed artifacts"]
-        METRICS["metrics/baseline.json<br/>MAE + MAPE per horizon"]
+        METRICS["metrics/baseline.json<br/>metrics/model.json<br/>MAE + MAPE per horizon"]
     end
 
     EIA --> ING
     OM --> ING
     ING --> LAKE --> FEAT --> MODEL --> METRICS
+    MODEL --> TRACK --> REG
+    REG -.->|"M6"| SERVE["FastAPI /forecast<br/><i>not built yet</i>"]
 
     CRON["daily.yml<br/><i>drafted · inactive</i>"] -.->|"M5"| ING
     METRICS -.->|"M6"| DASH["React dashboard<br/><i>not built yet</i>"]
@@ -69,9 +77,15 @@ cp .env.example .env           # then paste your EIA key (see docs/BLOCKED.md)
 uv run python -m ingest        # pull the delta from both sources
 uv run python -m ingest        # re-run: reports +0 new rows — it is idempotent
 
-uv run python -m models        # walk-forward backtest -> metrics/baseline.json
-uv run pytest -v               # 37 tests, no network
+uv run python -m models        # M1: walk-forward backtest -> metrics/baseline.json
+uv run python -m models.train  # M2+M3: LightGBM vs baseline, MLflow -> metrics/model.json
+uv run pytest -v               # 62 tests, no network
 ```
+
+`python -m models.train` is the train/eval entrypoint: it scores **both** models
+on the same folds, logs the run to MLflow, registers the refit LightGBM and
+writes `metrics/model.json` + `metrics/model_table.md`. It takes ~1 min on the
+fixture (56 refits), plus a one-off ~40 s the first time it creates `mlflow.db`.
 
 Useful flags:
 
@@ -82,6 +96,10 @@ Useful flags:
 | `python -m models --source real` | fail loudly instead of falling back to the fixture |
 | `python -m models --source synthetic` | force the fixture (what CI smoke-tests) |
 | `python -m models --weeks 12` | widen the backtest window |
+| `python -m models.train --no-mlflow` | score only; skip tracking and the registry |
+| `python -m models.train --train-stride-hours 24` | fewer training origins → faster, weaker |
+| `python -m models.train --num-boost-round 600` | longer boosting |
+| `uv run mlflow ui --backend-store-uri sqlite:///mlflow.db` | browse the runs and the registry |
 
 ## Baseline (M1)
 
@@ -114,9 +132,77 @@ Full per-horizon table: [`metrics/baseline_table.md`](metrics/baseline_table.md)
 
 </details>
 
-**This MAE is the number every future model must beat.** M2 (LightGBM with
-lags, calendar and temperature) is only worth shipping if it wins on the same
-folds, the same horizons and the same protocol.
+**This MAE is the number every future model must beat** — on the same folds,
+the same horizons and the same protocol. That is exactly how M2 is scored.
+
+## M2 — LightGBM, on the same folds
+
+**Model:** one **global, direct** LightGBM. A single booster covers all 24
+horizons with `horizon_h` as an input feature, rather than 24 separate models or
+a recursive one-step model fed its own output. Direct multi-horizon cannot
+compound its own error the way recursion does, and a global fit sees 24× more
+rows than a per-horizon fit — which matters when the history is months, not
+years.
+
+**Features (20)** — calendar (hour / day-of-week / month / weekend / US federal
+holiday), demand lags at 24 h, 48 h, 168 h and 336 h, the same-hour-of-week mean
+over four weeks, rolling mean/std/min/max of the last 24 h and 168 h, and the
+Open-Meteo temperature in the same two shapes.
+
+**Refit cadence:** the model is **retrained at every one of the 56 fold
+cutoffs**, on exactly the rows whose target hour had already happened at that
+instant. Fold 56's model never sees anything fold 1's model could not have seen.
+
+<details>
+<summary><b>⚠️ SYNTHETIC — pipeline smoke test, NOT a result. Click to expand.</b></summary>
+
+Fixture-derived, exactly like the baseline table above. The *delta* is not a
+benchmark either — it says the wiring works, nothing about PJM.
+
+| | MAE (MWh) | MAPE (%) |
+|---|---:|---:|
+| seasonal naive | 2,559 | 2.77 |
+| LightGBM | **2,181** | **2.38** |
+| delta | **−378 (−14.8%)** | −0.39 pp |
+
+LightGBM wins **23 of 24 horizons**. Full per-horizon comparison:
+[`metrics/model_table.md`](metrics/model_table.md); machine-readable
+[`metrics/model.json`](metrics/model.json).
+
+Top gain-based importances: `demand_lag_168h` (39%),
+`demand_same_hour_of_week_mean_4w` (20%), `demand_lag_48h` (7%),
+`demand_lag_336h` (7%), `demand_lag_24h` (6%), `temp_lag_168h` (5%) — i.e. the
+booster rediscovers the weekly seasonality the baseline hardcodes, and then adds
+temperature and the recent level on top. That is the shape you would want to
+see; on the fixture it is also the shape that was *put there*, so it confirms
+the plumbing rather than the physics.
+
+</details>
+
+## M3 — MLflow tracking + registry
+
+Every `models.train` run logs both models' per-horizon curves, the LightGBM
+hyper-parameters and the panel provenance to **MLflow on a sqlite backend**,
+then refits LightGBM on the whole panel and pushes it to the **model registry**.
+
+sqlite rather than the default `./mlruns` file store for one reason: the file
+store has **no registry**. The registry is the point of M3 — serving (M6) asks
+for `models:/energy-demand-forecaster@champion` instead of a hardcoded path, so
+promoting a model is a registry operation, not a deploy.
+
+**Promotion is gated, not automatic.** The alias `@champion` is only moved onto
+the new version when it actually beat the seasonal naive on the shared folds;
+otherwise it lands as `@challenger` and the artifact records
+`"beats_baseline": false`. A model that loses to a one-line baseline does not
+get to be champion.
+
+```bash
+uv run mlflow ui --backend-store-uri sqlite:///mlflow.db   # runs, metrics, registry
+```
+
+`mlflow.db` and `mlruns/` are **gitignored and never committed** — they are
+local run state. `metrics/*.json` stays the only published surface, and CI fails
+the build if either ever gets tracked.
 
 ## Design decisions worth defending
 
@@ -127,13 +213,39 @@ re-pulls a 3-day tail so revisions *overwrite* stale numbers instead of being
 ignored forever. Partition files are written to a temp path and moved into
 place, so an interrupted run cannot leave a corrupt parquet.
 
-**No temporal leakage, enforced in two places.** `backtest._history_before`
-slices with `index < cutoff` (strictly — the hour stamped `T0` is not complete
-at `T0`), and `baseline.predict` independently re-asserts that neither the
-history it received nor the seasonal lag it is about to read touches the
-cutoff. A test poisons every value after the last fold and asserts the metrics
-do not move; another spies on the model and asserts it never saw a timestamp
-`>= cutoff`.
+**No temporal leakage, enforced in four independent places.**
+`backtest._history_before` slices with `index < cutoff` (strictly — the hour
+stamped `T0` is not complete at `T0`); `baseline.predict` re-asserts that neither
+the history it received nor the seasonal lag it is about to read touches the
+cutoff; `features.build` pins every feature to its forecast origin (below); and
+`lgbm.training_slice` admits a training row only once its *label hour* is over,
+raising if the slice ever reaches the cutoff. Tests poison every value after the
+last fold and assert the metrics do not move — for both models — spy on the
+model to assert it never saw a timestamp `>= cutoff`, and spy on the training
+slice to assert the same of every label.
+
+**Features are stamped with an origin, not a target.** A row of the design
+matrix is a *(origin `O`, horizon `h`)* pair, and every feature on it must be a
+function of data strictly before `O` — not before the target `T = O + h`. That
+distinction is where feature engineering usually leaks: a 24 h lag looks
+innocent, but for a 24 h-ahead forecast `T - 24h` **is** the origin, an hour
+that has not finished yet. So lags are computed against the target and then
+masked out when they would reach the origin; LightGBM eats the resulting NaN
+natively, and `horizon_h` is a feature, so the model learns that distant
+horizons simply have less to go on. Tests poison every value from the origin
+onwards and assert that not one feature column moves.
+
+**Only past weather is used.** Open-Meteo publishes a forecast, and the lake
+already tags it `is_observed=False`, so a production forecaster could legitimately
+feed tomorrow's forecast temperature in. This one does not — that would make the
+"features use only data ≤ origin" claim depend on a second, unmodelled forecast,
+and the point of this repo is that the rigour claims are *testable*. Wiring the
+forecast leg in is a later, explicit step, not a silent one.
+
+**Promotion is earned.** The registry alias `@champion` moves only when the
+challenger beat the seasonal naive on identical folds; otherwise it is filed as
+`@challenger`. Auto-promoting whatever trained last is how a worse model reaches
+production quietly.
 
 **The panel is gapless.** Missing hours become explicit NaNs rather than
 shifting the index, so "168 rows ago" and "168 hours ago" stay the same thing.
@@ -158,23 +270,26 @@ M6 dashboard will read.
 
 ```
 ingest/     EIA v2 + Open-Meteo clients, polite HTTP, partitioned parquet store
-features/   gapless hourly panel, weather join, calendar features
-models/     seasonal-naive baseline, walk-forward backtest, synthetic fixture
-metrics/    committed artifacts (baseline.json, baseline_table.md)
-tests/      37 tests: idempotency, leakage, retry policy, secret redaction
+features/   panel.py  gapless hourly panel, weather join, calendar
+            build.py  origin-stamped design matrix (lags, rolling, holiday)
+models/     baseline.py seasonal naive · lgbm.py global LightGBM
+            backtest.py walk-forward protocol (shared by both models)
+            tracking.py MLflow sqlite + registry · train.py the M2/M3 entrypoint
+metrics/    committed artifacts (baseline.json, model.json + their .md tables)
+tests/      62 tests: idempotency, leakage (backtest *and* features), retries,
+            secret redaction, registry wiring
 docs/       spec.md (original brief), BLOCKED.md (the EIA key)
 .github/    ci.yml (active on publish) · daily.yml (drafted, inactive)
+mlruns/     MLflow artifacts — gitignored, never committed (nor is mlflow.db)
 ```
 
 ## Next milestones
 
 | | | |
 |---|---|---|
-| **M2** | LightGBM + walk-forward | lags 24/168h, rolling stats, calendar, temperature — scored against this baseline on identical folds |
-| **M3** | MLflow | experiment tracking + registry; serving loads the champion |
 | **M4** | Drift | feature / target / prediction / **performance** drift (PSI + KS), thresholds, retrain trigger |
 | **M5** | Live cron | activate `daily.yml`: ingest → score → commit `metrics/` |
-| **M6** | Dashboard + serving | React reading `metrics/`, FastAPI `/forecast` |
+| **M6** | Dashboard + serving | React reading `metrics/`, FastAPI `/forecast` loading `models:/energy-demand-forecaster@champion` |
 | **M7** | Writeup | one real drift episode, captured end to end |
 
 Full brief: [`docs/spec.md`](docs/spec.md).
