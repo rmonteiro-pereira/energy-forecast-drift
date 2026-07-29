@@ -180,5 +180,70 @@ def set_alias(version: str, alias: str) -> None:
 
 
 def champion_uri(alias: str = CHAMPION_ALIAS) -> str:
-    """What serving will load in M6 — never a hardcoded path."""
+    """What serving loads — an alias, never a hardcoded path."""
     return f"models:/{REGISTERED_MODEL_NAME}@{alias}"
+
+
+class ChampionUnavailable(RuntimeError):
+    """No model carries the requested alias — or the registry is not there yet."""
+
+
+def load_champion(
+    alias: str = CHAMPION_ALIAS,
+    tracking_db: Path = MLFLOW_DB,
+) -> tuple[lgb.Booster, dict]:
+    """Load the aliased model out of the registry, plus who it turned out to be.
+
+    Serving and the daily pipeline both go through here, and both ask for an
+    *alias* rather than a version: promoting a model then becomes a registry
+    operation instead of a deploy. The metadata comes back with the booster so
+    a response can say exactly which version answered it — a forecast whose
+    provenance you cannot name is not much use in an incident.
+
+    Raises `ChampionUnavailable` (never a bare MlflowException) so callers can
+    fall back deliberately instead of catching everything.
+    """
+    import mlflow
+
+    if not Path(tracking_db).exists():
+        raise ChampionUnavailable(
+            f"No MLflow database at {tracking_db}. Run `uv run python -m models.train` "
+            "to create the registry and register a first version."
+        )
+
+    mlflow.set_tracking_uri(sqlite_uri(tracking_db))
+    mlflow.set_registry_uri(sqlite_uri(tracking_db))
+    uri = champion_uri(alias)
+
+    try:
+        client = mlflow.MlflowClient()
+        version = client.get_model_version_by_alias(REGISTERED_MODEL_NAME, alias)
+        booster = mlflow.lightgbm.load_model(uri)
+        run_tags = dict(client.get_run(version.run_id).data.tags or {})
+    except Exception as exc:
+        raise ChampionUnavailable(
+            f"Could not load {uri}: {type(exc).__name__}: {exc}. "
+            "Run `uv run python -m models.train` to register and promote a model."
+        ) from exc
+
+    # The training run stamped `is_real` and `data_kind` from the panel
+    # provenance, so a model fitted on the fixture cannot be served as if it
+    # were real: the flag travels with the model, not with the caller's hopes.
+    trained_on_real = run_tags.get("is_real", "false").lower() == "true"
+
+    metadata = {
+        "source": "mlflow_registry",
+        "uri": uri,
+        "registered_model": REGISTERED_MODEL_NAME,
+        "alias": alias,
+        "version": str(version.version),
+        "run_id": version.run_id,
+        "trained_on_real_data": trained_on_real,
+        "data_kind": run_tags.get("data_kind"),
+        # The last hour the model was allowed to learn from. `None` for versions
+        # registered before this tag existed — consumers must treat that as
+        # "unknown", never as "safe".
+        "train_data_end_utc": run_tags.get("train_data_end_utc"),
+        "n_features": int(booster.num_feature()),
+    }
+    return booster, metadata

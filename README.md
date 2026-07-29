@@ -8,10 +8,11 @@ cron pulls fresh demand and weather every day, re-scores the model against the
 actuals that arrive, and commits the metrics back to the repo — so drift
 accumulates in public, week after week, and can be pointed at.
 
-> **Milestone status: M0 → M4 complete** — ingestion, the seasonal-naive
+> **Milestone status: M0 → M5 complete** — ingestion, the seasonal-naive
 > baseline, a global LightGBM scored on the same walk-forward folds, MLflow
-> tracking + registry, and the four-way drift suite with its retrain trigger.
-> The live cron, serving and the dashboard are M5–M6.
+> tracking + registry, the four-way drift suite with its retrain trigger, the
+> single-command daily pipeline behind `daily.yml`, and a FastAPI `/forecast`
+> served from the registry alias. The dashboard is M6.
 
 ---
 
@@ -66,9 +67,10 @@ flowchart LR
     MODEL --> DRIFT
     MODEL --> TRACK --> REG
     DRIFT -->|"retrain verdict"| REG
-    REG -.->|"M6"| SERVE["FastAPI /forecast<br/><i>not built yet</i>"]
+    REG --> SERVE["serving/<br/>FastAPI <b>/forecast</b><br/>loads @champion"]
 
-    CRON["daily.yml<br/><i>drafted · inactive</i>"] -.->|"M5"| ING
+    CRON["daily.yml<br/><i>inert until published</i>"] --> PIPE["pipeline.daily<br/>one entrypoint,<br/>six stages"]
+    PIPE --> ING
     METRICS -.->|"M6"| DASH["React dashboard<br/><i>not built yet</i>"]
 ```
 
@@ -85,7 +87,11 @@ uv run python -m ingest        # re-run: reports +0 new rows — it is idempoten
 uv run python -m models        # M1: walk-forward backtest -> metrics/baseline.json
 uv run python -m models.train  # M2+M3: LightGBM vs baseline, MLflow -> metrics/model.json
 uv run python -m drift.run --out metrics/drift.json   # M4: 4 drift types + retrain verdict
-uv run pytest -v               # 115 tests, no network
+
+uv run python -m pipeline.daily  # M5: the whole loop -> metrics/*.json + PNGs
+uv run python -m serving         # M5: FastAPI on :8000, /forecast from @champion
+
+uv run pytest -v               # 157 tests, no network
 ```
 
 `python -m models.train` is the train/eval entrypoint: it scores **both** models
@@ -308,6 +314,103 @@ maximum, and why a distribution alert alone does not retrain.
 
 </details>
 
+## M5 — the daily pipeline and serving
+
+### One entrypoint, six stages
+
+```bash
+uv run python -m pipeline.daily          # ingest → features → score → monitor → drift → artifacts
+```
+
+```
+ingest → features → score → rolling-MAE monitor → drift → metrics/*.json + 2 PNGs
+```
+
+**Everything the cron does lives in Python, not in YAML.** `daily.yml` runs
+exactly one command. A pipeline spread across ten workflow steps can only be
+debugged by pushing a commit and watching a red tick; this one runs on a laptop
+and has tests. Each stage records its status, duration and a detail block into
+`metrics/pipeline.json`, which is written **even when the run fails** — a failed
+cron leaves an artifact explaining itself instead of only a red tick.
+
+**Ingestion is the only stage allowed to degrade.** A source being down must not
+stop the model being re-scored against the history already in the lake.
+Everything after it is fatal, because a scoring step that silently half-worked
+is worse than a failed run.
+
+**`--require-eia-key` makes the worst failure mode impossible.** A cron that
+quietly publishes fixture numbers as if they were data is the single worst thing
+this repo could do, so the workflow passes that flag: no key means exit 2 with
+printed instructions, before a single byte is written. Locally, without the
+flag, the same entrypoint degrades to the fixture — which is what keeps the
+whole thing runnable and testable today.
+
+**The monitor refuses to score itself.** This one is subtle and it is the bug
+this milestone actually had. The registry champion is refit on *all* available
+history, so by the time it is promoted it has already seen the reference and
+current windows; scoring them with it gives in-sample errors — on this fixture,
+MAE ≈ 1,015 MWh against the ≈ 2,657 the same model gets out of sample. Every
+future window would then look catastrophic against a reference that was never
+real. So training runs now tag the model with `train_data_end_utc`, and the
+monitor uses the champion **only** when that tag proves its data stopped before
+the reference window opens. Otherwise it fits its own booster on the train slice
+and records why, in the artifact. A missing tag counts as ineligible: unknown is
+not safe.
+
+Because of that, `metrics/*.json` distinguishes two models and never conflates
+them: `served_model` (what `/forecast` returns) and `monitoring_model` (what
+scored the windows the alarm reads).
+
+| Artifact | What it holds |
+|---|---|
+| `metrics/forecast.json` | day-ahead forecast vs the actual that arrived, plus the live forward forecast whose actuals do not exist yet |
+| `metrics/monitor.json` | rolling MAE/MAPE per day, the reference level and the retrain line |
+| `metrics/drift.json` | the four drift sections + the retrain verdict |
+| `metrics/pipeline.json` | the run record: stage statuses, durations, artifacts, provenance |
+| `metrics/forecast_vs_actual.png`, `metrics/rolling_mae.png` | the same two stories as images — watermarked `SYNTHETIC FIXTURE` while `is_real` is false |
+
+### Serving: `/forecast` from the registry alias
+
+```bash
+uv run python -m serving                                  # http://127.0.0.1:8000/docs
+curl 'http://127.0.0.1:8000/forecast?max_horizon=6'
+```
+
+```json
+{
+  "origin_utc": "2026-07-28T01:00:00+00:00",
+  "is_real": false,
+  "warning": "These numbers come from a SEEDED SYNTHETIC FIXTURE ...",
+  "model": {
+    "uri": "models:/energy-demand-forecaster@champion",
+    "version": "2",
+    "trained_on_real_data": false
+  },
+  "forecast": [{ "horizon_h": 1, "target_utc": "...", "forecast_mwh": 78091.6, "actual_mwh": null }]
+}
+```
+
+**No path is hardcoded.** The booster comes from
+`models:/energy-demand-forecaster@champion`, so promoting a challenger is a
+registry operation and nothing is redeployed. `/model` reports which version
+actually answered.
+
+**Features are not re-implemented for serving.** The request goes through the
+same `features.build.build_design_matrix` that produced the training matrix, so
+a feature cannot be computed one way for fitting and another way for serving —
+the classic training/serving skew.
+
+**Origins outside the information set are refused, not guessed.**
+`build_design_matrix` does not complain about an origin with no history behind
+it; it emits NaN features, which LightGBM consumes happily and turns into a
+confident-looking number. `/forecast` bounds the origin to
+`[panel_start + 672h, last_observed + 1h]` and returns 422 with the valid range.
+
+**Every response carries its provenance**, and `is_real` is true only when the
+panel *and* the model are real. A champion trained on the fixture keeps the
+response synthetic even after real demand lands in the lake — until it is
+retrained, the forecast is still a fixture artifact.
+
 ## Design decisions worth defending
 
 **Ingestion is incremental *and* idempotent.** The store de-duplicates on
@@ -384,11 +487,16 @@ drift/      stats.py  own PSI + two-sample KS (no scipy at runtime)
             detectors.py the four drift types · trigger.py the retrain policy
             config.py every threshold · evidently_report.py second opinion
             simulate.py injected shifts (tests + demo) · run.py the M4 entrypoint
-metrics/    committed artifacts (baseline.json, model.json, drift.json + tables)
-tests/      115 tests: idempotency, leakage (backtest *and* features), retries,
-            secret redaction, registry wiring, PSI/KS vs scipy, drift injection
+pipeline/   daily.py  the six-stage entrypoint daily.yml calls
+            plots.py  the two committed PNGs (watermarked when synthetic)
+serving/    app.py    FastAPI /forecast /model /health from the registry alias
+metrics/    committed artifacts: baseline.json, model.json, drift.json,
+            forecast.json, monitor.json, pipeline.json + tables + 2 PNGs
+tests/      157 tests: idempotency, leakage (backtest *and* features), retries,
+            secret redaction, registry wiring, PSI/KS vs scipy, drift injection,
+            the daily chain, the HTTP surface, and both workflow YAMLs
 docs/       spec.md (original brief), BLOCKED.md (the EIA key)
-.github/    ci.yml (active on publish) · daily.yml (drafted, inactive)
+.github/    ci.yml (active on publish) · daily.yml (inert until published)
 mlruns/     MLflow artifacts — gitignored, never committed (nor is mlflow.db)
 reports/    Evidently HTML (~5MB of inlined plotly) — gitignored
 ```
@@ -397,9 +505,9 @@ reports/    Evidently HTML (~5MB of inlined plotly) — gitignored
 
 | | | |
 |---|---|---|
-| **M5** | Live cron | activate `daily.yml`: ingest → score → drift → commit `metrics/` |
-| **M6** | Dashboard + serving | React reading `metrics/`, FastAPI `/forecast` loading `models:/energy-demand-forecaster@champion` |
+| **M6** | Dashboard | React + ECharts reading `metrics/`, with a banner driven by `is_real` |
 | **M7** | Writeup | one real drift episode, captured end to end |
+| **gated** | Real data | the EIA key: backfill, then every artifact flips to `is_real: true` |
 
 Full brief: [`docs/spec.md`](docs/spec.md).
 
