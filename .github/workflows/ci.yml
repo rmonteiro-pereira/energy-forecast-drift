@@ -39,6 +39,19 @@ jobs:
       - name: Backtest smoke test (synthetic fixture)
         run: uv run python -m models --source synthetic --weeks 2 --out-dir /tmp/smoke
 
+      # M2 + M3 end to end: LightGBM walk-forward, MLflow tracking, registry
+      # write. The unit suite deliberately does not create the MLflow schema
+      # (alembic migrations are slow), so this is where that path is covered.
+      - name: LightGBM + MLflow smoke test (synthetic fixture)
+        run: uv run python -m models.train --source synthetic --weeks 2 --out-dir /tmp/smoke
+
+      - name: MLflow run state must never be committed
+        run: |
+          if git ls-files | grep -E '^(mlruns|mlartifacts)/|\.db$'; then
+            echo "::error::mlruns/ or a database file is tracked — they are local run state"
+            exit 1
+          fi
+
       - name: Metrics must stay small (this folder is the published artifact)
         run: |
           if find metrics -type f -size +5M | grep -q .; then

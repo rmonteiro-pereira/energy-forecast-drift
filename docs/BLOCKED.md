@@ -2,8 +2,8 @@
 
 **Status:** open
 **Opened:** 2026-07-28 (during M0/M1)
-**Blocks:** the real baseline MAE, the live cron, and every model comparison
-from M2 onwards.
+**Blocks:** the real baseline MAE, the real LightGBM-vs-baseline delta, the live
+cron, and every drift measurement from M4 onwards.
 
 ---
 
@@ -21,13 +21,15 @@ covered by tests against a mock transport. It runs the moment the key exists.
 ## Consequence right now
 
 Without demand history there is no real baseline to beat, so `python -m models`
-falls back to a **seeded synthetic fixture** (`models/fixtures.py`). That keeps
-the pipeline runnable and testable, and nothing more:
+and `python -m models.train` both fall back to a **seeded synthetic fixture**
+(`models/fixtures.py`). That keeps the pipeline runnable and testable, and
+nothing more:
 
-- every artifact it produces carries `"is_real": false` and a warning string;
-- `metrics/baseline.json` currently holds **synthetic** numbers;
-- **the MAE in the README is not a result.** It is a smoke test. Do not quote
-  it anywhere.
+- every artifact they produce carries `"is_real": false` and a warning string;
+- `metrics/baseline.json` and `metrics/model.json` currently hold **synthetic**
+  numbers, and the MLflow runs are tagged `is_real=false`;
+- **neither the MAE nor the LightGBM-vs-baseline delta in the README is a
+  result.** They are smoke tests. Do not quote them anywhere.
 
 ## Unblocking it — 4 steps, ~5 minutes
 
@@ -45,17 +47,20 @@ the pipeline runnable and testable, and nothing more:
    uv run python -m ingest          # ~2 years of hourly PJM demand, first run
    uv run python -m ingest          # re-run: should report +0 new rows
    ```
-4. **Recompute the real baseline** and commit it:
+4. **Recompute the real baseline and the real model comparison**, then commit:
    ```bash
-   uv run python -m models --source real
-   git add metrics/baseline.json metrics/baseline_table.md
-   git commit -m "feat(metrics): real seasonal-naive baseline on PJM demand"
+   uv run python -m models --source real          # metrics/baseline.json
+   uv run python -m models.train --source real    # metrics/model.json + MLflow
+   git add metrics/baseline.json metrics/baseline_table.md \
+           metrics/model.json metrics/model_table.md
+   git commit -m "feat(metrics): real baseline and LightGBM delta on PJM demand"
    ```
    `--source real` fails loudly rather than falling back, so a green run proves
-   the numbers came from the API.
+   the numbers came from the API. Both artifacts flip to `"is_real": true`.
 
-Then update the README table from `metrics/baseline_table.md`, delete the
-pending-key banner, and close this file.
+Then update the README tables from `metrics/baseline_table.md` and
+`metrics/model_table.md`, delete the pending-key banner and the two SYNTHETIC
+`<details>` blocks, and close this file.
 
 ## Also gated on publishing the repo
 
