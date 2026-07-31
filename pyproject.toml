@@ -140,4 +140,4 @@ disable_error_code = ["operator", "arg-type", "union-attr", "index", "call-overl
 [tool.mutmut]
 paths_to_mutate = "drift/detectors.py,models/backtest.py"
 tests_dir = "tests/"
-runner = "python -m pytest -x -q -p no:warnings --no-header tests/test_drift_detectors.py tests/test_drift_boundaries.py tests/test_drift_trigger.py tests/test_backtest.py tests/test_baseline.py"
+runner = "python -m pytest -x -q -p no:warnings --no-header tests/test_drift_detectors.py tests/test_drift_boundaries.py tests/test_drift_timeline.py tests/test_drift_trigger.py tests/test_backtest.py tests/test_backtest_accounting.py tests/test_baseline.py"

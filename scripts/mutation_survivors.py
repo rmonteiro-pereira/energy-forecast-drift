@@ -116,15 +116,13 @@ RULES: list[Rule] = [
         "disjuncts are masked by short-circuiting.",
         locations=frozenset({("drift/detectors.py", 373)}),
     ),
-    Rule(
-        "gap:mape-formula-unpinned",
-        GAP,
-        "The MAPE formula `(abs_error / |actual|) * 100` survives mutation "
-        "because the only assertion on it is `mape_pct == approx(0.0)` for a "
-        "perfect forecast — which holds for any scaling of a zero numerator. "
-        "Needs a case with a known non-zero error.",
-        locations=frozenset({("models/backtest.py", 155)}),
-    ),
+    # `gap:mape-formula-unpinned` used to live here, covering
+    # models/backtest.py:155. It is gone because the gap is *closed*:
+    # tests/test_backtest_accounting.py now pins MAPE to hand-computed values
+    # (a flat 100 MWh series mispredicted by 10 must give exactly 10%), which
+    # kills all three mutants. The rule is removed rather than kept as a trophy —
+    # if the test were reverted the mutants would come back UNADJUDICATED and
+    # fail --check, which is the behaviour we want.
     Rule(
         "gap:skipped-fold-accounting-weakly-asserted",
         GAP,

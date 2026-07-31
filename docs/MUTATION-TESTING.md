@@ -1,6 +1,6 @@
 # Mutation testing
 
-> **The headline number is 52.3%, and that is not good.** It is published here
+> **The headline number is 61.2%.** It is published here
 > because a measured mediocre score with the survivors listed is worth more than
 > a flattering one — and because finding out *which* assertions were missing
 > already produced a real fix.
@@ -33,8 +33,9 @@ exits non-zero whenever *any* mutant survives, which is permanently true here.
 ## How to run it
 
 ```bash
-uv run --extra dev mutmut run                            # ~25 min for 474 mutants
-uv run python scripts/mutation_score.py --floor 50       # the number below
+uv run --extra dev mutmut run                            # ~28 min for 474 mutants
+uv run python scripts/mutation_score.py --floor 61       # the number below
+uv run python scripts/mutation_survivors.py --check      # every survivor judged
 ```
 
 `scripts/mutation_score.py` is committed, not scratch tooling — the figure in
@@ -52,9 +53,9 @@ Measured on commit `3dd8e20` + the boundary tests, 2026-07-31.
 
 | File | Killed | Total | Score |
 |---|---:|---:|---:|
-| `drift/detectors.py` | 167 | 342 | **48.8%** |
-| `models/backtest.py` | 81 | 132 | **61.4%** |
-| **Total** | **248** | **474** | **52.3%** |
+| `drift/detectors.py` | 198 | 342 | **57.9%** |
+| `models/backtest.py` | 92 | 132 | **69.7%** |
+| **Total** | **290** | **474** | **61.2%** |
 
 ### Before and after the boundary tests
 
@@ -63,12 +64,12 @@ The first run is reported too, because the improvement is the interesting part.
 | Run | Killed / total | Score | What changed |
 |---|---:|---:|---|
 | 1 — as the suite stood | 223 / 470 | 47.4% | — |
-| 2 — after `tests/test_drift_boundaries.py` | 248 / 474 | **52.3%** | 21 new boundary tests |
+| 2 — after `tests/test_drift_boundaries.py` | 248 / 474 | 52.3% | 21 new boundary tests |
+| 3 — after closing three named gaps | 290 / 474 | **61.2%** | 18 tests over `drift_timeline`, the MAPE formula and fold accounting |
 
-`drift/detectors.py` went **42.0% → 48.8%**. `models/backtest.py` is unchanged at
-**61.4%**, because the new tests targeted the detectors only — stated rather than
-averaged away. The mutant count rose from 470 to 474 because the fix described
-below added four mutable lines.
+Across the three runs `drift/detectors.py` went **42.0% -> 48.8% -> 57.9%** and
+`models/backtest.py` **61.4% -> 61.4% -> 69.7%**. The mutant count rose from 470
+to 474 because the artifact fix described below added four mutable lines.
 
 ## What the first run found
 
@@ -108,7 +109,7 @@ happened to be eligible, and "everything was excluded as deterministic" is
 precisely when a reader most wants to know which columns those were. Both
 branches now report it.
 
-## Every one of the 226 survivors is adjudicated
+## Every one of the 184 survivors is adjudicated
 
 Not summarised — **adjudicated**. Each surviving mutant matches exactly one rule
 in [`scripts/mutation_survivors.py`](../scripts/mutation_survivors.py), and each
@@ -121,24 +122,29 @@ uv run python scripts/mutation_survivors.py            # the full table
 uv run python scripts/mutation_survivors.py --check    # the CI gate
 ```
 
-**226 mutants across 163 source lines. 38 are real gaps (16.8%); 188 are
+**184 mutants across 141 source lines. 21 are real gaps (11.4%); 163 are
 accepted.**
 
-> An earlier version of this document put the gap count at 14. That was a guess
-> from eyeballing categories, and it was too flattering by a factor of nearly
-> three. Adjudicating every survivor individually — rather than sorting them into
-> buckets by eye — found five further classes of genuine gap. The number went up
-> because the method got honest, which is the direction that should worry a
-> reader less, not more.
+> **The gap count has moved twice, in both directions, and both moves matter.**
+> An early draft put it at 14 — a guess from eyeballing categories, too
+> flattering by nearly three times. Adjudicating every survivor individually
+> raised it to 38. Then three of those gaps were *closed* with real tests, taking
+> it to 21 and the score from 52.3% to 61.2%. Up because the method got honest;
+> down because the tests got better. Only the second kind is worth celebrating.
+>
+> **`gap:mape-formula-unpinned` is gone entirely** — `tests/test_backtest_accounting.py`
+> now pins MAPE to hand-computed values (a flat 100 MWh series mispredicted by
+> exactly 10 must give exactly 10%), killing all three mutants. The rule was
+> deleted rather than kept as a trophy: revert the test and those mutants come
+> back **unadjudicated** and fail `--check`, which is the behaviour we want.
 
-### The gaps — 38 mutants the tests should have caught
+### The gaps — 21 mutants the tests should have caught
 
 | Rule | Lines | Mutants | Why it survives |
 |---|---:|---:|---|
-| `gap:drift-timeline-untested` | 5 | **13** | `drift_timeline` is asserted for shape, never content: which rows fall in which trailing window, which features are eligible, and the below-`min_samples` path are all unpinned. Largest single gap. |
-| `gap:skipped-fold-accounting-weakly-asserted` | 5 | 8 | The only assertion is `skipped_folds >= 1` — incrementing by two, or skipping a different fold, still passes. Existence is checked; correctness is not. |
+| `gap:drift-timeline-untested` | 2 | 2 | `drift_timeline` is asserted for shape, never content: which rows fall in which trailing window, which features are eligible, and the below-`min_samples` path are all unpinned. Largest single gap. |
+| `gap:skipped-fold-accounting-weakly-asserted` | 3 | 5 | The only assertion is `skipped_folds >= 1` — incrementing by two, or skipping a different fold, still passes. Existence is checked; correctness is not. |
 | `gap:feature-drift-insufficient-branch` | 2 | 6 | The "no column was eligible" branch of `feature_drift` is unreached: the test calls `_section_from_columns` directly and never goes through the detector. |
-| `gap:mape-formula-unpinned` | 1 | 3 | `(abs_error / abs(actual)) * 100` survives because the only assertion is `mape_pct == approx(0.0)` on a **perfect** forecast — true for any scaling of a zero numerator. |
 | `gap:compound-or-short-circuits` | 1 | 2 | Three-way `or` in the WARN branch; the other disjuncts short-circuit and mask a mutation of any one. |
 | `gap:degenerate-input-guards` | 2 | 2 | `make_cutoffs` guards reachable only with a series shorter than any fixture builds. |
 | `gap:ks-alpha-boundary` | 1 | 1 | KS exercised at 10× either side of alpha, never *at* alpha, so `<` and `<=` never disagree. |
