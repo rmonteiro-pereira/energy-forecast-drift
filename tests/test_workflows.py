@@ -128,6 +128,37 @@ def test_the_daily_workflow_goes_dormant_rather_than_red_without_a_key():
     )
 
 
+def test_the_cache_is_saved_only_after_a_successful_run():
+    """A failed run must not persist half-updated state for every later run.
+
+    `actions/cache/save` under `always()` would cache a partially written
+    `data/`, `mlflow.db` or `mlruns/` after a mid-pipeline failure — and since
+    the next run restores from that key, one bad run would poison all of them
+    with no visible symptom. Losing a delta pull costs one API call; restoring
+    corrupt MLflow state costs a debugging session.
+
+    The upload-artifact step is deliberately the opposite: it *should* run on
+    failure, because a failed run that explains itself is the point of it.
+    """
+    steps = steps_of(load(DAILY), "pipeline")
+
+    save = [s for s in steps if s.get("uses", "").startswith("actions/cache/save")]
+    assert len(save) == 1, "expected exactly one cache/save step"
+    condition = str(save[0].get("if", ""))
+    assert "always()" not in condition, (
+        "cache/save runs under always(); a failed run would cache broken state "
+        f"and every later run would restore it. Condition: {condition!r}"
+    )
+    assert "success()" in condition, f"cache/save should be gated on success(): {condition!r}"
+
+    upload = [s for s in steps if s.get("uses", "").startswith("actions/upload-artifact")]
+    assert len(upload) == 1
+    assert "always()" in str(upload[0].get("if", "")), (
+        "the run record must still be uploaded when the pipeline fails — that is "
+        "when it is most worth reading"
+    )
+
+
 def test_the_dormant_path_never_weakens_the_publish_guard():
     """Going quiet must not become a way to publish fixture numbers."""
     commands = run_commands(load(DAILY), "pipeline")

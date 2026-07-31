@@ -58,10 +58,30 @@ def get_json(
             last_error = f"{type(exc).__name__}: {exc}"
         else:
             if response.status_code == 200:
-                # `.json()` is typed `Any`; state the contract once here rather
-                # than letting an untyped value leak into every caller.
-                body: dict[str, Any] = response.json()
-                return body
+                # A 200 does not guarantee a JSON *object*. Both upstreams can
+                # return an HTML error page through a proxy, and a JSON array or
+                # bare scalar would satisfy `.json()` while breaking every
+                # caller's `body["response"]` with a TypeError far from here.
+                # Validate once, at the boundary, and fail as `ApiError` like
+                # every other failure mode -- so the per-source handlers keep
+                # working instead of an unhandled ValueError escaping the loop.
+                try:
+                    body = response.json()
+                except ValueError as exc:
+                    raise ApiError(
+                        f"{redact(url)} returned HTTP 200 with a body that is not "
+                        f"JSON ({exc}). First 300 chars: {response.text[:300]!r}"
+                    ) from exc
+
+                if not isinstance(body, dict):
+                    raise ApiError(
+                        f"{redact(url)} returned JSON that is not an object but a "
+                        f"{type(body).__name__}. Callers index into the response, "
+                        "so a non-object body cannot be handled here."
+                    )
+
+                validated: dict[str, Any] = body
+                return validated
 
             if response.status_code in (401, 403):
                 # A bad key is not transient; retrying just burns quota.

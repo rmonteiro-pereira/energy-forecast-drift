@@ -57,11 +57,12 @@ lives in its header comment. A missing file documents nothing.
   say plainly that the run was skipped and why — a green-with-warning run is
   visible without being alarming. It is a deliberate trade of "loud and wrong" for
   "quiet and accurate".
-- Six steps now carry an `if:` guard, which is more to read.
-- `tests/test_workflows.py` pins both halves: that every non-checkout step is
-  gated, **and** that the dormant path never became a way to publish fixture
-  numbers (`--require-eia-key` and `--source real` must both still be present,
-  `--source synthetic` must not).
+- Seven of the nine steps now carry an `if:` guard, which is more to read. The
+  two that do not are `actions/checkout` and the preflight step itself.
+- `tests/test_workflows.py` pins both halves: that every **post-preflight,
+  non-checkout** step is gated, **and** that the dormant path never became a way
+  to publish fixture numbers (`--require-eia-key` and `--source real` must both
+  still be present, `--source synthetic` must not).
 
 ## What would reverse this
 

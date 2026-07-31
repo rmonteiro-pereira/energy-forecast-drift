@@ -15,6 +15,7 @@ code, because it tells them when the reasoning has expired.
 | [0004](0004-retrain-policy-not-threshold.md) | Make the retrain trigger a policy, not a threshold | Accepted |
 | [0005](0005-monitor-refuses-in-sample-scoring.md) | Refuse to monitor with a model that trained on the monitoring windows | Accepted |
 | [0006](0006-dormant-workflow-instead-of-red.md) | Let the daily workflow go dormant rather than fail red | Accepted |
+| [0007](0007-mutation-testing-scoped-not-global.md) | Mutation-test the two places a green suite would be most misleading | Accepted |
 
 ## Format
 

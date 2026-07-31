@@ -17,9 +17,10 @@ expands into a dozen errors of the form *"No overload variant of `__rsub__` of
 `pandas-stubs` uses for a Series element it cannot narrow. The code is correct;
 the stubs simply cannot express "this Series holds timestamps".
 
-The distribution was lopsided: `pipeline/daily.py` and `drift/detectors.py`
-accounted for 289 of the errors, while `drift/stats.py`, `drift/trigger.py`,
-`drift/config.py`, `ingest/http.py` and `ingest/config.py` reported **zero**.
+The distribution was lopsided: `pipeline/daily.py` (188) and
+`drift/detectors.py` (30) accounted for **218 of the 258**, while
+`drift/stats.py`, `drift/trigger.py`, `drift/config.py`, `ingest/http.py` and
+`ingest/config.py` reported **zero**.
 
 ## Decision
 

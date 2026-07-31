@@ -150,9 +150,14 @@ jobs:
             --source real \
             ${{ inputs.full_refresh && '--full-refresh' || '' }}
 
+      # `success()`, deliberately not `always()`. Caching after a failed run can
+      # persist a half-updated `data/`, `mlflow.db` or `mlruns/` -- and because
+      # the next run restores from that key, one bad run would poison every run
+      # after it, with no obvious symptom. Losing a delta pull costs one extra
+      # API call; restoring corrupt MLflow state costs a debugging session.
       - name: Save data lake and MLflow state
         uses: actions/cache/save@v4
-        if: always() && steps.preflight.outputs.has_key == 'true'
+        if: success() && steps.preflight.outputs.has_key == 'true'
         with:
           path: |
             data
@@ -160,8 +165,10 @@ jobs:
             mlruns
           key: lake-${{ github.run_id }}
 
-      # The run record is written even when the pipeline fails, so upload it
-      # either way — a red run that explains itself is worth keeping.
+      # `always()` IS right here, unlike the cache step above. The run record is
+      # written even when the pipeline fails, and a failed run that explains
+      # itself is the whole reason it is written. An artifact is read by a human
+      # once; a cache is consumed by every later run.
       - name: Upload the run record
         uses: actions/upload-artifact@v4
         if: always() && steps.preflight.outputs.has_key == 'true'

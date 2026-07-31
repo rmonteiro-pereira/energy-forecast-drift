@@ -24,6 +24,7 @@ dependencies = [
 # laptop produces a red build.
 dev = [
     "evidently>=0.7.21",
+    "mutmut>=2.4,<3",
     "mypy>=2.3.0",
     "pandas-stubs>=3.0.5.260730",
     "pytest>=8.0",
@@ -115,3 +116,28 @@ module = [
     "serving.app",
 ]
 disable_error_code = ["operator", "arg-type", "union-attr", "index", "call-overload"]
+
+# ---------------------------------------------------------------------------
+# mutmut -- mutation testing
+#
+# Scoped to the two places where a passing test suite would be most misleading:
+#   * drift/detectors.py  -- the four detectors. A comparison flipped from `>=`
+#     to `>` here is the difference between an alarm that fires and one that
+#     silently never does, and the fixture is quiet enough that ordinary tests
+#     can pass either way.
+#   * models/backtest.py  -- the walk-forward split and the leakage guards.
+#     `index < cutoff` becoming `index <= cutoff` is a one-character temporal
+#     leak that makes every metric look better and breaks nothing visibly.
+#
+# Not run in CI: a full pass takes tens of minutes, which is the wrong trade for
+# every push. It is run deliberately, and the score is recorded in
+# docs/MUTATION-TESTING.md with the surviving mutants listed rather than
+# summarised.
+#
+#   uv run --extra dev mutmut run
+#   uv run --extra dev mutmut results
+# ---------------------------------------------------------------------------
+[tool.mutmut]
+paths_to_mutate = "drift/detectors.py,models/backtest.py"
+tests_dir = "tests/"
+runner = "python -m pytest -x -q -p no:warnings --no-header tests/test_drift_detectors.py tests/test_drift_boundaries.py tests/test_drift_trigger.py tests/test_backtest.py tests/test_baseline.py"

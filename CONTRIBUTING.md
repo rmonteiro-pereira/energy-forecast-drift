@@ -23,7 +23,7 @@ path today — see the README banner for why.
 ## Run everything
 
 ```bash
-uv run pytest                     # 182 tests, no network        (~16 s)
+uv run pytest                     # 208 tests, no network        (~20 s)
 uv run ruff check . && uv run ruff format --check .
 uv run mypy                       # scoped -- see docs/adr/0002
 uv run python -m pipeline.daily   # the whole loop               (~6 s)
@@ -61,13 +61,21 @@ two PNGs. CI enforces the size limit and the tracked-path rules.
 **Explicit-path `git add` only.** No `git add .`, no `git add -A`. The data lake
 is one `.gitignore` mistake away from the repo.
 
-**No secrets in code, logs, commits or docs.** `EIA_API_KEY` lives in `.env` and
-nowhere else. See [`SECURITY.md`](SECURITY.md).
+**No secrets in code, logs, commits or docs.** `EIA_API_KEY` has exactly two
+homes: **`.env` for local development** (gitignored, never tracked) and a
+**GitHub Actions repository secret for CI**, referenced only as
+`${{ secrets.EIA_API_KEY }}`. Nowhere else — not a commit message, not a log
+line, not a doc. See [`SECURITY.md`](SECURITY.md).
 
 **Tests cover the failure path, not just the happy one.** The drift alarm has a
 test that it fires *and* a test that it stays quiet. The no-key guard has a test
 that it exits 2 *and* that it wrote nothing. A test that only proves the good
 case is half a test.
+
+**Thresholds get boundary tests.** If you add or move a threshold, pin it just
+below, exactly on, and just above — `>=` and `>` differ at exactly one input, and
+that is the input nobody writes a test for. Mutation testing found this the hard
+way; see [`docs/MUTATION-TESTING.md`](docs/MUTATION-TESTING.md).
 
 ## Where things live
 
