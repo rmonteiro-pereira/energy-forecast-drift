@@ -1,14 +1,17 @@
 # ============================================================================
-# INACTIVE UNTIL PUBLISHED — this is the M5 "live" cron. It is drafted early on
-# purpose: the value of the project is drift accumulating over weeks, so the
-# clock should start the moment the repo goes public.
+# DORMANT, NOT BROKEN — this is the M5 "live" cron. The repo is published, so
+# step 1 below is done; what is still missing is the key.
 #
-# It cannot run yet because:
-#   1. the repo has no remote — nothing to schedule against;
-#   2. EIA_API_KEY does not exist yet. See docs/BLOCKED.md.
+# Behaviour without EIA_API_KEY: the preflight step below detects the missing
+# secret, emits a warning annotation, and the job ends GREEN having written and
+# published nothing. It does not go red. That distinction matters now the repo
+# is public: a red X on the only scheduled workflow reads as "this project is
+# broken", when the truth is "this project is waiting for a free API key" — and
+# the thing that actually must never happen (publishing fixture numbers as if
+# they were data) is prevented either way.
 #
 # TO ACTIVATE (in order):
-#   [ ] push the repo to GitHub (public => Actions minutes are free)
+#   [x] push the repo to GitHub (public => Actions minutes are free)
 #   [ ] Settings > Secrets and variables > Actions > New repository secret:
 #         EIA_API_KEY = <your key from eia.gov/opendata/register.php>
 #   [ ] Settings > Actions > General > Workflow permissions:
@@ -54,12 +57,60 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # ------------------------------------------------------------------
+      # Preflight: is there a key at all?
+      #
+      # Everything after this is conditional on the answer. Without a key there
+      # is nothing real to ingest, so the run does no work and ends green with a
+      # warning annotation rather than burning three minutes to exit 2 and paint
+      # the Actions tab red on a public repo.
+      #
+      # This is NOT a softening of the safety rule. The rule is "never publish
+      # fixture numbers as though they were data", and doing nothing at all
+      # satisfies it more completely than failing does. `--require-eia-key` stays
+      # on the run step below to cover the other case: a secret that exists but
+      # is empty or rejected mid-run.
+      # ------------------------------------------------------------------
+      - name: Preflight — is EIA_API_KEY configured?
+        id: preflight
+        env:
+          EIA_API_KEY: ${{ secrets.EIA_API_KEY }}
+        run: |
+          set -euo pipefail
+
+          if [ -n "${EIA_API_KEY:-}" ]; then
+            echo "has_key=true" >> "$GITHUB_OUTPUT"
+            echo "EIA_API_KEY is configured - running the pipeline against real data."
+            exit 0
+          fi
+
+          echo "has_key=false" >> "$GITHUB_OUTPUT"
+
+          # No colon inside the title= value: the annotation parser splits on `::`.
+          echo "::warning title=Dormant - no EIA_API_KEY::The pipeline was skipped and nothing was published. This is the documented state of the project, not a failure. See docs/BLOCKED.md."
+
+          # A heredoc rather than chained echos: no backslash continuations to
+          # mangle, and backticks stay literal because the delimiter is quoted.
+          cat >> "$GITHUB_STEP_SUMMARY" <<'SUMMARY'
+          ### Dormant - no `EIA_API_KEY` configured
+
+          The daily pipeline was **skipped**. Nothing was ingested, scored, or committed.
+
+          This is the documented state of the project, not a failure. Every artifact in
+          `metrics/` is derived from a seeded synthetic fixture and carries
+          `"is_real": false` until a real key lands.
+
+          To activate it, see **docs/BLOCKED.md** in the repository root.
+          SUMMARY
+
       - name: Install uv
+        if: steps.preflight.outputs.has_key == 'true'
         uses: astral-sh/setup-uv@v5
         with:
           enable-cache: true
 
       - name: Install dependencies
+        if: steps.preflight.outputs.has_key == 'true'
         run: uv sync --extra dev --frozen
 
       # ------------------------------------------------------------------
@@ -70,6 +121,7 @@ jobs:
       # would have no champion to serve and would refit from scratch.
       # ------------------------------------------------------------------
       - name: Restore data lake and MLflow state
+        if: steps.preflight.outputs.has_key == 'true'
         uses: actions/cache/restore@v4
         with:
           path: |
@@ -89,6 +141,7 @@ jobs:
       # here rather than warned about.
       # ------------------------------------------------------------------
       - name: Run the daily pipeline
+        if: steps.preflight.outputs.has_key == 'true'
         env:
           EIA_API_KEY: ${{ secrets.EIA_API_KEY }}
         run: |
@@ -99,7 +152,7 @@ jobs:
 
       - name: Save data lake and MLflow state
         uses: actions/cache/save@v4
-        if: always()
+        if: always() && steps.preflight.outputs.has_key == 'true'
         with:
           path: |
             data
@@ -111,13 +164,14 @@ jobs:
       # either way — a red run that explains itself is worth keeping.
       - name: Upload the run record
         uses: actions/upload-artifact@v4
-        if: always()
+        if: always() && steps.preflight.outputs.has_key == 'true'
         with:
           name: pipeline-run-${{ github.run_id }}
           path: metrics/pipeline.json
           if-no-files-found: warn
 
       - name: Commit refreshed metrics
+        if: steps.preflight.outputs.has_key == 'true'
         run: |
           git config user.name  "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"

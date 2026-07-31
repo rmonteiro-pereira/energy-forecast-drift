@@ -58,7 +58,10 @@ def get_json(
             last_error = f"{type(exc).__name__}: {exc}"
         else:
             if response.status_code == 200:
-                return response.json()
+                # `.json()` is typed `Any`; state the contract once here rather
+                # than letting an untyped value leak into every caller.
+                body: dict[str, Any] = response.json()
+                return body
 
             if response.status_code in (401, 403):
                 # A bad key is not transient; retrying just burns quota.

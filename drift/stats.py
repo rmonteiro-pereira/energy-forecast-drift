@@ -45,7 +45,14 @@ import math
 from dataclasses import dataclass, field
 
 import numpy as np
+import numpy.typing as npt
 import pandas as pd
+
+#: Anything `pd.Series(...)` accepts: a Series, an ndarray, a list, a column.
+#: Named rather than repeated so the public statistics functions all state the
+#: same contract -- they take array-likes and clean them, they do not require a
+#: particular container.
+ArrayLike = npt.ArrayLike
 
 # Floor for a bin share. 1e-6 is well below any share a window of >=200 rows can
 # legitimately produce (the smallest non-zero share is 1/n), so it only ever
@@ -95,7 +102,7 @@ class KSResult:
         }
 
 
-def _clean(values) -> np.ndarray:
+def _clean(values: ArrayLike) -> np.ndarray:
     """Finite float64 values only — NaN and +-inf are dropped, not imputed.
 
     Imputing would invent mass in a bin; dropping is the honest choice and the
@@ -103,7 +110,8 @@ def _clean(values) -> np.ndarray:
     visible.
     """
     array = np.asarray(pd.Series(values).to_numpy(), dtype="float64")
-    return array[np.isfinite(array)]
+    finite: np.ndarray = array[np.isfinite(array)]
+    return finite
 
 
 def quantile_bin_edges(reference: np.ndarray, bins: int) -> np.ndarray:
@@ -123,8 +131,8 @@ def quantile_bin_edges(reference: np.ndarray, bins: int) -> np.ndarray:
 
 
 def population_stability_index(
-    reference,
-    current,
+    reference: ArrayLike,
+    current: ArrayLike,
     bins: int = 10,
     max_categorical_levels: int = 24,
 ) -> PSIResult:
@@ -170,8 +178,8 @@ def _categorical_psi(ref: np.ndarray, cur: np.ndarray, levels: np.ndarray) -> PS
 
 
 def _psi_from_counts(
-    ref_counts,
-    cur_counts,
+    ref_counts: np.ndarray,
+    cur_counts: np.ndarray,
     labels: list[str],
     binning: str,
     reference_n: int,
@@ -211,7 +219,7 @@ def _fmt(value: float) -> str:
     return f"{value:.4g}"
 
 
-def ks_two_sample(reference, current) -> KSResult:
+def ks_two_sample(reference: ArrayLike, current: ArrayLike) -> KSResult:
     """Two-sample KS statistic and its asymptotic p-value.
 
     `D` is exact: the two ECDFs only change value at observed points, so
@@ -253,7 +261,7 @@ def ks_p_value(statistic: float, n1: int, n2: int, terms: int = 100) -> float:
     return float(min(max(total, 0.0), 1.0))
 
 
-def summarise(reference, current) -> dict:
+def summarise(reference: ArrayLike, current: ArrayLike) -> dict:
     """Location/scale summary of both windows — context for a PSI number.
 
     A PSI of 0.4 means nothing on its own; "the mean moved from 95 GW to 112 GW"

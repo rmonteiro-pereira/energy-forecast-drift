@@ -1,5 +1,6 @@
 # energy-forecast-drift
 
+> [!CAUTION]
 > # ⚠️ EVERY NUMBER IN THIS REPOSITORY IS SYNTHETIC
 >
 > ### There is no EIA API key yet, so there is no real demand data. Nothing here is a benchmark, a result, or a claim about PJM.
@@ -68,6 +69,10 @@ The claims worth checking, and where to check them:
 | The banner follows the data, not the copy | `dashboard/src/components.tsx::ProvenanceBanner` | `dashboard/src/components.test.tsx` — same props, flag flipped, banner changes state |
 | No secret can reach a log | `ingest/http.py::redact` | `tests/test_clients.py::test_secrets_never_survive_redaction` |
 | No artifact can claim to be real while it isn't | the `is_real` flag, written by every entrypoint | `tests/test_artifacts.py` — fails the build if any published artifact pairs `is_real: true` with synthetic provenance, or drops its warning |
+
+**Why the shape is what it is**, with the alternative rejected in each case and
+the condition that would reverse it: **[docs/adr/](docs/adr/)** — six records,
+including [one that documents a bug that shipped](docs/adr/0005-monitor-refuses-in-sample-scoring.md).
 
 Longer form, including three bugs this project actually had and what a real
 drift episode is predicted to look like: **[docs/writeup.md](docs/writeup.md)**.
@@ -624,7 +629,8 @@ tests/      180 Python tests: idempotency, leakage (backtest *and* features),
             retries, secret redaction, registry wiring, PSI/KS vs scipy, drift
             injection, the daily chain, the HTTP surface, both workflow YAMLs,
             and the published artifacts' own honesty contract
-docs/       writeup.md (real vs fixture, three bugs, what a real episode looks
+docs/       adr/      6 decision records, each with the rejected alternative
+            writeup.md (real vs fixture, three bugs, what a real episode looks
             like) · REPRODUCE.md (real transcripts of every command)
             PUBLICATION-SCAN.md (pre-publication secret + size scan)
             PUBLICATION-READY.md (what a reviewer will trip on, and what is thin)
@@ -657,7 +663,11 @@ as written)*. Pre-publication scan:
 R$0. EIA and Open-Meteo are free, GitHub Actions is free on a public repo, and
 the dashboard is a static `dist/`. No server stays on.
 
-## License
+## Contributing, security, license
 
-[MIT](LICENSE). The code is yours to use. The numbers are not results, so there
-is nothing there to cite.
+- **[CONTRIBUTING.md](CONTRIBUTING.md)** — setup, the four checks to run before a
+  PR, and the house rules that exist for a reason.
+- **[SECURITY.md](SECURITY.md)** — how to report something privately, and exactly
+  how the one secret in this project is handled.
+- **[MIT](LICENSE)** — the code is yours to use. The numbers are not results, so
+  there is nothing there to cite.

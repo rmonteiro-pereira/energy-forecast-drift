@@ -219,7 +219,19 @@ def load_champion(
         client = mlflow.MlflowClient()
         version = client.get_model_version_by_alias(REGISTERED_MODEL_NAME, alias)
         booster = mlflow.lightgbm.load_model(uri)
+        # A registered version with no run behind it cannot carry the `is_real`
+        # tag, and that tag is what stops a fixture-trained model being served as
+        # though it were real. Refuse it by name rather than letting `get_run`
+        # fail with a less specific message.
+        if version.run_id is None:
+            raise ChampionUnavailable(
+                f"{uri} (version {version.version}) records no run_id, so its "
+                "training provenance cannot be read. Re-register it with "
+                "`uv run python -m models.train`."
+            )
         run_tags = dict(client.get_run(version.run_id).data.tags or {})
+    except ChampionUnavailable:
+        raise
     except Exception as exc:
         raise ChampionUnavailable(
             f"Could not load {uri}: {type(exc).__name__}: {exc}. "

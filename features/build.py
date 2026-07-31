@@ -43,6 +43,7 @@ from __future__ import annotations
 
 import numpy as np
 import pandas as pd
+from pandas.api.typing import Rolling
 from pandas.tseries.holiday import USFederalHolidayCalendar
 
 from features.panel import DEMAND_COLUMN, TEMPERATURE_COLUMN
@@ -101,7 +102,7 @@ def _holiday_flag(targets: pd.DatetimeIndex) -> np.ndarray:
     return local_days.isin(holidays).astype("int8")
 
 
-def _rolling_before(series: pd.Series, window: int) -> pd.core.window.Rolling:
+def _rolling_before(series: pd.Series, window: int) -> Rolling:
     """Rolling window over the `window` hours **ending at the previous hour**.
 
     Evaluated at `O`, it covers `[O-window, O-1]` — strictly before the origin.

@@ -135,9 +135,16 @@ def test_rendered_tables_warn_above_the_numbers(name: str):
 
 
 def test_readme_leads_with_the_synthetic_banner():
-    """Above the fold, not in a section a reader has to scroll to."""
+    """First thing in the file, and rendered as an alert rather than a blockquote.
+
+    GitHub always puts the file listing above the README, so nothing here can be
+    in the literal first viewport. What *can* be controlled is that the warning is
+    the first thing inside the README and that it renders in GitHub's red
+    `caution` style rather than as a grey blockquote a reader's eye slides past.
+    """
     lines = (REPO / "README.md").read_text(encoding="utf-8").splitlines()
-    head = "\n".join(lines[:12]).upper()
+    head_lines = lines[:12]
+    head = "\n".join(head_lines).upper()
 
     assert "SYNTHETIC" in head, (
         "the README's first 12 lines do not say the data is synthetic — "
@@ -145,4 +152,16 @@ def test_readme_leads_with_the_synthetic_banner():
     )
     assert "BENCHMARK" in head, (
         "the README's first 12 lines do not say these numbers are not a benchmark"
+    )
+    assert any(line.strip() == "> [!CAUTION]" for line in head_lines), (
+        "the banner is not a GitHub `> [!CAUTION]` alert. Without it the block "
+        "renders as a plain grey blockquote — legible, but not alarming, which "
+        "defeats the point of leading with it."
+    )
+
+    # Nothing may come between the H1 and the banner.
+    body = [line for line in head_lines if line.strip()]
+    assert body[0].startswith("# "), f"README does not open with an H1: {body[0]!r}"
+    assert body[1].strip() == "> [!CAUTION]", (
+        f"something sits between the title and the warning: {body[1]!r}"
     )

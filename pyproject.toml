@@ -18,11 +18,18 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+# CI installs with `uv sync --extra dev --frozen`, so every tool CI runs has to
+# live here. A `[dependency-groups]` entry would be installed by a bare local
+# `uv sync` and silently missing on the runner -- which is exactly how a green
+# laptop produces a red build.
 dev = [
     "evidently>=0.7.21",
+    "mypy>=2.3.0",
+    "pandas-stubs>=3.0.5.260730",
     "pytest>=8.0",
     "pyyaml>=6.0.3",
     "ruff>=0.6",
+    "types-pyyaml>=6.0.12.20260724",
 ]
 
 [build-system]
@@ -43,3 +50,68 @@ target-version = "py311"
 [tool.ruff.lint]
 # Pinned explicitly so a ruff upgrade cannot silently change what CI enforces.
 select = ["E", "F", "I", "UP", "B", "SIM", "RUF"]
+
+# ---------------------------------------------------------------------------
+# mypy
+#
+# Type checking here is deliberately *scoped*, and the reasoning is in
+# docs/adr/0002-scoped-type-checking.md. In short: `pandas-stubs` cannot narrow
+# the element type of a Series, so a single expression like
+# `df.index.max() - pd.Timedelta(...)` expands into a dozen "no overload
+# variant" errors that describe the stubs, not the code. Running strict mypy
+# over the dataframe plumbing produces ~250 such errors and the only way to
+# silence them is `cast()` and `# type: ignore` at nearly every line -- which
+# makes the codebase harder to read and the checker meaningless.
+#
+# So: the modules whose correctness is *logical* rather than dataframe-shaped
+# are checked strictly and must stay clean. The dataframe plumbing is checked
+# with the stub-noise error codes off, so genuine problems (undefined names,
+# bad calls, unreachable code) are still caught there.
+# ---------------------------------------------------------------------------
+[tool.mypy]
+python_version = "3.11"
+files = ["ingest", "features", "models", "drift", "pipeline", "serving"]
+ignore_missing_imports = true      # lightgbm, mlflow and evidently ship no stubs
+warn_unused_configs = true
+warn_redundant_casts = true
+no_implicit_optional = true
+check_untyped_defs = true
+
+# The pure-logic core: the statistics, the retrain policy, the thresholds, the
+# HTTP layer and the secret redaction. These have real invariants that types can
+# actually protect, they touch pandas lightly or not at all, and they are clean
+# today. Tightening them is cheap; letting them rot is not.
+[[tool.mypy.overrides]]
+module = [
+    "drift.config",
+    "drift.stats",
+    "drift.trigger",
+    "drift.simulate",
+    "ingest.config",
+    "ingest.http",
+    "models.fixtures",
+]
+disallow_untyped_defs = true
+disallow_incomplete_defs = true
+warn_return_any = true
+strict_equality = true
+
+# The dataframe plumbing. Still checked -- just not against stub limitations
+# that no amount of correct code can satisfy.
+[[tool.mypy.overrides]]
+module = [
+    "drift.detectors",
+    "drift.windows",
+    "features.build",
+    "features.panel",
+    "ingest.eia",
+    "ingest.store",
+    "models.backtest",
+    "models.lgbm",
+    "models.train",
+    "models.__main__",
+    "pipeline.daily",
+    "pipeline.plots",
+    "serving.app",
+]
+disable_error_code = ["operator", "arg-type", "union-attr", "index", "call-overload"]
