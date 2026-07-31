@@ -1,6 +1,6 @@
 {
   "milestone": "M2+M3",
-  "generated_at_utc": "2026-07-29T04:49:37+00:00",
+  "generated_at_utc": "2026-07-31T01:44:50+00:00",
   "is_real": false,
   "warning": "These numbers come from a SEEDED SYNTHETIC FIXTURE, not from EIA data. They are a smoke test of the pipeline, NOT a benchmark. The real baseline is pending the EIA API key \u2014 see docs/BLOCKED.md.",
   "models": {
@@ -755,9 +755,9 @@
   "registry": {
     "backend": "sqlite:///mlflow.db (local, gitignored)",
     "experiment": "energy-demand-forecast",
-    "run_id": "46f32658b4774ea5bb8c7e0119bd20d3",
+    "run_id": "080189369e3f451da51bd5884de2731b",
     "registered_model": "energy-demand-forecaster",
-    "version": "2",
+    "version": "4",
     "alias": "champion",
     "uri": "models:/energy-demand-forecaster@champion",
     "beats_baseline": true,

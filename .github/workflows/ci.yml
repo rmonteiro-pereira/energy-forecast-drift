@@ -110,3 +110,33 @@ jobs:
             echo "::error::a file in metrics/ exceeds 5MB"
             exit 1
           fi
+
+      # The honesty contract on the published artifacts. `uv run pytest` above
+      # already covers tests/test_artifacts.py, but naming it as its own step
+      # means a failure reads as "a committed artifact makes a false claim about
+      # its own provenance" in the checks list, rather than as one dot among 180.
+      - name: Committed artifacts must not misstate their provenance
+        run: uv run pytest tests/test_artifacts.py -v
+
+      # Belt and braces on the same property, independent of pytest: no
+      # published artifact may pair is_real=true with a synthetic fixture.
+      # This one keeps working even if the test file is deleted.
+      - name: No artifact may claim real data while carrying a fixture
+        run: |
+          uv run python - <<'PY'
+          import json, pathlib, sys
+          bad = []
+          for p in sorted(pathlib.Path("metrics").glob("*.json")):
+              d = json.loads(p.read_text(encoding="utf-8"))
+              if "is_real" not in d:
+                  bad.append(f"{p}: no top-level is_real")
+                  continue
+              kind = (d.get("data") or {}).get("kind")
+              if d["is_real"] and kind == "synthetic_fixture":
+                  bad.append(f"{p}: is_real=true with kind=synthetic_fixture")
+              if not d["is_real"] and not d.get("warning"):
+                  bad.append(f"{p}: synthetic but carries no warning")
+          for line in bad:
+              print(f"::error::{line}")
+          sys.exit(1 if bad else 0)
+          PY
