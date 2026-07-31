@@ -110,7 +110,9 @@ def main(argv: list[str] | None = None) -> int:
     )
     DATA_DIR.mkdir(parents=True, exist_ok=True)
 
-    summary: dict[str, dict] = {"started_at_utc": datetime.now(UTC).isoformat(timespec="seconds")}
+    # Mixed on purpose: a top-level timestamp string plus one nested dict per
+    # source leg, so the printed record is self-describing.
+    summary: dict[str, object] = {"started_at_utc": datetime.now(UTC).isoformat(timespec="seconds")}
     failures = 0
 
     with httpx.Client(headers={"User-Agent": USER_AGENT}, follow_redirects=True) as client:

@@ -17,6 +17,16 @@ exempted itself from its own repo's scan would be the wrong kind of exception.
 **Environment:** Windows 11, Python 3.11.12, Node 22, `uv`, all on `main` at
 commit `e988a0e`, run 2026-07-31.
 
+> **The test counts below are the ones that run printed, and they are lower than
+> today's.** This page is a transcript pinned to `e988a0e`, where the suite was
+> **178 passed / 2 skipped**. Since then the type pass, the CodeRabbit fixes and
+> the mutation-testing work added tests, and the suite is **208 collected, 206
+> passed, 2 skipped**. Re-running every command to refresh the numbers would
+> replace a real transcript with a newer real transcript and change nothing about
+> what it demonstrates, so the original is kept and the delta is stated here
+> instead. The current counts are in the README and in
+> [`MUTATION-TESTING.md`](MUTATION-TESTING.md).
+
 ---
 
 ## 0. Setup

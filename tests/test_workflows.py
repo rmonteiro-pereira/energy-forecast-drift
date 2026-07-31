@@ -88,6 +88,92 @@ def test_the_daily_workflow_fails_fast_without_a_key():
     )
 
 
+def test_the_daily_workflow_goes_dormant_rather_than_red_without_a_key():
+    """No key must mean "did nothing, green", not "failed, red".
+
+    The repository is public, so the Actions tab is part of what a visitor reads.
+    A red X on the only scheduled workflow says "this is broken"; the truth is
+    "this is waiting for a free API key". The safety rule is unchanged either
+    way -- doing no work publishes nothing, which satisfies it more completely
+    than failing does.
+    """
+    daily = load(DAILY)
+    every = steps_of(daily, "pipeline")
+
+    preflight = [s for s in every if s.get("id") == "preflight"]
+    assert len(preflight) == 1, "the daily job has no single `preflight` step"
+    assert preflight[0].get("env", {}).get("EIA_API_KEY") == "${{ secrets.EIA_API_KEY }}", (
+        "the preflight step cannot see the secret it is meant to test for"
+    )
+    assert "has_key" in preflight[0].get("run", ""), (
+        "the preflight step does not publish a `has_key` output"
+    )
+
+    guard = "steps.preflight.outputs.has_key == 'true'"
+
+    # Every step that installs, computes, writes or pushes must be gated.
+    must_be_gated = [
+        s
+        for s in every
+        if s is not preflight[0] and s.get("uses", "").split("@")[0] != "actions/checkout"
+    ]
+    ungated = [
+        s.get("name", s.get("uses", "?"))
+        for s in must_be_gated
+        if guard not in str(s.get("if", ""))
+    ]
+    assert not ungated, (
+        f"these steps run even when no key is configured, so the job would do work "
+        f"and could go red on a dormant repo: {ungated}"
+    )
+
+
+def test_the_cache_is_saved_only_after_a_successful_run():
+    """A failed run must not persist half-updated state for every later run.
+
+    `actions/cache/save` under `always()` would cache a partially written
+    `data/`, `mlflow.db` or `mlruns/` after a mid-pipeline failure — and since
+    the next run restores from that key, one bad run would poison all of them
+    with no visible symptom. Losing a delta pull costs one API call; restoring
+    corrupt MLflow state costs a debugging session.
+
+    The upload-artifact step is deliberately the opposite: it *should* run on
+    failure, because a failed run that explains itself is the point of it.
+    """
+    steps = steps_of(load(DAILY), "pipeline")
+
+    save = [s for s in steps if s.get("uses", "").startswith("actions/cache/save")]
+    assert len(save) == 1, "expected exactly one cache/save step"
+    condition = str(save[0].get("if", ""))
+    assert "always()" not in condition, (
+        "cache/save runs under always(); a failed run would cache broken state "
+        f"and every later run would restore it. Condition: {condition!r}"
+    )
+    assert "success()" in condition, f"cache/save should be gated on success(): {condition!r}"
+
+    upload = [s for s in steps if s.get("uses", "").startswith("actions/upload-artifact")]
+    assert len(upload) == 1
+    assert "always()" in str(upload[0].get("if", "")), (
+        "the run record must still be uploaded when the pipeline fails — that is "
+        "when it is most worth reading"
+    )
+
+
+def test_the_dormant_path_never_weakens_the_publish_guard():
+    """Going quiet must not become a way to publish fixture numbers."""
+    commands = run_commands(load(DAILY), "pipeline")
+    # The real run still refuses to publish without a key, for the case the
+    # secret exists but is empty or rejected part-way through.
+    assert "--require-eia-key" in commands
+    assert "--source real" in commands, (
+        "the daily run must ask for real data explicitly; falling back to the "
+        "fixture is what --require-eia-key exists to prevent"
+    )
+    assert "--source synthetic" not in commands, (
+        "the daily workflow must never run against the fixture"
+    )
+
+
 def test_the_key_reaches_the_job_as_a_secret_and_is_never_echoed():
     daily = load(DAILY)
     text = DAILY.read_text(encoding="utf-8")
