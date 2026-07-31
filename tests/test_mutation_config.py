@@ -217,3 +217,110 @@ def test_the_workflow_pins_the_same_interpreter_as_ci():
     ]
     assert len(setup) == 1
     assert str(setup[0].get("with", {}).get("python-version", "")).strip() == pinned
+
+
+# ---------------------------------------------------------------------------
+# The document that publishes the score. It drifted once: after the run that
+# took 52.3% to 61.2%, the header and the gap section were updated while the
+# accepted-survivors table kept the previous run's counts (summing to 188
+# against a stated 163) and the closing bullets still said 52.3%, 226
+# survivors and 38 gaps. Nothing read the document as a whole, so it disagreed
+# with itself for a day. These assertions are pure arithmetic over the doc's
+# own tables — no mutmut cache needed — so they run everywhere pytest does,
+# including the pre-flight step of the mutation workflow.
+# ---------------------------------------------------------------------------
+
+DOC = REPO / "docs" / "MUTATION-TESTING.md"
+
+
+def _doc() -> str:
+    return DOC.read_text(encoding="utf-8")
+
+
+def _stated_totals(doc: str) -> tuple[int, int, float, int]:
+    stated = re.search(
+        r"\*\*(\d+) mutants across (\d+) source lines\.\s+(\d+) are real gaps "
+        r"\((\d+\.\d)%\);\s+(\d+) are\s+accepted\.\*\*",
+        doc,
+    )
+    assert stated, "MUTATION-TESTING.md no longer states its survivor totals"
+    n_mutants, _n_lines, n_gaps, gap_pct, n_accepted = (
+        int(stated.group(1)),
+        int(stated.group(2)),
+        int(stated.group(3)),
+        float(stated.group(4)),
+        int(stated.group(5)),
+    )
+    return n_mutants, n_gaps, gap_pct, n_accepted
+
+
+def test_the_mutation_doc_agrees_with_itself():
+    doc = _doc()
+
+    total_row = re.search(
+        r"\| \*\*Total\*\* \| \*\*(\d+)\*\* \| \*\*(\d+)\*\* \| \*\*(\d+\.\d)%\*\* \|", doc
+    )
+    assert total_row, "the score table no longer has a Total row"
+    killed, total, score = (
+        int(total_row.group(1)),
+        int(total_row.group(2)),
+        float(total_row.group(3)),
+    )
+    assert round(100 * killed / total, 1) == score, "the Total row's score is not killed/total"
+    survivors = total - killed
+
+    headline = re.search(r"The headline number is (\d+\.\d)%", doc)
+    assert headline, "the doc no longer opens with the headline score"
+    assert float(headline.group(1)) == score
+
+    adjudicated = re.search(r"Every one of the (\d+) survivors is adjudicated", doc)
+    assert adjudicated, "the adjudication heading no longer states the survivor count"
+    assert int(adjudicated.group(1)) == survivors
+
+    n_mutants, n_gaps, gap_pct, n_accepted = _stated_totals(doc)
+    assert n_mutants == survivors, (
+        f"the doc adjudicates {n_mutants} survivors but its score table implies {survivors}"
+    )
+    assert n_gaps + n_accepted == n_mutants
+    assert round(100 * n_gaps / n_mutants, 1) == gap_pct
+
+    gaps_heading = re.search(r"### The gaps — (\d+) mutants", doc)
+    assert gaps_heading and int(gaps_heading.group(1)) == n_gaps
+    accepted_heading = re.search(r"### The accepted survivors — (\d+) mutants", doc)
+    assert accepted_heading, "the accepted-survivors heading no longer states a count"
+    assert int(accepted_heading.group(1)) == n_accepted, (
+        f"the accepted-survivors heading says {accepted_heading.group(1)} "
+        f"but the stated totals say {n_accepted}"
+    )
+
+
+def test_the_survivor_tables_sum_to_their_stated_totals():
+    """The drift that actually happened: a regenerated header over a stale table."""
+    doc = _doc()
+    rows = re.findall(r"^\| `((?:gap|accepted):[a-z-]+)` \| (\d+) \| (\d+) \|", doc, flags=re.M)
+    assert rows, "the doc no longer carries per-rule survivor tables"
+    gap_sum = sum(int(m) for rule, _lines, m in rows if rule.startswith("gap:"))
+    accepted_sum = sum(int(m) for rule, _lines, m in rows if rule.startswith("accepted:"))
+    _n_mutants, n_gaps, _gap_pct, n_accepted = _stated_totals(doc)
+    assert gap_sum == n_gaps, f"the gap table sums to {gap_sum}, the doc claims {n_gaps}"
+    assert accepted_sum == n_accepted, (
+        f"the accepted table sums to {accepted_sum}, the doc claims {n_accepted}"
+    )
+
+
+def test_every_rule_the_doc_tabulates_exists_in_the_adjudication_script():
+    """A table row naming a rule the script deleted describes a codebase that is gone."""
+    doc = _doc()
+    script = SURVIVOR_SCRIPT.read_text(encoding="utf-8")
+    rules = {
+        rule
+        for rule, _lines, _m in re.findall(
+            r"^\| `((?:gap|accepted):[a-z-]+)` \| (\d+) \| (\d+) \|", doc, flags=re.M
+        )
+    }
+    assert rules
+    for rule in sorted(rules):
+        assert f'"{rule}"' in script, (
+            f"MUTATION-TESTING.md tabulates {rule!r} but scripts/mutation_survivors.py "
+            "no longer declares it"
+        )

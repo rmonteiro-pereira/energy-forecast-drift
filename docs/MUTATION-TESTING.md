@@ -158,37 +158,38 @@ counter that increments by two, and `mape_pct == approx(0.0)` passes on any
 formula at all when the forecast is perfect. Mutation testing is the only thing
 in this repository that could have found either.
 
-### The accepted survivors — 188 mutants, and why each is not a defect
+### The accepted survivors — 163 mutants, and why each is not a defect
 
 | Rule | Lines | Mutants | Reason |
 |---|---:|---:|---|
-| `accepted:human-readable-text` | 83 | 110 | Summaries, notes, log messages, f-strings. Asserting exact wording breaks on every copy edit and protects nothing; the artifact *schema* is asserted separately. |
-| `accepted:dataframe-plumbing` | 11 | 15 | concat/assign/groupby arguments. A mutation either raises immediately or produces the same frame, whose contents are asserted by the tests that consume it. |
-| `accepted:sort-or-selection-order` | 7 | 9 | Sort keys and `idxmax` selection deciding presentation order. The *set* is asserted; the order in a report is not a correctness property. |
+| `accepted:human-readable-text` | 78 | 100 | Summaries, notes, log messages, f-strings. Asserting exact wording breaks on every copy edit and protects nothing; the artifact *schema* is asserted separately. |
+| `accepted:sort-or-selection-order` | 6 | 8 | Sort keys and `idxmax` selection deciding presentation order. The *set* is asserted; the order in a report is not a correctness property. |
 | `accepted:table-rendering` | 2 | 7 | Markdown row selection and line joining. Presentation only. |
-| `accepted:dataclass-field-default` | 6 | 7 | Field defaults; the constructed values are asserted by the tests that build these objects. |
+| `accepted:dataframe-plumbing` | 6 | 6 | concat/assign/groupby arguments. A mutation either raises immediately or produces the same frame, whose contents are asserted by the tests that consume it. |
+| `accepted:dataclass-field-default` | 5 | 6 | Field defaults; the constructed values are asserted by the tests that build these objects. |
 | `accepted:module-constant` | 4 | 6 | Configuration defaults, already parametrised by the threshold tests. |
 | `accepted:redundant-payload-label` | 5 | 5 | `drift_type="feature"` — `run_all` already keys the sections by those exact names, so the label duplicates the key a consumer indexes by. |
 | `accepted:empty-window-sentinel` | 1 | 5 | The all-`None` dict for an empty window; its only consumer is the insufficient-data guard, which is tested. |
 | `accepted:none-guard-on-optional-report-field` | 4 | 4 | Both branches covered; the mutation swaps which already-tested path is taken. |
-| `accepted:local-alias-or-unpack` | 4 | 4 | A binding consumed by the next line, which is itself covered. |
 | `accepted:comprehension-filter-restating-a-tested-rule` | 3 | 3 | The deterministic-column and insufficient-data exclusions each have dedicated tests. |
 | `accepted:delegation-to-a-directly-tested-callee` | 3 | 3 | Straight-through calls to `_section_from_columns`, which has its own boundary tests. |
 | `accepted:artifact-detail-toggle` | 3 | 3 | `with_bins=` changes verbosity; both settings produce a valid artifact. |
-| `accepted:syntax-continuation` | 3 | 3 | Closing brackets carrying no logic. |
 | `accepted:keyword-default-argument` | 2 | 2 | Every caller passes the argument explicitly. |
+| `accepted:local-alias-or-unpack` | 2 | 2 | A binding consumed by the next line, which is itself covered. |
 | `accepted:equivalent-single-column-branch` | 1 | 1 | **Provably equivalent**: with one scored column the share is 0.0 or 1.0 and the ladder below reaches the same verdict for all three severities. A readability shortcut, not a fork. |
 | `accepted:strict-zip-pairing` | 1 | 1 | The two sequences are built from the same tuple one line apart, so `strict=True` documents an invariant rather than enforcing a reachable one. |
+| `accepted:syntax-continuation` | 1 | 1 | Closing brackets carrying no logic. |
 
 ## What this does *not* say
 
 - It covers **two files**. The other ~4,500 lines are unmeasured. This is not a
   repo-wide quality figure and is not presented as one.
-- 52.3% is a **low score**. Roughly half the small changes you could make to
-  those two files would go unnoticed by the suite. The mitigating detail is
-  *which* half: 110 of the 226 surviving mutants are prose, and the comparisons
-  that drive the alarm are now pinned. The mitigating detail is not an excuse —
-  38 survivors are genuine gaps and they are listed above by name.
+- 61.2% is a **modest score**. Roughly four in ten of the small changes you
+  could make to those two files would go unnoticed by the suite. The mitigating
+  detail is *which* four in ten: 100 of the 184 surviving mutants are prose, and
+  the comparisons that drive the alarm are now pinned. The mitigating detail is
+  not an excuse — 21 survivors are genuine gaps and they are listed above by
+  name.
 - It says nothing about whether the *thresholds themselves* are right. Mutation
   testing checks that the code does what the tests say; whether PSI > 0.2 is the
   correct place to alert on real PJM demand is an empirical question that needs

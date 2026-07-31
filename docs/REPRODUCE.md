@@ -19,13 +19,14 @@ commit `e988a0e`, run 2026-07-31.
 
 > **The test counts below are the ones that run printed, and they are lower than
 > today's.** This page is a transcript pinned to `e988a0e`, where the suite was
-> **178 passed / 2 skipped**. Since then the type pass, the CodeRabbit fixes and
-> the mutation-testing work added tests, and the suite is **208 collected, 206
-> passed, 2 skipped**. Re-running every command to refresh the numbers would
-> replace a real transcript with a newer real transcript and change nothing about
-> what it demonstrates, so the original is kept and the delta is stated here
-> instead. The current counts are in the README and in
-> [`MUTATION-TESTING.md`](MUTATION-TESTING.md).
+> **178 passed / 2 skipped**. The suite has grown since — the type pass, the
+> CodeRabbit fixes and the mutation-testing work all added tests. Re-running
+> every command to refresh the numbers would replace a real transcript with a
+> newer real transcript and change nothing about what it demonstrates, so the
+> original is kept. An earlier version of this very note quoted a "current"
+> count that had itself gone stale, which is the fate of every second copy of a
+> live number — so the current count is stated once, in the README, where
+> `tests/test_doc_claims.py` collects the suite and fails if the prose drifts.
 
 ---
 
