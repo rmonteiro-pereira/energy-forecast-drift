@@ -18,10 +18,21 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # The interpreter is pinned, and it has to be. `requires-python = ">=3.11"`
+      # lets uv pick the newest Python on the runner, which was 3.12 — while
+      # `[tool.mypy] python_version = "3.11"` told mypy to analyse under 3.11
+      # rules. mypy then read numpy's 3.12-installed stubs, hit a `type`
+      # statement, and failed with a syntax error that had nothing to do with
+      # this codebase. Locally it passed, because the local venv is 3.11.
+      #
+      # `.python-version` is what uv actually reads; this is stated here too so
+      # the version is visible in the workflow rather than only in a dotfile.
+      # `tests/test_toolchain.py` asserts the two never drift apart again.
       - name: Install uv
         uses: astral-sh/setup-uv@v5
         with:
           enable-cache: true
+          python-version: "3.11"
 
       - name: Install dependencies
         run: uv sync --extra dev --frozen
