@@ -1,6 +1,6 @@
 # Mutation testing
 
-> **The headline number is 52.3%, and that is not good.** It is published here
+> **The headline number is 61.2%.** It is published here
 > because a measured mediocre score with the survivors listed is worth more than
 > a flattering one — and because finding out *which* assertions were missing
 > already produced a real fix.
@@ -33,8 +33,9 @@ exits non-zero whenever *any* mutant survives, which is permanently true here.
 ## How to run it
 
 ```bash
-uv run --extra dev mutmut run                            # ~25 min for 474 mutants
-uv run python scripts/mutation_score.py --floor 50       # the number below
+uv run --extra dev mutmut run                            # ~28 min for 474 mutants
+uv run python scripts/mutation_score.py --floor 61       # the number below
+uv run python scripts/mutation_survivors.py --check      # every survivor judged
 ```
 
 `scripts/mutation_score.py` is committed, not scratch tooling — the figure in
@@ -52,9 +53,9 @@ Measured on commit `3dd8e20` + the boundary tests, 2026-07-31.
 
 | File | Killed | Total | Score |
 |---|---:|---:|---:|
-| `drift/detectors.py` | 167 | 342 | **48.8%** |
-| `models/backtest.py` | 81 | 132 | **61.4%** |
-| **Total** | **248** | **474** | **52.3%** |
+| `drift/detectors.py` | 198 | 342 | **57.9%** |
+| `models/backtest.py` | 92 | 132 | **69.7%** |
+| **Total** | **290** | **474** | **61.2%** |
 
 ### Before and after the boundary tests
 
@@ -63,12 +64,12 @@ The first run is reported too, because the improvement is the interesting part.
 | Run | Killed / total | Score | What changed |
 |---|---:|---:|---|
 | 1 — as the suite stood | 223 / 470 | 47.4% | — |
-| 2 — after `tests/test_drift_boundaries.py` | 248 / 474 | **52.3%** | 21 new boundary tests |
+| 2 — after `tests/test_drift_boundaries.py` | 248 / 474 | 52.3% | 21 new boundary tests |
+| 3 — after closing three named gaps | 290 / 474 | **61.2%** | 18 tests over `drift_timeline`, the MAPE formula and fold accounting |
 
-`drift/detectors.py` went **42.0% → 48.8%**. `models/backtest.py` is unchanged at
-**61.4%**, because the new tests targeted the detectors only — stated rather than
-averaged away. The mutant count rose from 470 to 474 because the fix described
-below added four mutable lines.
+Across the three runs `drift/detectors.py` went **42.0% -> 48.8% -> 57.9%** and
+`models/backtest.py` **61.4% -> 61.4% -> 69.7%**. The mutant count rose from 470
+to 474 because the artifact fix described below added four mutable lines.
 
 ## What the first run found
 
@@ -108,33 +109,76 @@ happened to be eligible, and "everything was excluded as deterministic" is
 precisely when a reader most wants to know which columns those were. Both
 branches now report it.
 
-## The 226 survivors, honestly
+## Every one of the 184 survivors is adjudicated
 
-Classified by what the mutated line actually is:
+Not summarised — **adjudicated**. Each surviving mutant matches exactly one rule
+in [`scripts/mutation_survivors.py`](../scripts/mutation_survivors.py), and each
+rule carries a verdict and a written reason. `--check` **fails** when a survivor
+matches no rule, and that gate runs in the mutation workflow, so a new survivor
+cannot quietly join the pile unexamined.
 
-| Kind | Survivor lines | Worth killing? |
-|---|---:|---|
-| Strings, log messages, dict keys, `description`/`note` prose | 120 | **No.** Asserting exact wording makes tests break on every copy edit and protects nothing. |
-| Comparisons and branches | 13 | **Some — listed below.** |
-| Arithmetic and `round(x, n)` precision | 4 | Mostly no. Rounding a reported figure to 6 places instead of 4 is not a defect. |
-| Other (defaults, sort keys, dataclass fields) | 26 | Mixed. |
+```bash
+uv run python scripts/mutation_survivors.py            # the full table
+uv run python scripts/mutation_survivors.py --check    # the CI gate
+```
 
-### The survivors that are real gaps
+**184 mutants across 141 source lines. 21 are real gaps (11.4%); 163 are
+accepted.**
 
-Named individually rather than summarised, because these are the ones a reader
-should hold against the suite:
+> **The gap count has moved twice, in both directions, and both moves matter.**
+> An early draft put it at 14 — a guess from eyeballing categories, too
+> flattering by nearly three times. Adjudicating every survivor individually
+> raised it to 38. Then three of those gaps were *closed* with real tests, taking
+> it to 21 and the score from 52.3% to 61.2%. Up because the method got honest;
+> down because the tests got better. Only the second kind is worth celebrating.
+>
+> **`gap:mape-formula-unpinned` is gone entirely** — `tests/test_backtest_accounting.py`
+> now pins MAPE to hand-computed values (a flat 100 MWh series mispredicted by
+> exactly 10 must give exactly 10%), killing all three mutants. The rule was
+> deleted rather than kept as a trophy: revert the test and those mutants come
+> back **unadjudicated** and fail `--check`, which is the behaviour we want.
 
-| Location | Line | Why it survives |
-|---|---|---|
-| `detectors.py:103` | `ks.p_value < thresholds.ks_p_alert` | The KS test is exercised at 10× either side of alpha, never at exactly alpha, so `<` and `<=` never disagree. |
-| `detectors.py:107` | `min(ref_n, cur_n) < thresholds.min_samples` | Same: `min_samples` is tested well inside both regions, never at exactly 200. |
-| `detectors.py:165` | `elif alerting or share >= warn or warning:` | A three-way `or`. The other disjuncts short-circuit, masking a mutation of any one of them. Genuinely hard to kill without contrived inputs. |
-| `detectors.py:490` | `frame[(frame["day"] <= day) & (frame["day"] > day - span)]` | **7 mutants.** The trailing-window boundary in `drift_timeline` is not tested at all — the timeline is asserted for shape, not for which rows land in which window. The largest single gap left. |
-| `backtest.py:200` | `return float(actual) != 0.0` | The MAPE zero-guard. Never tested with an actual of exactly zero. |
-| `backtest.py:66,79` | `if len(index) == 0`, `if start > last_usable` | Degenerate-input guards in `make_cutoffs`, reachable only with series shorter than the tests use. |
+### The gaps — 21 mutants the tests should have caught
 
-`backtest.py:205` (`horizon_h % every == 0`, 6 mutants) is table-row selection for
-the rendered markdown. Cosmetic; not worth a test.
+| Rule | Lines | Mutants | Why it survives |
+|---|---:|---:|---|
+| `gap:drift-timeline-untested` | 2 | 2 | `drift_timeline` is asserted for shape, never content: which rows fall in which trailing window, which features are eligible, and the below-`min_samples` path are all unpinned. Largest single gap. |
+| `gap:skipped-fold-accounting-weakly-asserted` | 3 | 5 | The only assertion is `skipped_folds >= 1` — incrementing by two, or skipping a different fold, still passes. Existence is checked; correctness is not. |
+| `gap:feature-drift-insufficient-branch` | 2 | 6 | The "no column was eligible" branch of `feature_drift` is unreached: the test calls `_section_from_columns` directly and never goes through the detector. |
+| `gap:compound-or-short-circuits` | 1 | 2 | Three-way `or` in the WARN branch; the other disjuncts short-circuit and mask a mutation of any one. |
+| `gap:degenerate-input-guards` | 2 | 2 | `make_cutoffs` guards reachable only with a series shorter than any fixture builds. |
+| `gap:ks-alpha-boundary` | 1 | 1 | KS exercised at 10× either side of alpha, never *at* alpha, so `<` and `<=` never disagree. |
+| `gap:min-samples-boundary` | 1 | 1 | `min_samples` tested well inside both regions, never at exactly 200. |
+| `gap:performance-insufficient-compound-guard` | 1 | 1 | Exercised only via an empty reference window; the other two disjuncts are masked. |
+| `gap:mape-zero-guard` | 1 | 1 | Never exercised with an actual of exactly `0.0`. |
+
+Two of those are worth reading twice, because they are cases where a test exists
+and is **too weak to be worth its green tick**: `skipped_folds >= 1` passes on a
+counter that increments by two, and `mape_pct == approx(0.0)` passes on any
+formula at all when the forecast is perfect. Mutation testing is the only thing
+in this repository that could have found either.
+
+### The accepted survivors — 188 mutants, and why each is not a defect
+
+| Rule | Lines | Mutants | Reason |
+|---|---:|---:|---|
+| `accepted:human-readable-text` | 83 | 110 | Summaries, notes, log messages, f-strings. Asserting exact wording breaks on every copy edit and protects nothing; the artifact *schema* is asserted separately. |
+| `accepted:dataframe-plumbing` | 11 | 15 | concat/assign/groupby arguments. A mutation either raises immediately or produces the same frame, whose contents are asserted by the tests that consume it. |
+| `accepted:sort-or-selection-order` | 7 | 9 | Sort keys and `idxmax` selection deciding presentation order. The *set* is asserted; the order in a report is not a correctness property. |
+| `accepted:table-rendering` | 2 | 7 | Markdown row selection and line joining. Presentation only. |
+| `accepted:dataclass-field-default` | 6 | 7 | Field defaults; the constructed values are asserted by the tests that build these objects. |
+| `accepted:module-constant` | 4 | 6 | Configuration defaults, already parametrised by the threshold tests. |
+| `accepted:redundant-payload-label` | 5 | 5 | `drift_type="feature"` — `run_all` already keys the sections by those exact names, so the label duplicates the key a consumer indexes by. |
+| `accepted:empty-window-sentinel` | 1 | 5 | The all-`None` dict for an empty window; its only consumer is the insufficient-data guard, which is tested. |
+| `accepted:none-guard-on-optional-report-field` | 4 | 4 | Both branches covered; the mutation swaps which already-tested path is taken. |
+| `accepted:local-alias-or-unpack` | 4 | 4 | A binding consumed by the next line, which is itself covered. |
+| `accepted:comprehension-filter-restating-a-tested-rule` | 3 | 3 | The deterministic-column and insufficient-data exclusions each have dedicated tests. |
+| `accepted:delegation-to-a-directly-tested-callee` | 3 | 3 | Straight-through calls to `_section_from_columns`, which has its own boundary tests. |
+| `accepted:artifact-detail-toggle` | 3 | 3 | `with_bins=` changes verbosity; both settings produce a valid artifact. |
+| `accepted:syntax-continuation` | 3 | 3 | Closing brackets carrying no logic. |
+| `accepted:keyword-default-argument` | 2 | 2 | Every caller passes the argument explicitly. |
+| `accepted:equivalent-single-column-branch` | 1 | 1 | **Provably equivalent**: with one scored column the share is 0.0 or 1.0 and the ladder below reaches the same verdict for all three severities. A readability shortcut, not a fork. |
+| `accepted:strict-zip-pairing` | 1 | 1 | The two sequences are built from the same tuple one line apart, so `strict=True` documents an invariant rather than enforcing a reachable one. |
 
 ## What this does *not* say
 
@@ -142,8 +186,9 @@ the rendered markdown. Cosmetic; not worth a test.
   repo-wide quality figure and is not presented as one.
 - 52.3% is a **low score**. Roughly half the small changes you could make to
   those two files would go unnoticed by the suite. The mitigating detail is
-  *which* half: 120 of the survivor lines are prose, and the comparisons that
-  drive the alarm are now pinned. The mitigating detail is not an excuse.
+  *which* half: 110 of the 226 surviving mutants are prose, and the comparisons
+  that drive the alarm are now pinned. The mitigating detail is not an excuse —
+  38 survivors are genuine gaps and they are listed above by name.
 - It says nothing about whether the *thresholds themselves* are right. Mutation
   testing checks that the code does what the tests say; whether PSI > 0.2 is the
   correct place to alert on real PJM demand is an empirical question that needs

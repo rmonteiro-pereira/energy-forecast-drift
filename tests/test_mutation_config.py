@@ -26,6 +26,7 @@ PYPROJECT = tomllib.loads((REPO / "pyproject.toml").read_text(encoding="utf-8"))
 MUTMUT = PYPROJECT.get("tool", {}).get("mutmut", {})
 WORKFLOW = REPO / ".github" / "workflows" / "mutation.yml"
 SCORE_SCRIPT = REPO / "scripts" / "mutation_score.py"
+SURVIVOR_SCRIPT = REPO / "scripts" / "mutation_survivors.py"
 
 
 def targets() -> list[str]:
@@ -85,6 +86,66 @@ def test_the_score_script_is_committed():
     """The reported number has to be regenerable by someone who is not me."""
     assert SCORE_SCRIPT.exists(), "scripts/mutation_score.py is missing"
     assert "floor" in SCORE_SCRIPT.read_text(encoding="utf-8")
+
+
+def test_every_adjudication_rule_carries_a_written_reason():
+    """A rule with an empty reason is an undecided survivor wearing a label.
+
+    The failure this guards against: a mutation report that lists hundreds of
+    survivors and decides nothing about any of them. Each rule in
+    `scripts/mutation_survivors.py` must state a verdict *and* say why, in
+    enough words to be an argument rather than a shrug.
+    """
+    assert SURVIVOR_SCRIPT.exists(), "scripts/mutation_survivors.py is missing"
+
+    import importlib.util
+    import sys
+
+    spec = importlib.util.spec_from_file_location("mutation_survivors", SURVIVOR_SCRIPT)
+    assert spec and spec.loader
+    module = importlib.util.module_from_spec(spec)
+    # Registered before exec: the module defines a dataclass under
+    # `from __future__ import annotations`, and dataclasses resolves those
+    # annotations via sys.modules[cls.__module__]. Without this it raises
+    # AttributeError on None.
+    sys.modules[spec.name] = module
+    try:
+        spec.loader.exec_module(module)
+    finally:
+        sys.modules.pop(spec.name, None)
+
+    assert module.RULES, "no adjudication rules are defined"
+    for rule in module.RULES:
+        assert rule.verdict in {module.ACCEPTED, module.GAP}, (
+            f"rule {rule.name!r} has verdict {rule.verdict!r}, which is neither "
+            f"{module.ACCEPTED} nor {module.GAP}"
+        )
+        assert len(rule.reason.split()) >= 12, (
+            f"rule {rule.name!r} has a {len(rule.reason.split())}-word reason. "
+            "State the argument, not a label — this is the field that stops the "
+            "report being decoration."
+        )
+        assert rule.pattern is not None or rule.locations, (
+            f"rule {rule.name!r} matches nothing, so it adjudicates nothing"
+        )
+
+    gaps = [r for r in module.RULES if r.verdict == module.GAP]
+    assert gaps, (
+        "every rule is ACCEPTED. A survivor set with no acknowledged gaps in it "
+        "is a sign the adjudication is rationalising rather than judging."
+    )
+
+
+def test_the_workflow_gates_on_adjudication_not_just_on_the_score():
+    steps = workflow()["jobs"]["mutate"]["steps"]
+    adjudication = [s for s in steps if "mutation_survivors.py" in str(s.get("run", ""))]
+    assert len(adjudication) == 1, (
+        "mutation.yml never runs scripts/mutation_survivors.py, so an "
+        "unadjudicated survivor would pass unnoticed"
+    )
+    assert "--check" in str(adjudication[0]["run"]), (
+        "the adjudication step runs without --check, so it reports but never fails"
+    )
 
 
 # ---------------------------------------------------------------------------
