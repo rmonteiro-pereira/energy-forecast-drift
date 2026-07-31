@@ -41,6 +41,7 @@ from drift.windows import (
     ERROR_COLUMN,
     ScoredWindows,
 )
+from features import build as build_mod
 
 T = DEFAULT_THRESHOLDS
 
@@ -253,6 +254,43 @@ def test_no_drifted_columns_is_ok():
     assert _share_severity(n_alerting=0, n_total=20) is Severity.OK
 
 
+def test_a_single_alerting_column_warns_even_when_its_share_is_below_the_warn_share():
+    """Isolates the `alerting` disjunct in `alerting or share >= warn or warning`.
+
+    One alerting column in twenty is a share of 0.05, below the 0.15 warn share,
+    and there are no warning columns -- so `alerting` is the only disjunct that
+    can carry the branch. Every other test drives a share large enough that the
+    middle disjunct is true as well, which masks a mutation turning the `or`
+    into an `and`.
+    """
+    assert T.drifted_share_warn > 1 / 20, "fixture no longer isolates the disjunct"
+    assert T.drifted_share_alert > 1 / 20
+
+    assert _share_severity(n_alerting=1, n_total=20) is Severity.WARN
+
+
+def test_the_warn_share_comparison_is_inclusive():
+    """`share >= warn`, not `>`.
+
+    This one is only observable under a degenerate configuration, and that is
+    worth stating plainly rather than hiding. `share` is `len(alerting) /
+    len(scored)`, so whenever `alerting` is empty the share is exactly 0.0 --
+    and whenever it is non-empty the first disjunct has already carried the
+    branch. The single input where `>=` and `>` disagree is therefore a warn
+    share of 0.0.
+
+    Killing it there is still worth doing: the comparison should be inclusive
+    for the same reason the alert share is, and a future refactor that reorders
+    the disjuncts would make this reachable on ordinary settings.
+    """
+    bands = dataclasses.replace(T, drifted_share_warn=0.0)
+    columns = [_column(f"f{i}", 0.0) for i in range(5)]
+
+    severity, rollup = detectors._section_from_columns("feature", columns, bands)
+    assert rollup["drifted_share"] == 0.0
+    assert severity is Severity.WARN
+
+
 def test_columns_below_the_minimum_sample_size_are_not_scored():
     """An under-powered column must not be able to raise the section severity."""
     columns = [_column("tiny", T.psi_alert + 5.0, n=T.min_samples - 1)]
@@ -279,6 +317,10 @@ def test_deterministic_columns_are_reported_but_never_vote():
     [
         (T.ks_p_alert / 10.0, True),  # clearly significant
         (T.ks_p_alert * 10.0, False),  # clearly not
+        # Exactly at alpha. `<` is strict, so this is *not* significant -- the
+        # one input where `<` and `<=` disagree, and the reason a mutation to
+        # `<=` survived a suite that only ever tested 10x either side.
+        (T.ks_p_alert, False),
     ],
 )
 def test_ks_significance_follows_the_configured_alpha(p_value, expected, monkeypatch):
@@ -323,3 +365,100 @@ def test_thresholds_can_be_tightened_and_the_ladder_follows():
         strict,
     )
     assert section.severity is Severity.ALERT
+
+
+def test_a_column_with_exactly_the_minimum_sample_size_is_scored():
+    """`min(ref_n, cur_n) < min_samples`, not `<=`.
+
+    At exactly `min_samples` the column has the power it was asked for, so it
+    must count. Marking it insufficient forces the severity to OK and silently
+    removes the column from the section vote -- a monitor that stops looking at
+    precisely the sample size it was configured to require.
+    """
+    n = 50
+    bands = dataclasses.replace(T, min_samples=n)
+    rng = np.random.default_rng(3)
+    reference = pd.Series(rng.normal(100.0, 5.0, n))
+    current = pd.Series(rng.normal(140.0, 5.0, n))
+
+    result = detectors.compare_column(reference, current, "x", bands)
+
+    assert result["psi"]["reference_n"] == n
+    assert result["insufficient_data"] is False, (
+        "a column with exactly min_samples rows must be scored, not excluded"
+    )
+    assert result["severity"] != Severity.OK.value, (
+        "the fixture is meant to drift; if it does not, the test proves nothing"
+    )
+
+
+# ---------------------------------------------------------------------------
+# feature_drift -- the "nothing was eligible" branch, through the real detector
+# ---------------------------------------------------------------------------
+def _feature_frame(rows: int, start: str, *, level: float = 100.0) -> pd.DataFrame:
+    """A frame carrying every model input, so `feature_drift` can run on it."""
+    rng = np.random.default_rng(abs(hash(start)) % 2**32)
+    frame = pd.DataFrame({"target_utc": pd.date_range(start, periods=rows, freq="h", tz="UTC")})
+    for name in build_mod.FEATURE_COLUMNS:
+        frame[name] = rng.normal(level, 5.0, rows)
+    return frame
+
+
+def test_feature_drift_reports_the_insufficient_summary_when_nothing_is_eligible():
+    """The branch was only ever reached by calling `_section_from_columns` directly.
+
+    Going through `feature_drift` is the difference that matters: the summary
+    string this branch produces is what a human reads in the artifact, and it
+    was never asserted, so a mutation blanking it to `None` survived.
+    """
+    windows = ScoredWindows(
+        reference=_feature_frame(10, "2026-01-01"),
+        current=_feature_frame(10, "2026-02-01"),
+        booster=None,
+        split={},
+        train_rows=0,
+    )
+    section = detectors.feature_drift(windows, T)
+
+    assert section.severity is Severity.OK
+    assert section.summary == "not enough rows in one of the windows to score feature drift"
+    assert section.details["columns_scored"] == 0
+
+
+def test_feature_drift_summary_names_the_worst_column_when_columns_are_scored():
+    """The other side of the same branch, so neither can be taken unconditionally."""
+    rows = T.min_samples + 50
+    windows = ScoredWindows(
+        reference=_feature_frame(rows, "2026-01-01", level=100.0),
+        current=_feature_frame(rows, "2026-02-01", level=180.0),
+        booster=None,
+        split={},
+        train_rows=0,
+    )
+    section = detectors.feature_drift(windows, T)
+
+    assert section.details["columns_scored"] > 0
+    assert "feature(s) above PSI" in section.summary
+    assert section.details["max_psi_column"] in section.summary
+
+
+def test_performance_drift_is_insufficient_when_only_the_current_window_is_empty():
+    """Isolates the second disjunct of the three-way insufficient-data guard.
+
+    The existing test empties the *reference* window, which makes the first and
+    third disjuncts true together and masks the middle one. An empty current
+    window with a healthy reference is the input where only `not current["n"]`
+    can stop the division.
+    """
+    section = detectors.performance_drift(
+        ScoredWindows(
+            reference=_window(1000.0, 2.0),
+            current=_window(1000.0, 2.0, rows=0),
+            booster=None,
+            split={},
+            train_rows=0,
+        ),
+        T,
+    )
+    assert section.severity is Severity.OK
+    assert section.details["status"] == detectors.INSUFFICIENT_DATA
