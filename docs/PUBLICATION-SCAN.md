@@ -382,28 +382,73 @@ quietly fixed, because a scanner that exempts its own output is not a scanner.
 | R1 | `docs/PUBLICATION-SCAN.md` §A1 | `email` | **This report printed the author's Gmail address in full**, in the block demonstrating that the address is exposed — while its own opening paragraph promised every value would be masked. Genuine defect. **Fixed:** the address is now masked like every other value. |
 | R2 | `docs/REPRODUCE.md` | `abs-project-path` | The pasted `pytest` and `vitest` headers carried the absolute path of the machine they ran on. Low severity — it leaks a directory layout, not a username or a credential — but it is the exact category §4 claims is at zero. **Fixed:** shortened to `<repo>`, with the edit declared at the top of that document. |
 | R3 | `docs/PUBLICATION-SCAN.md` §1.2 | `assigned-secret`, `abs-project-path` | This report quotes the scanner's own output, so it necessarily contains the strings the scanner matches — `SUPERSECRET`, `E:\Projetos…` inside the "0 hits" table row. **Not fixed, by design.** These are quotations of findings, and redacting a report's evidence would make it unreviewable. A re-run will always flag this file; that is the correct behaviour and this row is the explanation. |
+| R4 | git history, blobs `cf61e922e2` and `93f995b401` | `email`, `abs-project-path` | The R1 and R2 fixes corrected the working files. **They did not, and could not, correct the committed blobs.** Detailed below. |
 
-Nothing in R1–R3 was a credential. No key, token, or password appeared at any
+Nothing in R1–R4 was a credential. No key, token, or password appeared at any
 point, in any scope. But R1 is worth stating plainly: **the first version of this
 document leaked one of the two things it was written to find.** The re-scan caught
-it before publication, which is the entire argument for running the scan again at
-the end rather than only at the start.
+it in the worktree before publication — and R4 is the honest footnote that
+catching it there was not the same as removing it. That is the entire argument
+for scanning history separately from the worktree, and for scanning again at the
+end rather than only at the start.
 
-### Final scan, at the tip
+### R4 — fixing a file does not unfix the history
+
+The R1 fix corrected the **worktree**. It could not correct the **history**, and
+saying otherwise would be the exact error this report exists to avoid.
 
 ```
-# scanned 95 worktree files
-# scanned 147 distinct blobs across ALL refs and history
+$ python reports/_scan/scan_secrets.py history
+
+# scanned 149 distinct blobs across ALL refs and history
+## email  (2 hits)
+   [REVIEW] cf61e922e2 docs/PUBLICATION-SCAN.md:272  value=rodr***********************.com  (len=33)
 ```
 
-After the R1/R2 fixes, the only remaining matches in either scope are:
+Blob `cf61e922e2` is the version of **this file** committed in `c1a7935`, before
+the mask was applied. It is unreachable from `HEAD`'s content but perfectly
+readable via `git show c1a7935:docs/PUBLICATION-SCAN.md`. The same is true of
+`93f995b401` — the pre-fix `docs/REPRODUCE.md` with its absolute local paths.
 
-- the four npm `sha512-` integrity digests in `dashboard/package-lock.json` (S1),
-- the `SUPERSECRET` literal in `tests/test_clients.py` and its quotation in this
-  report (S2 / R3),
-- this report's own quotations of the findings it documents (R3).
+**Assessment: no incremental exposure, and therefore not a blocker.** The address
+is already in the author *and* committer fields of every one of the 25 commits
+(finding [A1](#a1--author-email-is-public)). Anyone who can read that blob can
+run `git log --format=%ae` and get the same string in less time. Removing the
+blob would leave the metadata, so it would buy nothing without also rewriting
+every commit — which is [A1](#a1--author-email-is-public)'s decision, is
+explicitly reserved for Rodrigo, and **was not done**.
 
-**No credential, no private address, no internal hostname, no user path, and no
-blob over 5 MB — in the worktree or anywhere in the history.**
+If Rodrigo does decide to scrub the address, the two must be done together:
+rewriting author/committer identities *and* the two blobs, in one pass, accepting
+that every SHA quoted in these documents changes. Half of that job is worse than
+none of it.
 
-The verdict at the top of this document stands: `SAFE TO PUBLISH: yes`.
+---
+
+## Final verdict
+
+Both scopes, at the tip:
+
+| Scope | Extent | Credentials found |
+|---|---|---|
+| **Worktree** | 95 files, tracked **and** untracked | **0** |
+| **Full history** | **149 distinct blobs across every ref and all 25 commits** — not just `HEAD`, and including blobs unreachable from it | **0** |
+
+Everything the scanner still matches, in either scope, is accounted for:
+
+- the four npm `sha512-` integrity digests in `dashboard/package-lock.json` (S1) —
+  published checksums of public tarballs;
+- the `SUPERSECRET` literal in `tests/test_clients.py` (S2) — the fixture in the
+  test that proves `http.redact()` scrubs keys, plus this report's quotation of it;
+- this report's own quotations of its findings (R3);
+- the two pre-fix blobs described in R4 — cosmetic, and strictly dominated by the
+  commit metadata in A1.
+
+**No API key, token, password, private key, JWT, RFC1918 address, internal
+hostname or `C:\Users\…` path exists in the worktree or in any commit. No blob
+over 5 MB has ever been committed. `.env` has never been tracked. No git history
+was rewritten.**
+
+```
+SAFE TO PUBLISH: yes
+```

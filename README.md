@@ -74,6 +74,8 @@ drift episode is predicted to look like: **[docs/writeup.md](docs/writeup.md)**.
 Real captured transcripts of every command above, including the ones that fail
 on purpose: **[docs/REPRODUCE.md](docs/REPRODUCE.md)**. The pre-publication
 secret and size scan: **[docs/PUBLICATION-SCAN.md](docs/PUBLICATION-SCAN.md)**.
+An honest list of everything you might trip on here, including what is thin:
+**[docs/PUBLICATION-READY.md](docs/PUBLICATION-READY.md)**.
 
 **Status: M0 → M7 complete and committed** — ingestion, the seasonal-naive
 baseline, a global LightGBM on the same walk-forward folds, MLflow tracking +
@@ -625,7 +627,8 @@ tests/      180 Python tests: idempotency, leakage (backtest *and* features),
 docs/       writeup.md (real vs fixture, three bugs, what a real episode looks
             like) · REPRODUCE.md (real transcripts of every command)
             PUBLICATION-SCAN.md (pre-publication secret + size scan)
-            spec.md (original brief) · BLOCKED.md (the EIA key)
+            PUBLICATION-READY.md (what a reviewer will trip on, and what is thin)
+            spec.md (the original brief — in Portuguese) · BLOCKED.md (the key)
 .github/    ci.yml (active on publish) · daily.yml (inert until published)
 mlruns/     MLflow artifacts — gitignored, never committed (nor is mlflow.db)
 reports/    Evidently HTML (~5MB of inlined plotly) — gitignored
@@ -644,8 +647,10 @@ Exactly one thing: **real data.** No code is waiting to be written.
 The steps to unblock it are in [`docs/BLOCKED.md`](docs/BLOCKED.md); what will
 change, and what a real episode is predicted to look like, is in
 [`docs/writeup.md`](docs/writeup.md). Full brief:
-[`docs/spec.md`](docs/spec.md). Pre-publication scan:
-[`docs/PUBLICATION-SCAN.md`](docs/PUBLICATION-SCAN.md).
+[`docs/spec.md`](docs/spec.md) *(in Portuguese — it is the original brief, left
+as written)*. Pre-publication scan:
+[`docs/PUBLICATION-SCAN.md`](docs/PUBLICATION-SCAN.md); readiness assessment:
+[`docs/PUBLICATION-READY.md`](docs/PUBLICATION-READY.md).
 
 ## Cost
 
