@@ -108,33 +108,71 @@ happened to be eligible, and "everything was excluded as deterministic" is
 precisely when a reader most wants to know which columns those were. Both
 branches now report it.
 
-## The 226 survivors, honestly
+## Every one of the 226 survivors is adjudicated
 
-Classified by what the mutated line actually is:
+Not summarised — **adjudicated**. Each surviving mutant matches exactly one rule
+in [`scripts/mutation_survivors.py`](../scripts/mutation_survivors.py), and each
+rule carries a verdict and a written reason. `--check` **fails** when a survivor
+matches no rule, and that gate runs in the mutation workflow, so a new survivor
+cannot quietly join the pile unexamined.
 
-| Kind | Survivor lines | Worth killing? |
-|---|---:|---|
-| Strings, log messages, dict keys, `description`/`note` prose | 120 | **No.** Asserting exact wording makes tests break on every copy edit and protects nothing. |
-| Comparisons and branches | 13 | **Some — listed below.** |
-| Arithmetic and `round(x, n)` precision | 4 | Mostly no. Rounding a reported figure to 6 places instead of 4 is not a defect. |
-| Other (defaults, sort keys, dataclass fields) | 26 | Mixed. |
+```bash
+uv run python scripts/mutation_survivors.py            # the full table
+uv run python scripts/mutation_survivors.py --check    # the CI gate
+```
 
-### The survivors that are real gaps
+**226 mutants across 163 source lines. 38 are real gaps (16.8%); 188 are
+accepted.**
 
-Named individually rather than summarised, because these are the ones a reader
-should hold against the suite:
+> An earlier version of this document put the gap count at 14. That was a guess
+> from eyeballing categories, and it was too flattering by a factor of nearly
+> three. Adjudicating every survivor individually — rather than sorting them into
+> buckets by eye — found five further classes of genuine gap. The number went up
+> because the method got honest, which is the direction that should worry a
+> reader less, not more.
 
-| Location | Line | Why it survives |
-|---|---|---|
-| `detectors.py:103` | `ks.p_value < thresholds.ks_p_alert` | The KS test is exercised at 10× either side of alpha, never at exactly alpha, so `<` and `<=` never disagree. |
-| `detectors.py:107` | `min(ref_n, cur_n) < thresholds.min_samples` | Same: `min_samples` is tested well inside both regions, never at exactly 200. |
-| `detectors.py:165` | `elif alerting or share >= warn or warning:` | A three-way `or`. The other disjuncts short-circuit, masking a mutation of any one of them. Genuinely hard to kill without contrived inputs. |
-| `detectors.py:490` | `frame[(frame["day"] <= day) & (frame["day"] > day - span)]` | **7 mutants.** The trailing-window boundary in `drift_timeline` is not tested at all — the timeline is asserted for shape, not for which rows land in which window. The largest single gap left. |
-| `backtest.py:200` | `return float(actual) != 0.0` | The MAPE zero-guard. Never tested with an actual of exactly zero. |
-| `backtest.py:66,79` | `if len(index) == 0`, `if start > last_usable` | Degenerate-input guards in `make_cutoffs`, reachable only with series shorter than the tests use. |
+### The gaps — 38 mutants the tests should have caught
 
-`backtest.py:205` (`horizon_h % every == 0`, 6 mutants) is table-row selection for
-the rendered markdown. Cosmetic; not worth a test.
+| Rule | Lines | Mutants | Why it survives |
+|---|---:|---:|---|
+| `gap:drift-timeline-untested` | 5 | **13** | `drift_timeline` is asserted for shape, never content: which rows fall in which trailing window, which features are eligible, and the below-`min_samples` path are all unpinned. Largest single gap. |
+| `gap:skipped-fold-accounting-weakly-asserted` | 5 | 8 | The only assertion is `skipped_folds >= 1` — incrementing by two, or skipping a different fold, still passes. Existence is checked; correctness is not. |
+| `gap:feature-drift-insufficient-branch` | 2 | 6 | The "no column was eligible" branch of `feature_drift` is unreached: the test calls `_section_from_columns` directly and never goes through the detector. |
+| `gap:mape-formula-unpinned` | 1 | 3 | `(abs_error / abs(actual)) * 100` survives because the only assertion is `mape_pct == approx(0.0)` on a **perfect** forecast — true for any scaling of a zero numerator. |
+| `gap:compound-or-short-circuits` | 1 | 2 | Three-way `or` in the WARN branch; the other disjuncts short-circuit and mask a mutation of any one. |
+| `gap:degenerate-input-guards` | 2 | 2 | `make_cutoffs` guards reachable only with a series shorter than any fixture builds. |
+| `gap:ks-alpha-boundary` | 1 | 1 | KS exercised at 10× either side of alpha, never *at* alpha, so `<` and `<=` never disagree. |
+| `gap:min-samples-boundary` | 1 | 1 | `min_samples` tested well inside both regions, never at exactly 200. |
+| `gap:performance-insufficient-compound-guard` | 1 | 1 | Exercised only via an empty reference window; the other two disjuncts are masked. |
+| `gap:mape-zero-guard` | 1 | 1 | Never exercised with an actual of exactly `0.0`. |
+
+Two of those are worth reading twice, because they are cases where a test exists
+and is **too weak to be worth its green tick**: `skipped_folds >= 1` passes on a
+counter that increments by two, and `mape_pct == approx(0.0)` passes on any
+formula at all when the forecast is perfect. Mutation testing is the only thing
+in this repository that could have found either.
+
+### The accepted survivors — 188 mutants, and why each is not a defect
+
+| Rule | Lines | Mutants | Reason |
+|---|---:|---:|---|
+| `accepted:human-readable-text` | 83 | 110 | Summaries, notes, log messages, f-strings. Asserting exact wording breaks on every copy edit and protects nothing; the artifact *schema* is asserted separately. |
+| `accepted:dataframe-plumbing` | 11 | 15 | concat/assign/groupby arguments. A mutation either raises immediately or produces the same frame, whose contents are asserted by the tests that consume it. |
+| `accepted:sort-or-selection-order` | 7 | 9 | Sort keys and `idxmax` selection deciding presentation order. The *set* is asserted; the order in a report is not a correctness property. |
+| `accepted:table-rendering` | 2 | 7 | Markdown row selection and line joining. Presentation only. |
+| `accepted:dataclass-field-default` | 6 | 7 | Field defaults; the constructed values are asserted by the tests that build these objects. |
+| `accepted:module-constant` | 4 | 6 | Configuration defaults, already parametrised by the threshold tests. |
+| `accepted:redundant-payload-label` | 5 | 5 | `drift_type="feature"` — `run_all` already keys the sections by those exact names, so the label duplicates the key a consumer indexes by. |
+| `accepted:empty-window-sentinel` | 1 | 5 | The all-`None` dict for an empty window; its only consumer is the insufficient-data guard, which is tested. |
+| `accepted:none-guard-on-optional-report-field` | 4 | 4 | Both branches covered; the mutation swaps which already-tested path is taken. |
+| `accepted:local-alias-or-unpack` | 4 | 4 | A binding consumed by the next line, which is itself covered. |
+| `accepted:comprehension-filter-restating-a-tested-rule` | 3 | 3 | The deterministic-column and insufficient-data exclusions each have dedicated tests. |
+| `accepted:delegation-to-a-directly-tested-callee` | 3 | 3 | Straight-through calls to `_section_from_columns`, which has its own boundary tests. |
+| `accepted:artifact-detail-toggle` | 3 | 3 | `with_bins=` changes verbosity; both settings produce a valid artifact. |
+| `accepted:syntax-continuation` | 3 | 3 | Closing brackets carrying no logic. |
+| `accepted:keyword-default-argument` | 2 | 2 | Every caller passes the argument explicitly. |
+| `accepted:equivalent-single-column-branch` | 1 | 1 | **Provably equivalent**: with one scored column the share is 0.0 or 1.0 and the ladder below reaches the same verdict for all three severities. A readability shortcut, not a fork. |
+| `accepted:strict-zip-pairing` | 1 | 1 | The two sequences are built from the same tuple one line apart, so `strict=True` documents an invariant rather than enforcing a reachable one. |
 
 ## What this does *not* say
 
@@ -142,8 +180,9 @@ the rendered markdown. Cosmetic; not worth a test.
   repo-wide quality figure and is not presented as one.
 - 52.3% is a **low score**. Roughly half the small changes you could make to
   those two files would go unnoticed by the suite. The mitigating detail is
-  *which* half: 120 of the survivor lines are prose, and the comparisons that
-  drive the alarm are now pinned. The mitigating detail is not an excuse.
+  *which* half: 110 of the 226 surviving mutants are prose, and the comparisons
+  that drive the alarm are now pinned. The mitigating detail is not an excuse —
+  38 survivors are genuine gaps and they are listed above by name.
 - It says nothing about whether the *thresholds themselves* are right. Mutation
   testing checks that the code does what the tests say; whether PSI > 0.2 is the
   correct place to alert on real PJM demand is an empirical question that needs

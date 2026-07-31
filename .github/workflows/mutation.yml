@@ -28,7 +28,10 @@ on:
       floor:
         description: "Fail if the overall mutation score falls below this percentage"
         type: string
-        default: "50"
+        # 52, not 50: the measured score is 52.3% and the runner reproduced it
+        # exactly (run 30609663324). A floor set just under a real measurement
+        # is a ratchet; a round number picked in advance is decoration.
+        default: "52"
 
 permissions:
   contents: read
@@ -70,8 +73,20 @@ jobs:
       - name: Report the score and enforce the floor
         run: |
           uv run python scripts/mutation_score.py \
-            --floor "${{ inputs.floor || '50' }}" \
+            --floor "${{ inputs.floor || '52' }}" \
             --survivors 30 | tee "$GITHUB_STEP_SUMMARY"
+          exit "${PIPESTATUS[0]}"
+
+      # Every surviving mutant must be either killed or given a written reason.
+      # A report that lists hundreds of survivors and decides nothing about any
+      # of them looks rigorous and is not — the number gets quoted, the
+      # survivors never get read. This step fails when a survivor matches no
+      # rule in scripts/mutation_survivors.py, so a new one cannot quietly join
+      # the pile unexamined.
+      - name: Every surviving mutant must be adjudicated
+        run: |
+          uv run python scripts/mutation_survivors.py --check \
+            | tee -a "$GITHUB_STEP_SUMMARY"
           exit "${PIPESTATUS[0]}"
 
       # `include-hidden-files` is required, not optional. `.mutmut-cache` starts
