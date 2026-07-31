@@ -3,7 +3,10 @@ import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import react from "@vitejs/plugin-react";
-import { defineConfig, type Plugin } from "vite";
+import type { Plugin } from "vite";
+// `vitest/config` re-exports vite's defineConfig with the `test` block typed, so
+// the banner tests below are configured in the same file as the build.
+import { defineConfig } from "vitest/config";
 
 const here = dirname(fileURLToPath(import.meta.url));
 
@@ -69,5 +72,10 @@ export default defineConfig({
   build: {
     outDir: "dist",
     sourcemap: false,
+  },
+  test: {
+    environment: "jsdom",
+    globals: false,
+    include: ["src/**/*.test.{ts,tsx}"],
   },
 });
