@@ -4,9 +4,15 @@
 > series is a **seeded synthetic fixture**. Everything here demonstrates that the
 > pipeline runs and that it runs *deterministically*. None of it is a benchmark.
 
-Every block on this page is **real captured output**, pasted verbatim from the
-run recorded at the top of each section. Nothing is retyped from memory or
-tidied up. Where a command printed a warning, the warning is still there.
+Every block on this page is **real captured output**, pasted from the run
+recorded at the top of each section. Nothing is retyped from memory or tidied up.
+Where a command printed a warning, the warning is still there.
+
+**One deliberate edit:** absolute paths to the machine this ran on are shortened
+to `<repo>` (and `metrics\forecast.json` in place of the full path the logger
+prints). Nothing else is altered — no number, no warning, no exit code. The
+publication scan flags absolute local paths as a leak, and a document that
+exempted itself from its own repo's scan would be the wrong kind of exception.
 
 **Environment:** Windows 11, Python 3.11.12, Node 22, `uv`, all on `main` at
 commit `e988a0e`, run 2026-07-31.
@@ -32,7 +38,7 @@ $ uv run pytest -p no:warnings -v
 
 ============================= test session starts =============================
 platform win32 -- Python 3.11.12, pytest-9.1.1, pluggy-1.6.0
-rootdir: E:\Projetos\Portifolio\energy-forecast-drift
+rootdir: <repo>                       # local absolute path shortened, see note below
 configfile: pyproject.toml
 testpaths: tests
 plugins: anyio-4.14.2, Faker-40.36.0
@@ -327,7 +333,7 @@ Exit code 0, from a clean `node_modules`.
 ```console
 $ npm test
 
- RUN  v2.1.9 E:/Projetos/Portifolio/energy-forecast-drift/dashboard
+ RUN  v2.1.9 <repo>/dashboard
 
  ✓ src/components.test.tsx (4 tests) 50ms
 
