@@ -1,7 +1,9 @@
 # Publication safety scan
 
 **Repository:** `energy-forecast-drift`
-**Scanned:** 2026-07-30, at commit `5a9c5f6`, branch `main`, **no git remote configured**
+**Scanned:** at commit `5a9c5f6`, branch `main`, **no git remote configured**
+**Re-scanned:** at the tip after the publication work landed — see [§7](#7-the-scan-run-against-its-own-report),
+which is where the re-scan caught a leak in *this file*
 **Scope:** the entire worktree (tracked *and* untracked) plus **every blob on every ref in
 the full history** — 125 distinct blobs across 21 commits.
 
@@ -269,11 +271,16 @@ which is why the watermark is visible in the committed copies.
 
 ```
 $ git log --all --format='%ae|%an|%ce|%cn' | sort -u
-rodrigomonteiropereira1@gmail.com|Rodrigo Monteiro Pereira|rodrigomonteiropereira1@gmail.com|Rodrigo Monteiro Pereira
+rodr*********************@gmail.com|Rodrigo Monteiro Pereira|rodr*********************@gmail.com|Rodrigo Monteiro Pereira
 ```
 
-All 21 commits carry a personal Gmail address in both the author and committer fields. Once
-the repository is public this is permanently readable and scrapeable.
+*(Masked, like every other value in this report. An earlier draft printed it in
+full — the re-scan at the final commit caught that, which is written up in
+[§7](#7-the-scan-run-against-its-own-report).)*
+
+Every commit carries a personal Gmail address in both the author and committer fields. Once
+the repository is public this is permanently readable and scrapeable — and unlike a file,
+commit metadata cannot be corrected without rewriting history.
 
 **This is normal and many people publish this way.** It is flagged because it is a
 deliberate choice, not because it is a defect. If Rodrigo would rather not publish it, the
@@ -321,16 +328,16 @@ Recorded so the negative results are not mistaken for gaps in the scan.
 | Hardcoded `Bearer …` credentials | 0 hits |
 | RFC1918 private addresses (10/8, 192.168/16, 172.16/12) | 0 hits |
 | Internal hostnames (`.internal .corp .intranet .lan .local`) | 0 hits |
-| Absolute Windows user paths (`C:\Users\…`) | 0 hits |
-| Absolute project paths (`E:\Projetos…`) | 0 hits |
-| Email addresses in file contents | 0 hits |
+| Absolute Windows user paths (`C:\Users\…`) | 0 hits — **still 0 at the final commit** |
+| Absolute project paths (`E:\Projetos…`) | 0 hits at this run; see [§7](#7-the-scan-run-against-its-own-report) — the documents written *after* this scan introduced some, and they were removed |
+| Email addresses in file contents | 0 hits at this run; see [§7](#7-the-scan-run-against-its-own-report) — this report itself later introduced one, and it is now masked |
 | A real `.env` in any commit | never tracked |
 | Blobs > 5 MB in history | 0 |
 | `mlruns/`, `*.db`, parquet, `data/`, `node_modules/`, `dist/` in history | 0 |
 | Git remotes configured | none |
 
-The absence of any absolute local path also means the repo carries no trace of the machine
-it was built on — no `E:\Projetos\…`, no username, in any tracked file.
+The absence of any absolute Windows **user** path means the repo carries no trace of the
+account it was built on — no `C:\Users\<name>` in any tracked file, at any commit.
 
 ---
 
@@ -360,3 +367,43 @@ git log --all --name-only --format= | sort -u \
 # the key, everywhere it is named
 git grep -n -I -E 'EIA_API_KEY' -- . ':(exclude)uv.lock'
 ```
+
+---
+
+## 7. The scan run against its own report
+
+The scan above ran at commit `5a9c5f6`. Three commits of publication work landed
+after it, so it was re-run against the final tree — and it immediately flagged
+**the documents the publication work had just written**. Recorded here rather than
+quietly fixed, because a scanner that exempts its own output is not a scanner.
+
+| # | Where | Pattern | What happened |
+|---|---|---|---|
+| R1 | `docs/PUBLICATION-SCAN.md` §A1 | `email` | **This report printed the author's Gmail address in full**, in the block demonstrating that the address is exposed — while its own opening paragraph promised every value would be masked. Genuine defect. **Fixed:** the address is now masked like every other value. |
+| R2 | `docs/REPRODUCE.md` | `abs-project-path` | The pasted `pytest` and `vitest` headers carried the absolute path of the machine they ran on. Low severity — it leaks a directory layout, not a username or a credential — but it is the exact category §4 claims is at zero. **Fixed:** shortened to `<repo>`, with the edit declared at the top of that document. |
+| R3 | `docs/PUBLICATION-SCAN.md` §1.2 | `assigned-secret`, `abs-project-path` | This report quotes the scanner's own output, so it necessarily contains the strings the scanner matches — `SUPERSECRET`, `E:\Projetos…` inside the "0 hits" table row. **Not fixed, by design.** These are quotations of findings, and redacting a report's evidence would make it unreviewable. A re-run will always flag this file; that is the correct behaviour and this row is the explanation. |
+
+Nothing in R1–R3 was a credential. No key, token, or password appeared at any
+point, in any scope. But R1 is worth stating plainly: **the first version of this
+document leaked one of the two things it was written to find.** The re-scan caught
+it before publication, which is the entire argument for running the scan again at
+the end rather than only at the start.
+
+### Final scan, at the tip
+
+```
+# scanned 95 worktree files
+# scanned 147 distinct blobs across ALL refs and history
+```
+
+After the R1/R2 fixes, the only remaining matches in either scope are:
+
+- the four npm `sha512-` integrity digests in `dashboard/package-lock.json` (S1),
+- the `SUPERSECRET` literal in `tests/test_clients.py` and its quotation in this
+  report (S2 / R3),
+- this report's own quotations of the findings it documents (R3).
+
+**No credential, no private address, no internal hostname, no user path, and no
+blob over 5 MB — in the worktree or anywhere in the history.**
+
+The verdict at the top of this document stands: `SAFE TO PUBLISH: yes`.
