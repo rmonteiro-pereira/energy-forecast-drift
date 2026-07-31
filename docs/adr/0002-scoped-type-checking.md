@@ -63,6 +63,31 @@ is already `uv`-managed with no Node requirement outside `dashboard/`, and addin
 a second toolchain to the Python CI job to check Python was not worth it. Worth
 revisiting if the strict set grows.
 
+## The interpreter has to be pinned for any of this to mean anything
+
+`python_version` in `[tool.mypy]` sets the *semantics* mypy analyses under. It
+does **not** choose the interpreter whose `site-packages` the stubs are read
+from. When those two disagree, mypy fails on its own dependencies:
+
+```
+.venv/lib/python3.12/site-packages/numpy/__init__.pyi:737: error:
+Type statement is only supported in Python 3.12 and greater  [syntax]
+```
+
+That is a real CI failure this repository had. `requires-python = ">=3.11"` let
+uv install the newest Python on the runner (3.12) while `python_version` said
+3.11, so mypy read 3.12's stubs under 3.11 rules and stopped before checking a
+single line of this project. It passed locally, because the local venv was 3.11.
+
+So `.python-version` pins 3.11, `ci.yml` states it again on `setup-uv` so the
+version is visible in the workflow rather than only in a dotfile, and
+`tests/test_toolchain.py` asserts the pin, the mypy target, `requires-python`
+and the workflow cannot drift apart.
+
+**The pin constrains the type check, not the project.** `requires-python` stays
+`>=3.11`, and the suite is verified green on 3.12 as well — only the type check
+is pinned, because only the type check depends on which stubs are installed.
+
 ## Consequences
 
 - CI enforces types, and `uv run mypy` is clean across all 34 source files.

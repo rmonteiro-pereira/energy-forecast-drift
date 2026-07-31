@@ -95,9 +95,27 @@ def test_ci_states_the_same_interpreter_as_the_pin():
 
 
 def test_the_running_interpreter_matches_the_pin():
-    """If this fails locally, the venv predates the pin — re-run `uv sync`."""
+    """Reports a mismatch; does not fail the suite for one.
+
+    This deliberately **skips** rather than fails when the interpreter differs
+    from the pin. Running on another Python is legitimate — `requires-python` is
+    `>=3.11`, the suite passes on 3.12, and a version matrix would run several on
+    purpose. What is not legitimate is *mypy's target* disagreeing with the
+    interpreter it reads stubs from, and that is pinned by
+    `test_mypy_analyses_the_version_that_is_actually_installed` above, which is
+    static and always applies.
+
+    An earlier version of this test asserted equality, and it failed the whole
+    suite on 3.12 for no reason other than the version number. It was written to
+    catch a stale venv and instead punished a correct one.
+    """
     running = f"{sys.version_info.major}.{sys.version_info.minor}"
-    assert running == pinned_version(), (
-        f"running Python {running} but .python-version pins {pinned_version()}. "
-        "Recreate the environment with `uv sync --extra dev` so local runs match CI."
-    )
+    if running != pinned_version():
+        pytest.skip(
+            f"running Python {running}, .python-version pins {pinned_version()}. "
+            "Fine if deliberate (a matrix job, or checking a newer Python); if not, "
+            "re-run `uv sync --extra dev` so local runs match CI. Note that "
+            "`uv run mypy` targets the pinned version, so type-check results from "
+            "this interpreter are not what CI will produce."
+        )
+    assert running == pinned_version()
