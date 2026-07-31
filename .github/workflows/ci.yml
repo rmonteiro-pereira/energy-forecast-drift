@@ -16,7 +16,7 @@ jobs:
     timeout-minutes: 10
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       # The interpreter is pinned, and it has to be. `requires-python = ">=3.11"`
       # lets uv pick the newest Python on the runner, which was 3.12 — while
