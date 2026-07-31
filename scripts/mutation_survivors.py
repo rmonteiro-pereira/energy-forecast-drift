@@ -60,61 +60,32 @@ class Rule:
 # "it's just a string" rule that happens to also match the line.
 # ---------------------------------------------------------------------------
 RULES: list[Rule] = [
+    # -----------------------------------------------------------------------
+    # Found by auditing the *accepted* pile rather than the gap pile.
+    #
+    # `accepted:sort-or-selection-order` matches on `\bmax\(`, and that pattern
+    # is too broad: it was swallowing `max(1, window_hours // 24)` and
+    # `max(window_start, first_usable...)`, neither of which orders anything for
+    # a human. The second decides *which folds the backtest runs on*. Calling
+    # that presentation was the exact failure this file warns about one comment
+    # below -- a broad rule quietly absorbing a real gap -- so it is named here,
+    # ahead of the rule that was hiding it.
+    # -----------------------------------------------------------------------
     Rule(
-        "gap:ks-alpha-boundary",
+        "gap:fold-window-arithmetic",
         GAP,
-        "The KS significance comparison is exercised at 10x either side of alpha "
-        "but never AT alpha, so `<` and `<=` never disagree. Killable with a test "
-        "that pins p_value exactly at ks_p_alert.",
-        locations=frozenset({("drift/detectors.py", 103)}),
-    ),
-    Rule(
-        "gap:min-samples-boundary",
-        GAP,
-        "`min_samples` is tested well inside both regions, never at exactly 200. "
-        "Same shape as the alpha boundary.",
-        locations=frozenset({("drift/detectors.py", 107)}),
-    ),
-    Rule(
-        "gap:compound-or-short-circuits",
-        GAP,
-        "A three-way `or` in the WARN branch. The other disjuncts short-circuit, "
-        "so mutating any one of them is masked. Killable only with inputs "
-        "contrived to make exactly one disjunct decide the outcome.",
-        locations=frozenset({("drift/detectors.py", 165)}),
-    ),
-    Rule(
-        "gap:drift-timeline-untested",
-        GAP,
-        "`drift_timeline` is asserted for shape, never for content: which rows "
-        "fall in which trailing window, which features are eligible, and what "
-        "happens below `min_samples` are all unpinned. The largest single gap.",
+        "Arithmetic that selects the evaluated window, not the reported order. "
+        "`make_cutoffs`' `window_start`/`start` decide which folds the backtest "
+        "scores, and `span_days` sets the rolling-error window; the tests assert "
+        "fold counts for the default configuration but never pin these "
+        "expressions, so a mutation shifts the evaluated period undetected.",
         locations=frozenset(
             {
-                ("drift/detectors.py", 483),
-                ("drift/detectors.py", 490),
-                ("drift/detectors.py", 491),
-                ("drift/detectors.py", 492),
-                ("drift/detectors.py", 502),
+                ("models/backtest.py", 74),
+                ("models/backtest.py", 77),
+                ("drift/detectors.py", 354),
             }
         ),
-    ),
-    Rule(
-        "gap:feature-drift-insufficient-branch",
-        GAP,
-        "The 'no column was eligible' branch of `feature_drift` is unreached: "
-        "`test_columns_below_the_minimum_sample_size_are_not_scored` calls "
-        "`_section_from_columns` directly and never goes through the detector, "
-        "so the summary it produces is untested.",
-        locations=frozenset({("drift/detectors.py", 210), ("drift/detectors.py", 211)}),
-    ),
-    Rule(
-        "gap:performance-insufficient-compound-guard",
-        GAP,
-        "`if not reference['n'] or not current['n'] or not reference['mae']` is "
-        "exercised only via an empty reference window, so the other two "
-        "disjuncts are masked by short-circuiting.",
-        locations=frozenset({("drift/detectors.py", 373)}),
     ),
     # `gap:mape-formula-unpinned` used to live here, covering
     # models/backtest.py:155. It is gone because the gap is *closed*:
@@ -123,36 +94,35 @@ RULES: list[Rule] = [
     # kills all three mutants. The rule is removed rather than kept as a trophy —
     # if the test were reverted the mutants would come back UNADJUDICATED and
     # fail --check, which is the behaviour we want.
+    # -----------------------------------------------------------------------
+    # Two mutants that are ACCEPTED because they are *provably equivalent*, not
+    # because asserting them would be inconvenient. Each carries the reachability
+    # argument, because "equivalent" without one is just a nicer word for
+    # unexamined. Both were predicted to survive before the run that confirmed
+    # they did; the other nineteen named gaps were killed and their rules are
+    # gone, so a regression brings the mutant back UNADJUDICATED and fails
+    # `--check` rather than landing back on a comfortable label.
+    # -----------------------------------------------------------------------
     Rule(
-        "gap:skipped-fold-accounting-weakly-asserted",
-        GAP,
-        "`skipped += 1` and the surrounding `continue`s survive because the only "
-        "assertion is `skipped_folds >= 1` — incrementing by two, or skipping a "
-        "different fold, still passes. The count is checked for existence, not "
-        "for correctness.",
-        locations=frozenset(
-            {
-                ("models/backtest.py", 119),
-                ("models/backtest.py", 120),
-                ("models/backtest.py", 139),
-                ("models/backtest.py", 144),
-                ("models/backtest.py", 150),
-            }
-        ),
+        "accepted:equivalent-unreachable-get-default",
+        ACCEPTED,
+        "`rollup.get('columns_scored', 0)` -> `..., 1)`. The default is dead "
+        "code: `_section_from_columns` returns `columns_scored` on both of its "
+        "branches -- 0 on the nothing-eligible path and `len(scored)` on the "
+        "other -- so the key is always present and the fallback is never "
+        "evaluated. No input can distinguish the two defaults.",
+        locations=frozenset({("drift/detectors.py", 210)}),
     ),
     Rule(
-        "gap:mape-zero-guard",
-        GAP,
-        "The MAPE zero-guard is never exercised with an actual of exactly 0.0, "
-        "so the `!= 0.0` comparison is unpinned.",
-        locations=frozenset({("models/backtest.py", 200)}),
-    ),
-    Rule(
-        "gap:degenerate-input-guards",
-        GAP,
-        "Degenerate-input guards in `make_cutoffs`, reachable only with a series "
-        "shorter than any fixture the tests build.",
-        locations=frozenset({("models/backtest.py", 66), ("models/backtest.py", 79)}),
+        "accepted:equivalent-first-increment-from-zero",
+        ACCEPTED,
+        "`skipped += 1` -> `skipped = 1` in the no-history branch. The two differ "
+        "only when `skipped` is already non-zero on entry, and it cannot be: "
+        "cutoffs ascend, `start >= series.min()` always holds, so at most the "
+        "very first cutoff has empty history and it is reached on iteration one "
+        "with `skipped == 0`. The sibling `-= 1` and `+= 2` mutants at this line "
+        "are killed by the exact-count assertion; only this one is equivalent.",
+        locations=frozenset({("models/backtest.py", 119)}),
     ),
     # -----------------------------------------------------------------------
     # Accepted categories.

@@ -267,7 +267,19 @@ def test_the_mutation_doc_agrees_with_itself():
         float(total_row.group(3)),
     )
     assert round(100 * killed / total, 1) == score, "the Total row's score is not killed/total"
-    survivors = total - killed
+
+    # `killed + survived == total` is NOT an identity: mutmut also reports
+    # `untested` mutants, which the score counts as not-killed. This assumed
+    # otherwise and was off by exactly that count, so the doc has to state the
+    # number and the arithmetic has to use it. That makes the disclosure
+    # load-bearing rather than decorative -- delete the sentence and this fails.
+    untested = re.search(r"\*\*(\d+) mutants mutmut never tested\*\*", doc)
+    assert untested, (
+        "the doc no longer discloses how many mutants went untested. The score "
+        "counts them as not-killed, so an undisclosed count is a silent hole in "
+        "the denominator."
+    )
+    survivors = total - killed - int(untested.group(1))
 
     headline = re.search(r"The headline number is (\d+\.\d)%", doc)
     assert headline, "the doc no longer opens with the headline score"
