@@ -38,8 +38,20 @@ import time
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import pandas as pd
+
+if TYPE_CHECKING:
+    # Import-time cost matters here: `lightgbm` is the slowest import in the
+    # project and this module is the CLI entrypoint. `from __future__ import
+    # annotations` makes every annotation a string, so these are needed only by
+    # the type checker and never at runtime.
+    import lightgbm as lgb
+
+    from drift.detectors import DriftSection
+    from drift.trigger import RetrainVerdict
+    from drift.windows import ScoredWindows
 
 from drift import detectors, evidently_report, trigger
 from drift.config import DEFAULT_CURRENT_DAYS, DEFAULT_REFERENCE_DAYS, DriftThresholds
@@ -162,10 +174,13 @@ class DailyPipeline:
         # covers those windows (see `_monitoring_booster`).
         self.model_info: dict = {}
         self.monitor_model_info: dict = {}
-        self.champion: object | None = None
-        self.windows = None
-        self.sections: dict = {}
-        self.verdict = None
+        # Annotated rather than left to inference: these start as None and are
+        # filled in by later stages, so without the annotation a type checker
+        # infers `None` and every downstream attribute access looks like a bug.
+        self.champion: lgb.Booster | None = None
+        self.windows: ScoredWindows | None = None
+        self.sections: dict[str, DriftSection] = {}
+        self.verdict: RetrainVerdict | None = None
         self.artifacts: list[str] = []
 
     # -- provenance ---------------------------------------------------------
@@ -509,6 +524,11 @@ class DailyPipeline:
         **largest horizon within the day-ahead window** — the earliest forecast
         that was still a day-ahead forecast, which is also the hardest one.
         """
+        if self.windows is None:  # pragma: no cover - the score stage runs first
+            raise RuntimeError(
+                "_chart_history() ran before the score stage built the monitoring "
+                "windows. This is a stage-ordering bug in run()."
+            )
         frame = pd.concat([self.windows.reference, self.windows.current], ignore_index=True)
         horizon = min(CHART_HORIZON_H, self.args.max_horizon)
         frame = frame[(frame["horizon_h"] <= horizon) & frame[build_mod.TARGET_COLUMN].notna()]

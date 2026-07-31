@@ -28,6 +28,7 @@ and even then only under the rules spelled out in `drift.trigger`.
 from __future__ import annotations
 
 import os
+from collections.abc import Iterable
 from dataclasses import asdict, dataclass
 from enum import StrEnum
 
@@ -44,7 +45,7 @@ class Severity(StrEnum):
         return _SEVERITY_RANK[self]
 
     @classmethod
-    def worst(cls, severities) -> Severity:
+    def worst(cls, severities: Iterable[Severity]) -> Severity:
         """The highest severity in `severities`, `ok` when the iterable is empty."""
         return max(severities, key=lambda s: s.rank, default=cls.OK)
 

@@ -1,5 +1,6 @@
 # energy-forecast-drift
 
+> [!CAUTION]
 > # ⚠️ EVERY NUMBER IN THIS REPOSITORY IS SYNTHETIC
 >
 > ### There is no EIA API key yet, so there is no real demand data. Nothing here is a benchmark, a result, or a claim about PJM.
@@ -40,7 +41,7 @@ accumulates in public, week after week, and can be pointed at.
 
 | | Status | Notes |
 |---|---|---|
-| **The code** | ✅ real, complete, tested | 180 Python tests + 4 dashboard tests, no network. Every path below runs today, and [`docs/REPRODUCE.md`](docs/REPRODUCE.md) has the transcripts. |
+| **The code** | ✅ real, complete, tested | 213 Python tests + 4 dashboard tests, no network. Every path below runs today, and [`docs/REPRODUCE.md`](docs/REPRODUCE.md) has the transcripts. The tests are themselves measured — see [mutation testing](docs/MUTATION-TESTING.md). |
 | **Open-Meteo temperature** | ✅ **real data**, pulled live | No key needed. Genuinely fetched, genuinely joined. |
 | **EIA hourly demand** | ❌ **absent** | The client is finished and not stubbed. It has never been given a key. |
 | **The demand series used everywhere** | ❌ **seeded synthetic fixture** | `models/fixtures.py`, seed `20260728`. A plausible curve, not a measurement. |
@@ -68,6 +69,11 @@ The claims worth checking, and where to check them:
 | The banner follows the data, not the copy | `dashboard/src/components.tsx::ProvenanceBanner` | `dashboard/src/components.test.tsx` — same props, flag flipped, banner changes state |
 | No secret can reach a log | `ingest/http.py::redact` | `tests/test_clients.py::test_secrets_never_survive_redaction` |
 | No artifact can claim to be real while it isn't | the `is_real` flag, written by every entrypoint | `tests/test_artifacts.py` — fails the build if any published artifact pairs `is_real: true` with synthetic provenance, or drops its warning |
+| The tests would actually notice a defect | — | [`docs/MUTATION-TESTING.md`](docs/MUTATION-TESTING.md) — **52.3%** mutation score over the detectors and the backtest split, with the surviving mutants listed rather than summarised |
+
+**Why the shape is what it is**, with the alternative rejected in each case and
+the condition that would reverse it: **[docs/adr/](docs/adr/)** — seven records,
+including [one that documents a bug that shipped](docs/adr/0005-monitor-refuses-in-sample-scoring.md).
 
 Longer form, including three bugs this project actually had and what a real
 drift episode is predicted to look like: **[docs/writeup.md](docs/writeup.md)**.
@@ -142,7 +148,7 @@ uv run python -m drift.run --out metrics/drift.json   # M4: 4 drift types + retr
 uv run python -m pipeline.daily  # M5: the whole loop -> metrics/*.json + PNGs
 uv run python -m serving         # M5: FastAPI on :8000, /forecast from @champion
 
-uv run pytest -v               # 180 tests, no network
+uv run pytest -v               # 213 tests, no network
 
 cd dashboard && npm ci && npm test && npm run build   # M6: static dist/ over metrics/*.json
 ```
@@ -620,12 +626,14 @@ metrics/    committed artifacts: baseline.json, model.json, drift.json,
             forecast.json, monitor.json, pipeline.json + tables + 2 PNGs
 dashboard/  Vite + React + ECharts over metrics/*.json — no deploy step here
             components.test.tsx  the banner tests (vitest)
-tests/      180 Python tests: idempotency, leakage (backtest *and* features),
+tests/      213 Python tests: idempotency, leakage (backtest *and* features),
             retries, secret redaction, registry wiring, PSI/KS vs scipy, drift
-            injection, the daily chain, the HTTP surface, both workflow YAMLs,
-            and the published artifacts' own honesty contract
-docs/       writeup.md (real vs fixture, three bugs, what a real episode looks
+            injection, threshold boundaries, the daily chain, the HTTP surface,
+            both workflow YAMLs, and the artifacts' own honesty contract
+docs/       adr/      7 decision records, each with the rejected alternative
+            writeup.md (real vs fixture, three bugs, what a real episode looks
             like) · REPRODUCE.md (real transcripts of every command)
+            MUTATION-TESTING.md (52.3% measured, survivors listed)
             PUBLICATION-SCAN.md (pre-publication secret + size scan)
             PUBLICATION-READY.md (what a reviewer will trip on, and what is thin)
             spec.md (the original brief — in Portuguese) · BLOCKED.md (the key)
@@ -657,7 +665,11 @@ as written)*. Pre-publication scan:
 R$0. EIA and Open-Meteo are free, GitHub Actions is free on a public repo, and
 the dashboard is a static `dist/`. No server stays on.
 
-## License
+## Contributing, security, license
 
-[MIT](LICENSE). The code is yours to use. The numbers are not results, so there
-is nothing there to cite.
+- **[CONTRIBUTING.md](CONTRIBUTING.md)** — setup, the four checks to run before a
+  PR, and the house rules that exist for a reason.
+- **[SECURITY.md](SECURITY.md)** — how to report something privately, and exactly
+  how the one secret in this project is handled.
+- **[MIT](LICENSE)** — the code is yours to use. The numbers are not results, so
+  there is nothing there to cite.

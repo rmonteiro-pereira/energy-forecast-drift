@@ -1,0 +1,8 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Security vulnerability
+    url: https://github.com/rmonteiro-pereira/energy-forecast-drift/security/advisories/new
+    about: Report privately, not as a public issue. See SECURITY.md for scope.
+  - name: "Question: why is every number synthetic?"
+    url: https://github.com/rmonteiro-pereira/energy-forecast-drift/blob/main/docs/BLOCKED.md
+    about: There is no EIA API key yet. This is documented, not a defect.

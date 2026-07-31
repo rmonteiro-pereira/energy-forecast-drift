@@ -60,7 +60,16 @@ def to_hourly_grid(series: pd.Series) -> pd.Series:
 
 def add_calendar(df: pd.DataFrame) -> pd.DataFrame:
     """Calendar features derived purely from the index — no lookahead possible."""
-    idx = df.index
+    # Stated rather than assumed. Every caller passes an hourly UTC panel, and
+    # `.hour` / `.dayofweek` silently do not exist on a plain Index — so a
+    # mis-indexed frame would fail here with an AttributeError several frames
+    # from the cause. It also gives the type checker the narrowing it needs.
+    if not isinstance(df.index, pd.DatetimeIndex):
+        raise TypeError(
+            f"add_calendar() needs a DatetimeIndex, got {type(df.index).__name__}. "
+            "Build the panel with build_panel() first."
+        )
+    idx: pd.DatetimeIndex = df.index
     return df.assign(
         hour=idx.hour,
         dayofweek=idx.dayofweek,

@@ -190,6 +190,64 @@ def test_a_bad_key_is_not_retried(monkeypatch):
     assert attempts["n"] == 1, "retrying a rejected key only burns quota"
 
 
+def test_a_200_with_a_non_json_body_becomes_an_ApiError(monkeypatch):
+    """An HTML error page behind a proxy still arrives as HTTP 200.
+
+    Without the guard this raised a bare `ValueError` out of `.json()`, which
+    escapes the retry loop and bypasses every per-source `except ApiError`.
+    """
+    monkeypatch.setattr(http.time, "sleep", lambda _s: None)
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, text="<html><body>502 Bad Gateway</body></html>")
+
+    with (
+        httpx.Client(transport=httpx.MockTransport(handler)) as client,
+        pytest.raises(http.ApiError, match=r"not.*JSON"),
+    ):
+        http.get_json(client, "https://example.test/x", {})
+
+
+def test_a_200_with_a_json_array_becomes_an_ApiError(monkeypatch):
+    """Valid JSON, wrong shape. Callers index the body, so a list cannot work."""
+    monkeypatch.setattr(http.time, "sleep", lambda _s: None)
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json=[1, 2, 3])
+
+    with (
+        httpx.Client(transport=httpx.MockTransport(handler)) as client,
+        pytest.raises(http.ApiError, match="not an object but a list"),
+    ):
+        http.get_json(client, "https://example.test/x", {})
+
+
+def test_a_200_with_a_json_object_is_returned_unchanged():
+    """The guard must not reject the normal case."""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={"response": {"data": []}})
+
+    with httpx.Client(transport=httpx.MockTransport(handler)) as client:
+        assert http.get_json(client, "https://example.test/x", {}) == {"response": {"data": []}}
+
+
+def test_a_malformed_body_error_still_redacts_the_key(monkeypatch):
+    """The new error message embeds the URL — it must go through redact()."""
+    monkeypatch.setattr(http.time, "sleep", lambda _s: None)
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, text="not json")
+
+    with httpx.Client(transport=httpx.MockTransport(handler)) as client:
+        try:
+            http.get_json(client, "https://api.eia.gov/v2/x", {"api_key": "SUPERSECRET"})
+        except http.ApiError as exc:
+            assert "SUPERSECRET" not in str(exc)
+        else:  # pragma: no cover
+            pytest.fail("expected ApiError")
+
+
 def test_secrets_never_survive_redaction():
     url = "https://api.eia.gov/v2/x/data/?api_key=SUPERSECRET&frequency=hourly"
     assert "SUPERSECRET" not in http.redact(url)

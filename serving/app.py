@@ -137,6 +137,24 @@ class ForecastService:
                 f"observed hour supports origins up to {self.latest_origin.isoformat()}.",
             )
 
+    @property
+    def loaded_booster(self) -> lgb.Booster:
+        """The booster, or an actionable 503 — never an `AttributeError`.
+
+        `booster` is `None` until `load()` runs, and `load()` always leaves it
+        set (registry champion, or a fallback fit). So this only fires if a
+        `ForecastService` is used without being loaded, which is a wiring bug.
+        Saying so beats `'NoneType' object has no attribute 'predict'` surfacing
+        as a 500 with a stack trace and no clue in it.
+        """
+        if self.booster is None:  # pragma: no cover - guards a wiring mistake
+            raise HTTPException(
+                503,
+                "The forecast service holds no model: ForecastService.load() was "
+                "never called, or it failed. Check the startup logs.",
+            )
+        return self.booster
+
     # -- the actual work ----------------------------------------------------
     def forecast(self, origin: pd.Timestamp, max_horizon: int) -> dict:
         self._validate_origin(origin)
@@ -146,7 +164,7 @@ class ForecastService:
         if design.empty:  # pragma: no cover - unreachable once the origin is validated
             raise HTTPException(422, f"No design row could be built at {origin.isoformat()}.")
 
-        predictions = self.booster.predict(build_mod.feature_frame(design))
+        predictions = self.loaded_booster.predict(build_mod.feature_frame(design))
         actual = design[build_mod.TARGET_COLUMN]
 
         rows = [

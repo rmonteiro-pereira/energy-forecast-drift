@@ -141,6 +141,14 @@ def _section_from_columns(
     if not scored:
         return Severity.OK, {
             "columns_scored": 0,
+            # Reported on this branch too, not only the scored one. A consumer
+            # should not have to discover that the artifact's key set depends on
+            # whether anything happened to be eligible -- and "everything was
+            # excluded as deterministic" is precisely when a reader most wants
+            # to know *which* columns those were.
+            "columns_excluded_deterministic": sorted(
+                c["column"] for c in columns if c.get("deterministic", False)
+            ),
             "note": (
                 "no column was eligible: every one was either below the minimum "
                 "sample size or a deterministic calendar column"
