@@ -11,6 +11,57 @@ on:
   workflow_dispatch:
 
 jobs:
+  # -------------------------------------------------------------------------
+  # The dashboard is a separate job because it is a separate toolchain, and
+  # because it was previously not built here at all.
+  #
+  # That gap was not theoretical. Dependabot opened three PRs against
+  # `dashboard/` (vitest 2 -> 4, @vitejs/plugin-react 4 -> 6, react-dom 19) and
+  # all three reported CLEAN with a green `ci` tick — while every one of them
+  # fails `npm ci` outright: a lockfile out of sync, a peer requirement on
+  # vite ^8 against our vite 5, and react-dom 19 pinned beside react 18. CI was
+  # green because CI never ran npm.
+  #
+  # A green tick that does not cover the thing being changed is worse than no
+  # tick, because it is read as evidence. So the dashboard now builds here.
+  # -------------------------------------------------------------------------
+  dashboard:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    defaults:
+      run:
+        working-directory: dashboard
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: dashboard/package-lock.json
+
+      # `npm ci` rather than `npm install`: it fails when package.json and the
+      # lockfile disagree, which is exactly how dependabot PR #7 was broken.
+      - name: Install (fails on a lockfile that disagrees with package.json)
+        run: npm ci
+
+      - name: Tests
+        run: npm test
+
+      - name: Build
+        run: npm run build
+
+      # The build silently producing nothing would be worse than failing.
+      - name: The build must actually emit a site
+        run: |
+          test -f dist/index.html
+          test -d dist/assets
+          test -d dist/data
+          test -f dist/data/drift.json
+          echo "dist/ contains $(find dist -type f | wc -l) files"
+
   test:
     runs-on: ubuntu-latest
     timeout-minutes: 10

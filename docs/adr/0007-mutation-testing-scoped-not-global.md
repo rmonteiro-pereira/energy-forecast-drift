@@ -43,11 +43,31 @@ and most of it is dataframe plumbing and I/O where a surviving mutant usually
 means "this line is glue", not "this assertion is weak". Scoping concentrates the
 effort where a false green is actually expensive.
 
-**Add it to CI.** Rejected. A full pass takes tens of minutes — the wrong trade
-on every push, and the kind of slow job people learn to skip. It is run
-deliberately and the score is committed, so the number is reviewable without
-being in the critical path. If it were ever gated, it would need to be a
-scheduled job against a fixed mutant set, not a per-PR check.
+**Add it to `ci.yml`, on every push.** Rejected. A full pass takes ~25 minutes —
+the wrong trade on every push, and the kind of slow job people learn to skip.
+
+**Amended 2026-07-31: it does now run in CI, on a schedule.** The original
+wording ("not run in CI") was accurate but became a liability: a mutation score
+quoted in a document, with nothing that ever re-runs it, is indistinguishable
+from a number someone typed. `.github/workflows/mutation.yml` runs it weekly and
+on `workflow_dispatch`, writes the score to the job summary, and fails only when
+the score drops below a floor.
+
+The floor matters. `mutmut run` exits non-zero whenever *any* mutant survives,
+which is permanently true here and says nothing about whether things got worse —
+so the verdict comes from `scripts/mutation_score.py`, not from mutmut's exit
+code. Weakening a test is otherwise invisible, because a weaker test still
+passes.
+
+**Shipping a mutation config that cannot run.** Rejected explicitly, because it
+is a live failure mode: a sibling project was found shipping `paths_to_mutate`
+aimed at directories that did not exist, with the CI job set to `if: false`. That
+combination reports a perfect score over zero mutants behind a green tick — worse
+than no mutation testing, because it converts an absence into a false claim of
+rigour. `tests/test_mutation_config.py` asserts every mutated path exists and has
+real code, every test file named in the runner exists, the runner actually
+invokes pytest, the workflow has no `if: false` at job or step level, and it has
+a trigger that can actually fire.
 
 **Use line coverage as the quality signal instead.** Rejected as insufficient,
 per the context above. Coverage answers "was this executed"; mutation answers
@@ -63,6 +83,9 @@ refactor. The target is "every survivor is understood", not "the number is 100".
 ## Consequences
 
 - One more dev dependency, and a run that is slow enough to be deliberate.
+- A weekly job that takes ~25 minutes of (free, public-repo) Actions time, and a
+  floor that will need raising as the score improves — a ratchet nobody tightens
+  is just a number.
 - **`mutmut` 2.x rewrites the source file in place while it runs** and restores
   it afterwards. An interrupted run can leave `drift/detectors.py` mutated with a
   `.bak` beside it. Anyone running it must check `git status` before committing.

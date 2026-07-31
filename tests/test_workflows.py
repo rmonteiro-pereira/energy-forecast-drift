@@ -52,6 +52,50 @@ def test_the_workflow_parses(path):
 # ---------------------------------------------------------------------------
 # daily.yml — the live cron
 # ---------------------------------------------------------------------------
+def test_every_workflow_pins_the_same_major_of_a_shared_action():
+    """One workflow must not silently hold an action back.
+
+    This nearly shipped: Dependabot bumped `actions/checkout` 4 -> 7,
+    `astral-sh/setup-uv` 5 -> 7, `actions/cache` 4 -> 6 and
+    `actions/upload-artifact` 4 -> 7 on `main`, while a feature branch still
+    carried the old majors in a *new* workflow file and a *new* job. Merging it
+    would have quietly reverted four accepted upgrades — no conflict, no red
+    tick, because nothing compared them.
+
+    Same shape as the Python-version drift in `tests/test_toolchain.py`: two
+    places state a version, nothing checks they agree.
+    """
+    used: dict[str, set[str]] = {}
+    for path in sorted(WORKFLOWS.glob("*.yml")):
+        workflow = load(path)
+        for job in workflow["jobs"].values():
+            for step in job.get("steps", []):
+                uses = str(step.get("uses", ""))
+                if "@" not in uses:
+                    continue
+                action, _, version = uses.partition("@")
+                used.setdefault(action, set()).add(version)
+
+    assert used, "no `uses:` entries found — did the workflow layout change?"
+
+    inconsistent = {a: sorted(v) for a, v in used.items() if len(v) > 1}
+    assert not inconsistent, (
+        f"the same action is pinned at different versions across workflows: "
+        f"{inconsistent}. Bring them together, or a dependency bump merged on "
+        "one file gets reverted by another."
+    )
+
+
+def test_no_workflow_action_is_left_unpinned():
+    """`uses: foo/bar` with no `@version` follows the default branch of a third party."""
+    for path in sorted(WORKFLOWS.glob("*.yml")):
+        for job in load(path)["jobs"].values():
+            for step in job.get("steps", []):
+                uses = str(step.get("uses", ""))
+                if uses and not uses.startswith("./"):
+                    assert "@" in uses, f"{path.name}: `{uses}` is not pinned to a version"
+
+
 def test_the_daily_cron_is_still_inert():
     """It must not start firing the moment the repo is pushed.
 

@@ -13,12 +13,32 @@ a change nobody was checking for.
 Scope, and why these two files, is in
 [ADR 0007](adr/0007-mutation-testing-scoped-not-global.md).
 
+## This actually runs — it is not a config sitting in a file
+
+`.github/workflows/mutation.yml` runs it **weekly and on demand**, writes the
+score into the job summary, and fails when it drops below a floor. There is no
+`if: false`, and `tests/test_mutation_config.py` (15 tests) asserts that the
+mutated paths exist and contain real code, that every test file named in the
+runner exists, that the runner invokes pytest, that no step is disabled, and
+that the workflow has a trigger that can fire.
+
+That guard exists because the opposite is a real failure mode: a config aimed at
+directories that do not exist, behind a job set to `if: false`, reports a perfect
+score over zero mutants and shows a green tick. That is worse than no mutation
+testing — it turns an absence into a false claim of rigour.
+
+The verdict comes from the score, not from mutmut's exit code: `mutmut run`
+exits non-zero whenever *any* mutant survives, which is permanently true here.
+
 ## How to run it
 
 ```bash
-uv run --extra dev mutmut run       # ~25 min for 474 mutants
-uv run --extra dev mutmut results
+uv run --extra dev mutmut run                            # ~25 min for 474 mutants
+uv run python scripts/mutation_score.py --floor 50       # the number below
 ```
+
+`scripts/mutation_score.py` is committed, not scratch tooling — the figure in
+this document is only worth something if someone else can regenerate it.
 
 > **⚠️ `mutmut` 2.x rewrites the source file in place while it runs** and restores
 > it when it finishes. An interrupted run can leave `drift/detectors.py` mutated
