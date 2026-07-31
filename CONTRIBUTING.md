@@ -1,81 +1,88 @@
 # Contributing
 
-Thanks for looking. This is a portfolio project, so it is small and opinionated —
-but it is meant to be readable and runnable by a stranger, and if it is not, that
-is a bug worth reporting.
+This project is about **honest measurement under drift**, not about forecast accuracy. A
+change that improves a number without explaining why is worth less here than one that shows a
+number was misleading.
+
+It is small and opinionated, but it is meant to be readable and runnable by a stranger — and
+if it is not, that is a bug worth reporting.
 
 ## Setup
 
+Requires **Python 3.11+** and [uv](https://docs.astral.sh/uv/). For the dashboard you also
+need **Node 20+** (developed on 24).
+
 ```bash
-git clone https://github.com/rmonteiro-pereira/energy-forecast-drift
+git clone https://github.com/rmonteiro-pereira/energy-forecast-drift.git
 cd energy-forecast-drift
 uv sync --extra dev
 ```
 
-Requires **Python 3.11+** and [uv](https://docs.astral.sh/uv/). For the dashboard
-you also need **Node 20+** (developed on 24).
+**No API key is needed and no network access is required.** Without `EIA_API_KEY` the
+pipeline falls back to a seeded synthetic fixture and says so, loudly, in every artifact it
+writes; ingestion degrades rather than failing when a source is unreachable. That is the
+normal path today — see the README banner for why.
 
-**No API key is needed and no network access is required.** Every entrypoint
-falls back to a seeded synthetic fixture with a loud warning, and ingestion
-degrades rather than failing when a source is unreachable. That is the normal
-path today — see the README banner for why.
+## Running it
 
-## Run everything
+```bash
+uv run python -m models          # walk-forward baseline
+uv run python -m models.train    # LightGBM vs baseline, MLflow tracking
+uv run python -m drift.run --out metrics/drift.json
+uv run python -m pipeline.daily  # the whole loop               (~6 s)
+uv run python -m serving         # FastAPI on :8000
+```
+
+## Tests, lint and types
 
 ```bash
 uv run pytest                     # 208 tests, no network        (~20 s)
 uv run ruff check . && uv run ruff format --check .
 uv run mypy                       # scoped -- see docs/adr/0002
-uv run python -m pipeline.daily   # the whole loop               (~6 s)
-
 cd dashboard && npm ci && npm test && npm run build
 ```
 
-Exact transcripts of all of these, including the ones that fail on purpose, are
-in [`docs/REPRODUCE.md`](docs/REPRODUCE.md).
+All of these are enforced in CI. The ruff rule set is pinned deliberately so that a ruff
+upgrade cannot silently change what CI enforces — if you bump it, expect to fix what it newly
+finds in the same PR. Type checking is scoped rather than global, and the reasoning (with the
+alternative that was rejected) is in [ADR 0002](docs/adr/0002-scoped-type-checking.md).
 
-## Before you open a PR
+Exact transcripts of all of these, including the ones that fail on purpose, are in
+[`docs/REPRODUCE.md`](docs/REPRODUCE.md).
 
-1. `uv run ruff check . && uv run ruff format --check .` — clean.
-2. `uv run mypy` — clean.
-3. `uv run pytest` — green.
-4. `cd dashboard && npm test && npm run build` — if you touched `dashboard/`.
+## The rules that make the results mean anything
 
-CI runs all of these plus smoke tests of the full pipeline. It must be green.
+1. **Never set `is_real: true` without real data behind it.** The flag is written into every
+   artifact, watermarked onto the plots, tagged on MLflow runs and checked by `/forecast`
+   before it answers. Flipping it is a data event, not an edit. `tests/test_artifacts.py`
+   fails the build if any published artifact pairs `is_real: true` with synthetic provenance.
+2. **Do not weaken a leakage guard to make a test pass.** Leakage is blocked in several
+   independent places and asserted by tests; if a guard fires, it is usually right.
+3. **Drift thresholds live in config, not in code.** A threshold changed to silence an alarm
+   needs a stated reason.
+4. **Both injection tests must keep passing** — the alarm fires on an injected shift *and*
+   stays silent without one. A detector that only ever fires is not a detector.
+5. **Tests cover the failure path, not just the happy one.** The no-key guard has a test that
+   it exits 2 *and* that it wrote nothing. A test that only proves the good case is half a
+   test.
+6. **Thresholds get boundary tests.** If you add or move a threshold, pin it just below,
+   exactly on, and just above — `>=` and `>` differ at exactly one input, and that is the
+   input nobody writes a test for. Mutation testing found this the hard way; see
+   [`docs/MUTATION-TESTING.md`](docs/MUTATION-TESTING.md).
+7. **No secrets in code, logs, commits or docs.** `EIA_API_KEY` has exactly two homes: `.env`
+   locally (gitignored) and a GitHub Actions repository secret for CI. See
+   [`SECURITY.md`](SECURITY.md).
 
-## House rules
+## What not to commit
 
-These are not style preferences; breaking them breaks the point of the project.
+`mlruns/`, `mlflow.db`, model binaries, downloaded data, `.venv`, `dashboard/node_modules`,
+`dashboard/dist`, anything over 5 MB. CI enforces the size limit and the tracked-path rules.
 
-**Never present a fixture number as a result.** While `is_real` is false, every
-number here comes from `models/fixtures.py`. Artifacts carry the flag, the README
-leads with a banner, the PNGs are watermarked, and the dashboard banner reads the
-flag at render time. `tests/test_artifacts.py` fails the build if a published
-artifact ever pairs `is_real: true` with synthetic provenance. Do not "simplify"
-any of that into a constant.
+Regenerated `metrics/*.json` should only be committed when the change is *about* those
+metrics — say so in the commit message.
 
-**Never commit `mlruns/`, `mlflow.db`, parquet, `data/`, or anything over 5 MB.**
-`metrics/` is the only published artifact directory, and it holds small JSON plus
-two PNGs. CI enforces the size limit and the tracked-path rules.
-
-**Explicit-path `git add` only.** No `git add .`, no `git add -A`. The data lake
-is one `.gitignore` mistake away from the repo.
-
-**No secrets in code, logs, commits or docs.** `EIA_API_KEY` has exactly two
-homes: **`.env` for local development** (gitignored, never tracked) and a
-**GitHub Actions repository secret for CI**, referenced only as
-`${{ secrets.EIA_API_KEY }}`. Nowhere else — not a commit message, not a log
-line, not a doc. See [`SECURITY.md`](SECURITY.md).
-
-**Tests cover the failure path, not just the happy one.** The drift alarm has a
-test that it fires *and* a test that it stays quiet. The no-key guard has a test
-that it exits 2 *and* that it wrote nothing. A test that only proves the good
-case is half a test.
-
-**Thresholds get boundary tests.** If you add or move a threshold, pin it just
-below, exactly on, and just above — `>=` and `>` differ at exactly one input, and
-that is the input nobody writes a test for. Mutation testing found this the hard
-way; see [`docs/MUTATION-TESTING.md`](docs/MUTATION-TESTING.md).
+**Explicit-path `git add` only.** No `git add .`, no `git add -A`. The data lake is one
+`.gitignore` mistake away from the repo.
 
 ## Where things live
 
@@ -90,14 +97,17 @@ dashboard/  Vite + React + ECharts over metrics/*.json
 docs/adr/   architecture decisions, including the rejected alternatives
 ```
 
-Start with [`docs/writeup.md`](docs/writeup.md) for how the pieces fit and which
-bugs shaped them, and [`docs/adr/`](docs/adr/) for why the shape is what it is.
+Start with [`docs/writeup.md`](docs/writeup.md) for how the pieces fit and which bugs shaped
+them, and [`docs/adr/`](docs/adr/) for why the shape is what it is.
 
-## Commit messages
+## Pull requests
 
-Conventional-commit style, and the body explains **why**, not what — the diff
-already says what. If a change fixes something subtle, say what the symptom was;
-the commit log is the only place that survives.
+- Branch from `main`; never commit to it directly.
+- [Conventional Commits](https://www.conventionalcommits.org/), and the body explains **why**,
+  not what — the diff already says what. If a change fixes something subtle, say what the
+  symptom was; the commit log is the only place that survives.
+- Explain what you measured.
+- `pytest`, `ruff check .`, `ruff format --check .` and `mypy` green before opening.
 
 ```
 feat(drift): report calendar features but exclude them from the verdict
