@@ -159,5 +159,87 @@ def test_a_series_with_every_fold_unscorable_raises_rather_than_reporting_nothin
     for fold in reference.folds:
         holed.loc[fold + pd.Timedelta(hours=1)] = np.nan
 
-    with pytest.raises(ValueError, match="unscorable"):
+    # Anchored at the start of the message, not merely "unscorable" somewhere in
+    # it. The loose match passed against a mutant that replaced the whole string
+    # with a marker still containing the word -- so it asserted almost nothing.
+    with pytest.raises(ValueError, match=r"^Every fold was unscorable"):
         backtest.run(holed, _biased(1.0), horizons=(1,), weeks=1, min_history_hours=24)
+
+
+# ---------------------------------------------------------------------------
+# The no-history fold: the *first* `skipped += 1` site.
+#
+# The two tests above drive the second one (unscorable horizons). This branch is
+# reached only when a cutoff precedes every row in the series, which needs
+# `min_history_hours=0` and a window wide enough that the first cutoff snaps to
+# the series' own first hour.
+# ---------------------------------------------------------------------------
+def test_a_fold_with_no_history_is_skipped_once_and_does_not_stop_the_run():
+    """`continue`, not `break` -- one unusable fold must not end the backtest.
+
+    Also pins the count at exactly 1. A counter that decrements, or jumps by
+    two, produces a number no existing assertion could tell apart from the
+    truth, because nothing else reaches this branch.
+    """
+    series = _series(24 * 10)
+    result = backtest.run(
+        series, _biased(1.0), horizons=(1,), weeks=4, cutoff_hour=0, min_history_hours=0
+    )
+
+    assert result.skipped_folds == 1, (
+        f"the first cutoff has no history behind it and must skip exactly once, "
+        f"got {result.skipped_folds}"
+    )
+    assert len(result.folds) == 9, (
+        f"the run must continue past the empty fold and score the other nine, "
+        f"got {len(result.folds)}"
+    )
+    assert result.folds[0] == pd.Timestamp("2026-01-02", tz="UTC"), (
+        "the first *scored* fold should be the day after the skipped one"
+    )
+
+
+# ---------------------------------------------------------------------------
+# make_cutoffs degenerate inputs
+# ---------------------------------------------------------------------------
+def test_make_cutoffs_returns_nothing_for_an_empty_index():
+    assert (
+        backtest.make_cutoffs(
+            pd.DatetimeIndex([], tz="UTC"),
+            weeks=1,
+            horizons=(1,),
+            cutoff_hour=0,
+            min_history_hours=0,
+        )
+        == []
+    )
+
+
+def test_make_cutoffs_keeps_a_fold_starting_exactly_on_the_last_usable_hour():
+    """`start > last_usable`, not `>=` -- the equal case is a usable fold.
+
+    A single midnight timestamp with a zero horizon is the smallest input where
+    `start` and `last_usable` coincide. Rejecting it would silently drop the
+    only evaluable fold at the boundary.
+    """
+    stamp = pd.Timestamp("2026-01-08 00:00", tz="UTC")
+    cutoffs = backtest.make_cutoffs(
+        pd.DatetimeIndex([stamp]), weeks=1, horizons=(0,), cutoff_hour=0, min_history_hours=0
+    )
+    assert cutoffs == [stamp]
+
+
+# ---------------------------------------------------------------------------
+# the MAPE zero guard
+# ---------------------------------------------------------------------------
+def test_only_a_zero_actual_is_unscorable():
+    """`!= 0.0` -- zero is excluded because MAPE is undefined there, nothing else.
+
+    Pinning 1.0 as scorable is the half that was missing: a guard comparing
+    against any other constant excludes a legitimate hour and quietly shrinks
+    the denominator every metric is computed over.
+    """
+    assert backtest._is_scorable({"actual": 0.0, "prediction": 5.0}) is False
+    assert backtest._is_scorable({"actual": 1.0, "prediction": 5.0}) is True
+    assert backtest._is_scorable({"actual": -1.0, "prediction": 5.0}) is True
+    assert backtest._is_scorable({"actual": np.nan, "prediction": 5.0}) is False

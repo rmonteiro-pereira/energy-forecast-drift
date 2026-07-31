@@ -48,7 +48,7 @@ accumulates in public week after week and can be pointed at.
 
 | | Status | Notes |
 |---|---|---|
-| **The code** | ✅ real, complete, tested | 256 Python tests + 4 dashboard tests, no network. Every path below runs today, and [`docs/REPRODUCE.md`](docs/REPRODUCE.md) has the transcripts. The tests are themselves measured — see [mutation testing](docs/MUTATION-TESTING.md). |
+| **The code** | ✅ real, complete, tested | 269 Python tests + 4 dashboard tests, no network. Every path below runs today, and [`docs/REPRODUCE.md`](docs/REPRODUCE.md) has the transcripts. The tests are themselves measured — see [mutation testing](docs/MUTATION-TESTING.md). |
 | **Open-Meteo temperature** | ✅ **real data**, pulled live | No key needed. Genuinely fetched, genuinely joined. |
 | **EIA hourly demand** | ❌ **absent** | The client is finished and not stubbed. It has never been given a key. |
 | **The demand series used everywhere** | ❌ **seeded synthetic fixture** | `models/fixtures.py`, seed `20260728`. A plausible curve, not a measurement. |
@@ -77,6 +77,7 @@ The claims worth checking, and where to check them:
 | No secret can reach a log | `ingest/http.py::redact` | `tests/test_clients.py::test_secrets_never_survive_redaction` |
 | No artifact can claim to be real while it isn't | the `is_real` flag, written by every entrypoint | `tests/test_artifacts.py` — fails the build if any published artifact pairs `is_real: true` with synthetic provenance, or drops its warning |
 | The tests would actually notice a defect | — | [`docs/MUTATION-TESTING.md`](docs/MUTATION-TESTING.md) — **61.2%** mutation score over the detectors and the backtest split, with the surviving mutants listed rather than summarised |
+| The detector was checked against drift nobody designed | `scripts/drift_eval_real_weather.py` — real Open-Meteo observations, keyless | [`docs/DRIFT-EVALUATION.md`](docs/DRIFT-EVALUATION.md) — **it found a false positive in the shipped thresholds**: a fortnight of ordinary autumn cooling scores PSI 0.525 against an alert threshold of 0.20. Published because a monitor measured only against shifts its author injected has not been measured |
 
 **Why the shape is what it is**, with the alternative rejected in each case and
 the condition that would reverse it: **[docs/adr/](docs/adr/)** — seven records,
@@ -155,7 +156,7 @@ uv run python -m drift.run --out metrics/drift.json   # M4: 4 drift types + retr
 uv run python -m pipeline.daily  # M5: the whole loop -> metrics/*.json + PNGs
 uv run python -m serving         # M5: FastAPI on :8000, /forecast from @champion
 
-uv run pytest -v               # 256 tests, no network
+uv run pytest -v               # 269 tests, no network
 
 cd dashboard && npm ci && npm test && npm run build   # M6: static dist/ over metrics/*.json
 ```
@@ -633,7 +634,7 @@ metrics/    committed artifacts: baseline.json, model.json, drift.json,
             forecast.json, monitor.json, pipeline.json + tables + 2 PNGs
 dashboard/  Vite + React + ECharts over metrics/*.json — no deploy step here
             components.test.tsx  the banner tests (vitest)
-tests/      256 Python tests: idempotency, leakage (backtest *and* features),
+tests/      269 Python tests: idempotency, leakage (backtest *and* features),
             retries, secret redaction, registry wiring, PSI/KS vs scipy, drift
             injection, threshold boundaries, the daily chain, the HTTP surface,
             both workflow YAMLs, and the artifacts' own honesty contract

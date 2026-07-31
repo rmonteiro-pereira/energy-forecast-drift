@@ -46,6 +46,18 @@ PER_DAY = 24
 #: but it is a *different* property, and mixing the two hides both.
 BOUNDS = dataclasses.replace(DEFAULT_THRESHOLDS, min_samples=1)
 
+#: A feature column the drift scan will actually score.
+#:
+#: `FEATURE_COLUMNS[0]` is `horizon_h`, which is in `DETERMINISTIC_COLUMNS` and
+#: therefore *never* eligible. An earlier version of this fixture used it as its
+#: "one real feature", so `feature_max_column` was `None` on every point and
+#: three assertions below held vacuously -- including one that dropped the
+#: column and checked the result went `None`, when it had been `None` all along.
+#: Selecting the column by the same rule the detector uses keeps them honest.
+REAL_FEATURE = next(
+    name for name in build_mod.FEATURE_COLUMNS if name not in detectors.DETERMINISTIC_COLUMNS
+)
+
 
 def _scored(start: str, days: int, *, demand: float = 100_000.0) -> pd.DataFrame:
     """A scored frame with `days` whole days of hourly rows, one per hour."""
@@ -64,9 +76,9 @@ def _scored(start: str, days: int, *, demand: float = 100_000.0) -> pd.DataFrame
             ABS_PCT_ERROR_COLUMN: np.abs(jitter * 0.5) / demand * 100.0,
         }
     )
-    # One real (non-deterministic) feature column, plus one deterministic one
-    # that must be filtered out of the feature scan.
-    frame[build_mod.FEATURE_COLUMNS[0]] = demand + jitter
+    # One genuinely eligible feature column, plus one deterministic one that
+    # must be filtered out of the feature scan.
+    frame[REAL_FEATURE] = demand + jitter
     frame["hour"] = target.hour
     return frame
 
@@ -174,6 +186,32 @@ def test_the_shipped_min_samples_would_reject_this_whole_fixture():
     assert detectors.drift_timeline(windows, T, window_days=3) == []
 
 
+def test_a_day_with_exactly_min_samples_rows_is_kept():
+    """`len(trailing) < min_samples`, not `<=`.
+
+    The test above asserts every emitted point is at or above the threshold,
+    which a stricter filter also satisfies -- it just emits fewer points. So it
+    could not see a mutation to `<=`, which drops precisely the day sitting on
+    the boundary. This names that day and demands it.
+    """
+    windows = _windows(_scored("2026-01-01", 6), _scored("2026-01-07", 4))
+    exactly = dataclasses.replace(T, min_samples=2 * PER_DAY)
+    points = detectors.drift_timeline(windows, exactly, window_days=3)
+
+    boundary_day = pd.Timestamp("2026-01-02", tz="UTC").isoformat()
+    matching = [p for p in points if p["day_utc"] == boundary_day]
+
+    assert matching, (
+        f"the day whose trailing window holds exactly min_samples="
+        f"{exactly.min_samples} rows must be kept, got days "
+        f"{[p['day_utc'][:10] for p in points]}"
+    )
+    assert matching[0]["n"] == exactly.min_samples, (
+        f"fixture drifted: expected exactly {exactly.min_samples} trailing rows, "
+        f"got {matching[0]['n']}"
+    )
+
+
 def test_raising_min_samples_removes_points_from_the_front():
     reference, current = _scored("2026-01-01", 6), _scored("2026-01-07", 4)
 
@@ -208,12 +246,34 @@ def test_deterministic_columns_are_excluded_from_the_feature_scan():
     assert chosen <= set(build_mod.FEATURE_COLUMNS) | {None}
 
 
+def test_an_eligible_feature_is_actually_scored_and_named():
+    """The positive case for the feature scan, which nothing else demanded.
+
+    `test_deterministic_columns_are_excluded_from_the_feature_scan` permits
+    `None` in the chosen set -- correctly, since a frame may have no eligible
+    feature. But that makes it blind to a mutation blanking the whole PSI map:
+    every column becomes `None` and the assertion still holds. When a real
+    feature *is* present, it has to be found.
+    """
+    windows = _windows(_scored("2026-01-01", 6), _scored("2026-01-07", 4))
+    points = detectors.drift_timeline(windows, BOUNDS, window_days=3)
+
+    assert points
+    assert all(p["feature_max_column"] == REAL_FEATURE for p in points), (
+        "the one eligible feature must be named on every point, got "
+        f"{ {p['feature_max_column'] for p in points} }"
+    )
+    assert all(isinstance(p["feature_max_psi"], float) for p in points), (
+        "a named feature column must carry a numeric PSI"
+    )
+
+
 def test_a_frame_with_no_eligible_features_still_produces_points():
     """Feature PSI goes None; the target and prediction series must survive."""
     windows = _windows(_scored("2026-01-01", 6), _scored("2026-01-07", 4))
     stripped = _windows(
-        windows.reference.drop(columns=[build_mod.FEATURE_COLUMNS[0]]),
-        windows.current.drop(columns=[build_mod.FEATURE_COLUMNS[0]]),
+        windows.reference.drop(columns=[REAL_FEATURE]),
+        windows.current.drop(columns=[REAL_FEATURE]),
     )
     points = detectors.drift_timeline(stripped, BOUNDS, window_days=3)
 
