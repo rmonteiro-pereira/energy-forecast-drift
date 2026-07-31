@@ -1,5 +1,33 @@
 # energy-forecast-drift
 
+> # ⚠️ EVERY NUMBER IN THIS REPOSITORY IS SYNTHETIC
+>
+> ### There is no EIA API key yet, so there is no real demand data. Nothing here is a benchmark, a result, or a claim about PJM.
+>
+> The demand series is a **seeded synthetic fixture** from
+> [`models/fixtures.py`](models/fixtures.py). Every committed artifact carries
+> **`"is_real": false`**, both PNGs are stamped `SYNTHETIC FIXTURE`, and the
+> dashboard leads with a red banner that reads the flag out of the data.
+>
+> **If you are about to quote a number from this repo — an MAE, a MAPE, the
+> LightGBM-vs-baseline delta, a PSI, the drift verdict — don't.** They exist to
+> prove the pipeline executes end to end. They say nothing about electricity
+> demand.
+>
+> **What *is* real is the engineering**, and that is what this repo is for:
+> walk-forward backtesting with leakage blocked in four independent places, four
+> drift types over hand-written PSI and KS, a retrain policy that returns a
+> structured verdict, MLflow tracking and a gated registry promotion, and tests
+> that prove the alarm fires on an injected shift *and* stays silent without one.
+> None of that depends on which numbers go in.
+>
+> **The day the key arrives:** one backfill and one `pipeline.daily` run flips
+> every artifact to `"is_real": true` — the banner turns green, the watermark
+> disappears, and the same code starts producing numbers that mean something.
+> Steps: **[docs/BLOCKED.md](docs/BLOCKED.md)**.
+
+---
+
 Hourly **electricity demand forecasting** for a US balancing authority (PJM),
 built around a live data feed so that **model drift is real, not simulated**.
 
@@ -8,31 +36,47 @@ cron pulls fresh demand and weather every day, re-scores the model against the
 actuals that arrive, and commits the metrics back to the repo — so drift
 accumulates in public, week after week, and can be pointed at.
 
-> **Milestone status: M0 → M6 complete** — ingestion, the seasonal-naive
-> baseline, a global LightGBM scored on the same walk-forward folds, MLflow
-> tracking + registry, the four-way drift suite with its retrain trigger, the
-> single-command daily pipeline behind `daily.yml`, a FastAPI `/forecast` served
-> from the registry alias, and the React dashboard over `metrics/`. The only
-> thing left is real data — see **[docs/writeup.md](docs/writeup.md)** for what
-> is real, what is fixture, and what a real drift episode will look like.
+## What is real, and what is not
 
----
+| | Status | Notes |
+|---|---|---|
+| **The code** | ✅ real, complete, tested | 157 Python tests + 4 dashboard tests, no network. Every path below runs today. |
+| **Open-Meteo temperature** | ✅ **real data**, pulled live | No key needed. Genuinely fetched, genuinely joined. |
+| **EIA hourly demand** | ❌ **absent** | The client is finished and not stubbed. It has never been given a key. |
+| **The demand series used everywhere** | ❌ **seeded synthetic fixture** | `models/fixtures.py`, seed `20260728`. A plausible curve, not a measurement. |
+| **Every number in `metrics/*.json`** | ❌ **fixture-derived** | MAE, MAPE, RMSE, bias, PSI, KS, the retrain verdict. All of it. `"is_real": false`. |
+| **Both committed PNGs** | ❌ **fixture-derived** | Watermarked `SYNTHETIC FIXTURE — NOT REAL DATA` by `pipeline/plots.py`. |
+| **The MLflow runs and registry** | ⚠️ real machinery, fixture inputs | Real tracking, real registry, real gated promotion — of a model fitted on the fixture. |
 
-## ⚠️ Current state: the baseline number is pending an API key
+The `is_real` flag is not a comment. It is written into every artifact, tagged
+onto every MLflow run, checked by `/forecast` before it answers, and read by the
+dashboard banner at render time. Flipping it is a data event, not an edit.
 
-The EIA API key had not been registered when this milestone was built, so
-**there is no real demand history in the lake yet**, and therefore **no real
-baseline MAE**.
+## If you are reviewing this in five minutes
 
-- The Open-Meteo leg is **real and running today** — no key needed.
-- The EIA client is **finished, not stubbed**, and runs the moment a key lands.
-- `metrics/baseline.json`, `metrics/model.json` and `metrics/drift.json`
-  currently hold numbers computed from a **seeded synthetic fixture**. They
-  prove the pipeline executes end to end. They are **not a result and must not
-  be quoted** — including the LightGBM-vs-baseline delta and the drift verdict
-  below. Every artifact says so (`"is_real": false`).
+The claims worth checking, and where to check them:
 
-Four steps to unblock it: **[docs/BLOCKED.md](docs/BLOCKED.md)**.
+| Claim | Where it is enforced | Where it is proven |
+|---|---|---|
+| No temporal leakage in the backtest | `models/backtest.py::_history_before` (`index < cutoff`, strictly) | `tests/test_backtest.py` — poisons every value after the last fold, asserts the metrics do not move |
+| No temporal leakage in the *features* | `features/build.py` — every feature is a function of data strictly before its forecast **origin**, not its target | `tests/test_features_build.py` — poisons from the origin onward, asserts no feature column moves |
+| PSI and KS are implemented, not imported | `drift/stats.py` — no scipy at runtime | `tests/test_drift_stats.py` — checks `D` against `scipy.stats.ks_2samp` to 1e-12, the p-value to 1e-3, plus a two-bin PSI worked out by hand |
+| The drift alarm actually fires | `drift/trigger.py` — five named rules, structured verdict | `tests/test_drift_run.py` — injects a shift and asserts **retrain**; runs the identical path unshifted and asserts **not retrain** |
+| Promotion to `@champion` is earned | `models/tracking.py` — alias moves only on beating the naive baseline | `tests/test_lgbm.py` — a losing model lands as `@challenger` |
+| The monitor never scores itself in-sample | `pipeline/daily.py::_monitoring_booster` — needs the `train_data_end_utc` tag to prove otherwise | `tests/test_pipeline_daily.py`; the bug it fixes is written up in [`docs/writeup.md`](docs/writeup.md) §5.1 |
+| A cron can never publish fixture numbers as real | `pipeline/daily.py` `--require-eia-key` → exit 2 before writing a byte | `tests/test_pipeline_daily.py`, plus a CI step that asserts exit 2 **and** that no file was written |
+| The banner follows the data, not the copy | `dashboard/src/components.tsx::ProvenanceBanner` | `dashboard/src/components.test.tsx` — same props, flag flipped, banner changes state |
+| No secret can reach a log | `ingest/http.py::redact` | `tests/test_clients.py::test_secrets_never_survive_redaction` |
+
+Longer form, including three bugs this project actually had and what a real
+drift episode is predicted to look like: **[docs/writeup.md](docs/writeup.md)**.
+The pre-publication secret and size scan: **[docs/PUBLICATION-SCAN.md](docs/PUBLICATION-SCAN.md)**.
+
+**Status: M0 → M7 complete and committed** — ingestion, the seasonal-naive
+baseline, a global LightGBM on the same walk-forward folds, MLflow tracking +
+registry, the four-way drift suite with its retrain trigger, the single-command
+daily pipeline behind `daily.yml`, a FastAPI `/forecast` from the registry
+alias, the React dashboard, and the writeup. The only thing missing is data.
 
 ---
 
@@ -133,11 +177,13 @@ cutoff `T0` the model sees the series strictly before `T0` and forecasts
 `T0+1 … T0+24`. Metrics are computed per horizon, then pooled.
 
 <details>
-<summary><b>⚠️ SYNTHETIC — pipeline smoke test, NOT a result. Click to expand.</b></summary>
+<summary><b>⚠️ SYNTHETIC FIXTURE OUTPUT — not a result, not a benchmark. Click only if you accept that.</b></summary>
 
-These numbers come from `models/fixtures.py` (a seeded curve), not from the
-EIA. They exist only to show the backtest runs and the artifact is well formed.
-The real table replaces this one as soon as the key lands.
+**Read this before the table.** Every cell below is computed from
+`models/fixtures.py` — a seeded curve, not the EIA. The table demonstrates that
+the backtest runs, that it is scored per horizon, and that the artifact is well
+formed. It is **not** a measurement of anything, and the figures are deliberately
+left unbolded so that nothing here reads as a headline.
 
 | Horizon (h) | MAE (MWh) | MAPE (%) | RMSE (MWh) | Bias (MWh) | n |
 |---:|---:|---:|---:|---:|---:|
@@ -146,14 +192,18 @@ The real table replaces this one as soon as the key lands.
 | 12 | 2,681 | 2.53 | 3,322 | -500 | 56 |
 | 18 | 2,906 | 2.46 | 3,397 | -520 | 56 |
 | 24 | 2,844 | 3.46 | 3,623 | -178 | 56 |
-| **overall** | **2,559** | **2.77** | 3,173 | -487 | 1,344 |
+| overall | 2,559 | 2.77 | 3,173 | -487 | 1,344 |
+
+*(fixture-derived — `metrics/baseline.json` carries `"is_real": false`)*
 
 Full per-horizon table: [`metrics/baseline_table.md`](metrics/baseline_table.md).
 
 </details>
 
-**This MAE is the number every future model must beat** — on the same folds,
-the same horizons and the same protocol. That is exactly how M2 is scored.
+**The role this baseline plays is structural, not numeric.** Whatever its MAE
+turns out to be on real data, it is the number every later model must beat — on
+the same folds, the same horizons, the same protocol. That comparison is the
+point; the current value of it is not.
 
 ## M2 — LightGBM, on the same folds
 
@@ -174,19 +224,24 @@ cutoffs**, on exactly the rows whose target hour had already happened at that
 instant. Fold 56's model never sees anything fold 1's model could not have seen.
 
 <details>
-<summary><b>⚠️ SYNTHETIC — pipeline smoke test, NOT a result. Click to expand.</b></summary>
+<summary><b>⚠️ SYNTHETIC FIXTURE OUTPUT — not a result, not a benchmark. Click only if you accept that.</b></summary>
 
-Fixture-derived, exactly like the baseline table above. The *delta* is not a
-benchmark either — it says the wiring works, nothing about PJM.
+**The delta below is the most quotable-looking number in this repository and the
+most misleading.** It is fixture against fixture. A synthetic curve is easier to
+fit than real load, so a win here is close to guaranteed and means only that the
+two models were scored on identical folds and the comparison plumbing works. It
+is not evidence that LightGBM beats a seasonal naive on PJM. Unbolded on purpose.
 
 | | MAE (MWh) | MAPE (%) |
 |---|---:|---:|
 | seasonal naive | 2,559 | 2.77 |
-| LightGBM | **2,181** | **2.38** |
-| delta | **−378 (−14.8%)** | −0.39 pp |
+| LightGBM | 2,181 | 2.38 |
+| delta | −378 (−14.8%) | −0.39 pp |
 
-LightGBM wins **23 of 24 horizons**. Full per-horizon comparison:
-[`metrics/model_table.md`](metrics/model_table.md); machine-readable
+*(fixture-derived — `metrics/model.json` carries `"is_real": false`)*
+
+LightGBM leads on 23 of the 24 horizons *on this fixture*. Full per-horizon
+comparison: [`metrics/model_table.md`](metrics/model_table.md); machine-readable
 [`metrics/model.json`](metrics/model.json).
 
 Top gain-based importances: `demand_lag_168h` (39%),
@@ -293,18 +348,25 @@ that never fires is useless; one that always fires is worse, because it trains
 people to ignore it.
 
 <details>
-<summary><b>⚠️ SYNTHETIC — pipeline smoke test, NOT a result. Click to expand.</b></summary>
+<summary><b>⚠️ SYNTHETIC FIXTURE OUTPUT — not a result, not a benchmark. Click only if you accept that.</b></summary>
 
-On the fixture the current verdict is **WATCH**: feature drift alerts (the
+**A drift verdict computed on a fixture is a demonstration of the rule, not a
+finding.** The windows below are two slices of a seeded curve; that they differ
+tells you about the curve, not about the grid.
+
+On the fixture the current verdict is WATCH: feature drift alerts (the
 fixture carries a real annual cycle, so mid-June-vs-mid-July temperature and
 rolling-level features genuinely move), while target, prediction and
 performance stay quiet. That is exactly the case R4 exists for — a leading
 indicator with no measured harm behind it.
 
 Injecting a +12,000 MW level shift over the current window flips all four
-signals to `alert` and the verdict to **RETRAIN** under R1, with the reference
-MAE roughly tripling. Reproduce with `--simulate-shift 12000`; the artifact is
+signals to `alert` and the verdict to RETRAIN under R1, with the reference MAE
+roughly tripling. Reproduce with `--simulate-shift 12000`; the artifact is
 stamped `simulated_shift` so a demo can never be mistaken for an observation.
+This is the one number in this section that is *supposed* to be artificial — it
+is an injected shift of a stated size, and the alarm responding to it is the
+assertion under test.
 
 Full report: [`metrics/drift_summary.md`](metrics/drift_summary.md); machine
 readable [`metrics/drift.json`](metrics/drift.json).
@@ -352,10 +414,12 @@ whole thing runnable and testable today.
 **The monitor refuses to score itself.** This one is subtle and it is the bug
 this milestone actually had. The registry champion is refit on *all* available
 history, so by the time it is promoted it has already seen the reference and
-current windows; scoring them with it gives in-sample errors — on this fixture,
-MAE ≈ 1,015 MWh against the ≈ 2,657 the same model gets out of sample. Every
-future window would then look catastrophic against a reference that was never
-real. So training runs now tag the model with `train_data_end_utc`, and the
+current windows; scoring them with it gives in-sample errors. On the fixture the
+gap was stark — roughly 1,015 MWh in-sample against roughly 2,657 out of sample
+for the same model — and it was that ratio, not a failing test, that exposed the
+bug. (Both figures are fixture-derived and quoted here only as the symptom.)
+Every future window would then look catastrophic against a reference that was
+never real. So training runs now tag the model with `train_data_end_utc`, and the
 monitor uses the champion **only** when that tag proves its data stopped before
 the reference window opens. Otherwise it fits its own booster on the train slice
 and records why, in the artifact. A missing tag counts as ineligible: unknown is
@@ -394,6 +458,10 @@ curl 'http://127.0.0.1:8000/forecast?max_horizon=6'
 }
 ```
 
+Note the second and third fields. **The response carries its own provenance**, so
+a consumer cannot receive a forecast without also receiving the fact that it came
+from a fixture. `78091.6` is a fixture number like every other one here.
+
 **No path is hardcoded.** The booster comes from
 `models:/energy-demand-forecaster@champion`, so promoting a challenger is a
 registry operation and nothing is redeployed. `/model` reports which version
@@ -426,14 +494,24 @@ copies `metrics/*.json` into `dist/data/`, so the result is a directory that can
 be served from anywhere — and because the data is *fetched* rather than inlined
 into the bundle, pointing it at a fresher `metrics/` needs no rebuild.
 
-**The banner is driven by the flag, not by copy.** While `"is_real"` is false,
-the page leads with a red banner saying plainly that every number came from a
-seeded synthetic fixture and quoting the artifact's own `warning` field. There is
-no prop or build flag that overrides it — `ProvenanceBanner` branches on the
-artifact and nothing else. Flip `is_real` on a *copy* of `dist/data` and the same
-code renders a green "Live data" banner instead; `dashboard/README.md` has the
-one-liner. That is the whole demonstration: same code, same numbers, the banner
-follows the data.
+**The banner is driven by the flag, not by copy — and that is tested.** While
+`"is_real"` is false, the page leads with a red banner saying plainly that every
+number came from a seeded synthetic fixture, and quoting the artifact's own
+`warning` field rather than a string in the frontend. There is no prop, no build
+flag and no environment variable that overrides it: `ProvenanceBanner` branches
+on the artifact and nothing else.
+
+```bash
+cd dashboard && npm test     # 4 tests, all on the banner
+```
+
+`dashboard/src/components.test.tsx` renders the component twice with **identical
+props except `is_real`** and asserts the two states differ in substance, not
+wording — `role="alert"` present or absent, a different heading, the word
+"benchmark" present or absent. A future refactor that "simplifies" the banner
+into a constant fails those tests. `dashboard/README.md` also has the manual
+version: flip the flag on a *copy* of `dist/data` and watch the same code render
+a green "Live data" banner over the same numbers.
 
 Four charts, and the decisions behind them:
 
@@ -533,11 +611,13 @@ serving/    app.py    FastAPI /forecast /model /health from the registry alias
 metrics/    committed artifacts: baseline.json, model.json, drift.json,
             forecast.json, monitor.json, pipeline.json + tables + 2 PNGs
 dashboard/  Vite + React + ECharts over metrics/*.json — no deploy step here
-tests/      157 tests: idempotency, leakage (backtest *and* features), retries,
-            secret redaction, registry wiring, PSI/KS vs scipy, drift injection,
-            the daily chain, the HTTP surface, and both workflow YAMLs
+            components.test.tsx  the banner tests (vitest)
+tests/      157 Python tests: idempotency, leakage (backtest *and* features),
+            retries, secret redaction, registry wiring, PSI/KS vs scipy, drift
+            injection, the daily chain, the HTTP surface, both workflow YAMLs
 docs/       writeup.md (real vs fixture, three bugs, what a real episode looks
-            like) · spec.md (original brief) · BLOCKED.md (the EIA key)
+            like) · PUBLICATION-SCAN.md (pre-publication secret + size scan)
+            spec.md (original brief) · BLOCKED.md (the EIA key)
 .github/    ci.yml (active on publish) · daily.yml (inert until published)
 mlruns/     MLflow artifacts — gitignored, never committed (nor is mlflow.db)
 reports/    Evidently HTML (~5MB of inlined plotly) — gitignored
@@ -545,18 +625,19 @@ reports/    Evidently HTML (~5MB of inlined plotly) — gitignored
 
 ## What is left
 
-Exactly one thing: **real data.**
+Exactly one thing: **real data.** No code is waiting to be written.
 
 | | |
 |---|---|
-| **gated on the EIA key** | backfill two years of hourly PJM demand, re-run `models.train` and `pipeline.daily` against it, and every artifact flips to `"is_real": true` — the banner turns green, the watermark disappears, and the numbers in this README become results |
-| **then** | uncomment the `schedule:` block in `daily.yml` and let drift accumulate in public |
-| **M7** | one real drift episode, captured end to end, appended to the writeup |
+| **gated on the EIA key** | backfill two years of hourly PJM demand, re-run `models.train` and `pipeline.daily` against it, and every artifact flips to `"is_real": true` — the banner turns green, the watermark disappears, and the figures in this README stop being placeholders and start being measurements |
+| **then** | uncomment the `schedule:` block in `daily.yml` and let drift accumulate in public, day after day |
+| **then** | one real drift episode, captured end to end, appended to the writeup — the thing the whole repo is built to catch |
 
-The five steps to unblock it are in [`docs/BLOCKED.md`](docs/BLOCKED.md); what
-will change, and what a real episode is predicted to look like, is in
+The steps to unblock it are in [`docs/BLOCKED.md`](docs/BLOCKED.md); what will
+change, and what a real episode is predicted to look like, is in
 [`docs/writeup.md`](docs/writeup.md). Full brief:
-[`docs/spec.md`](docs/spec.md).
+[`docs/spec.md`](docs/spec.md). Pre-publication scan:
+[`docs/PUBLICATION-SCAN.md`](docs/PUBLICATION-SCAN.md).
 
 ## Cost
 

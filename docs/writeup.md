@@ -1,7 +1,12 @@
 # energy-forecast-drift — what this is, what is real, and what is not
 
-*Last updated: 2026-07-29. Milestones M0–M6 complete; the EIA API key is still
+*Last updated: 2026-07-30. Milestones M0–M7 complete; the EIA API key is still
 pending, so every metric in the repo is fixture-derived.*
+
+> **⚠️ Before you quote anything from this document:** every MAE, MAPE, RMSE,
+> PSI, KS statistic and drift verdict below was computed on a **seeded synthetic
+> fixture**, not on EIA data. None of it is a benchmark and none of it says
+> anything about PJM. The engineering is real; the numbers are placeholders.
 
 ---
 
@@ -36,7 +41,7 @@ will change on the day the key lands.
 | **LightGBM + MLflow registry** | ✅ real code | Refit at every fold cutoff; sqlite backend; `@champion` alias moves only on a genuine win. |
 | **Drift suite** | ✅ real code | Own PSI and KS (checked against `scipy.stats.ks_2samp` to 1e-12 on the statistic), four drift types, structured retrain verdict, Evidently as a second opinion. |
 | **Daily pipeline + serving** | ✅ real code | `python -m pipeline.daily` runs end to end locally; `/forecast` serves the registry champion over HTTP. |
-| **Dashboard** | ✅ real code | Vite + React + ECharts reading `metrics/*.json`. |
+| **Dashboard** | ✅ real code | Vite + React + ECharts reading `metrics/*.json`. The provenance banner is driven by the `is_real` field and has its own tests (`dashboard/src/components.test.tsx`) asserting that the same props with the flag flipped produce substantively different output. |
 | **Demand series** | ❌ **synthetic fixture** | `models/fixtures.py`, seed 20260728, 200 days ending 2026-07-28. |
 | **Every metric** | ❌ **fixture-derived** | `metrics/baseline.json`, `model.json`, `drift.json`, `monitor.json`, `forecast.json` — all `"is_real": false`. |
 
