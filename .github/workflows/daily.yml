@@ -122,7 +122,7 @@ jobs:
       # ------------------------------------------------------------------
       - name: Restore data lake and MLflow state
         if: steps.preflight.outputs.has_key == 'true'
-        uses: actions/cache/restore@v4
+        uses: actions/cache/restore@v6
         with:
           path: |
             data
@@ -156,7 +156,7 @@ jobs:
       # after it, with no obvious symptom. Losing a delta pull costs one extra
       # API call; restoring corrupt MLflow state costs a debugging session.
       - name: Save data lake and MLflow state
-        uses: actions/cache/save@v4
+        uses: actions/cache/save@v6
         if: success() && steps.preflight.outputs.has_key == 'true'
         with:
           path: |
