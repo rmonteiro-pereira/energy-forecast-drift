@@ -1,0 +1,83 @@
+# Mutation testing — this workflow genuinely runs.
+#
+# It is NOT part of `ci.yml`, and that is a deliberate trade recorded in
+# docs/adr/0007: a full pass takes ~25 minutes, which is the wrong cost on every
+# push and the kind of slow job people learn to skip. So it runs on a schedule
+# and on demand instead.
+#
+# What it must never be is theatre. There is no `if: false` here, the paths it
+# mutates are asserted to exist by tests/test_mutation_config.py, and the score
+# is written to the job summary on every run so it can be read without digging
+# through logs. If this job is green, mutmut actually executed.
+#
+# Why a floor instead of trusting mutmut's exit code: `mutmut run` exits
+# non-zero whenever *any* mutant survives, which is permanently true here and
+# says nothing about whether things got worse. scripts/mutation_score.py reads
+# the score and fails only on a regression — weakening a test is otherwise
+# invisible, because a weaker test still passes.
+
+name: mutation testing
+
+on:
+  schedule:
+    # 04:40 UTC on Mondays. Off the hour: GitHub throttles the top-of-hour
+    # stampede and delays those runs.
+    - cron: "40 4 * * 1"
+  workflow_dispatch:
+    inputs:
+      floor:
+        description: "Fail if the overall mutation score falls below this percentage"
+        type: string
+        default: "50"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: mutation-testing
+  cancel-in-progress: true
+
+jobs:
+  mutate:
+    runs-on: ubuntu-latest
+    # A full pass took ~25 min locally on 474 mutants; 60 leaves headroom for a
+    # slower runner without hanging forever if something goes wrong.
+    timeout-minutes: 60
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: uv sync --extra dev --frozen
+
+      # Fail loudly and immediately if the config points at files that do not
+      # exist. A mutation config aimed at a missing directory reports a perfect
+      # score over zero mutants, which is worse than not running at all.
+      - name: The mutation config must point at real files
+        run: uv run pytest tests/test_mutation_config.py -v
+
+      - name: Run mutmut
+        # mutmut exits non-zero whenever any mutant survives, which is expected.
+        # The verdict comes from the score, not from this exit code.
+        run: uv run mutmut run || true
+
+      - name: Report the score and enforce the floor
+        run: |
+          uv run python scripts/mutation_score.py \
+            --floor "${{ inputs.floor || '50' }}" \
+            --survivors 30 | tee "$GITHUB_STEP_SUMMARY"
+          exit "${PIPESTATUS[0]}"
+
+      - name: Upload the full survivor list
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: mutation-report-${{ github.run_id }}
+          path: .mutmut-cache
+          if-no-files-found: error
