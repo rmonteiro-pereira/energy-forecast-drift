@@ -1,6 +1,6 @@
 {
   "milestone": "M5",
-  "generated_at_utc": "2026-07-29T04:54:25+00:00",
+  "generated_at_utc": "2026-07-31T01:45:07+00:00",
   "is_real": false,
   "warning": "These numbers come from a SEEDED SYNTHETIC FIXTURE, not from EIA data. They are a smoke test of the pipeline, NOT a benchmark. The real baseline is pending the EIA API key \u2014 see docs/BLOCKED.md.",
   "units": {
@@ -11,7 +11,7 @@
   "monitoring_model": {
     "source": "fitted_on_train_window",
     "reason": "the champion was trained on data up to 2026-07-28T00:00:00+00:00, which covers the reference window opening at 2026-06-16T00:00:00+00:00; scoring it there would be in-sample",
-    "champion_version": "2",
+    "champion_version": "4",
     "champion_train_data_end_utc": "2026-07-28T00:00:00+00:00"
   },
   "served_model": {
@@ -19,8 +19,8 @@
     "uri": "models:/energy-demand-forecaster@champion",
     "registered_model": "energy-demand-forecaster",
     "alias": "champion",
-    "version": "2",
-    "run_id": "46f32658b4774ea5bb8c7e0119bd20d3",
+    "version": "4",
+    "run_id": "080189369e3f451da51bd5884de2731b",
     "trained_on_real_data": false,
     "data_kind": "synthetic_fixture",
     "train_data_end_utc": "2026-07-28T00:00:00+00:00",

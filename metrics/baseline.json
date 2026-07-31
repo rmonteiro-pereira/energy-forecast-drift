@@ -1,6 +1,8 @@
 {
   "milestone": "M1",
-  "generated_at_utc": "2026-07-29T00:06:04+00:00",
+  "generated_at_utc": "2026-07-31T01:49:12+00:00",
+  "is_real": false,
+  "warning": "These numbers come from a SEEDED SYNTHETIC FIXTURE, not from EIA data. They are a smoke test of the pipeline, NOT a benchmark. The real baseline is pending the EIA API key \u2014 see docs/BLOCKED.md.",
   "model": {
     "name": "seasonal_naive_168h",
     "description": "demand at the same hour, 7 days earlier",

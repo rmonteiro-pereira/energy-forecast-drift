@@ -40,7 +40,7 @@ accumulates in public, week after week, and can be pointed at.
 
 | | Status | Notes |
 |---|---|---|
-| **The code** | ✅ real, complete, tested | 157 Python tests + 4 dashboard tests, no network. Every path below runs today. |
+| **The code** | ✅ real, complete, tested | 180 Python tests + 4 dashboard tests, no network. Every path below runs today, and [`docs/REPRODUCE.md`](docs/REPRODUCE.md) has the transcripts. |
 | **Open-Meteo temperature** | ✅ **real data**, pulled live | No key needed. Genuinely fetched, genuinely joined. |
 | **EIA hourly demand** | ❌ **absent** | The client is finished and not stubbed. It has never been given a key. |
 | **The demand series used everywhere** | ❌ **seeded synthetic fixture** | `models/fixtures.py`, seed `20260728`. A plausible curve, not a measurement. |
@@ -67,10 +67,13 @@ The claims worth checking, and where to check them:
 | A cron can never publish fixture numbers as real | `pipeline/daily.py` `--require-eia-key` → exit 2 before writing a byte | `tests/test_pipeline_daily.py`, plus a CI step that asserts exit 2 **and** that no file was written |
 | The banner follows the data, not the copy | `dashboard/src/components.tsx::ProvenanceBanner` | `dashboard/src/components.test.tsx` — same props, flag flipped, banner changes state |
 | No secret can reach a log | `ingest/http.py::redact` | `tests/test_clients.py::test_secrets_never_survive_redaction` |
+| No artifact can claim to be real while it isn't | the `is_real` flag, written by every entrypoint | `tests/test_artifacts.py` — fails the build if any published artifact pairs `is_real: true` with synthetic provenance, or drops its warning |
 
 Longer form, including three bugs this project actually had and what a real
 drift episode is predicted to look like: **[docs/writeup.md](docs/writeup.md)**.
-The pre-publication secret and size scan: **[docs/PUBLICATION-SCAN.md](docs/PUBLICATION-SCAN.md)**.
+Real captured transcripts of every command above, including the ones that fail
+on purpose: **[docs/REPRODUCE.md](docs/REPRODUCE.md)**. The pre-publication
+secret and size scan: **[docs/PUBLICATION-SCAN.md](docs/PUBLICATION-SCAN.md)**.
 
 **Status: M0 → M7 complete and committed** — ingestion, the seasonal-naive
 baseline, a global LightGBM on the same walk-forward folds, MLflow tracking +
@@ -137,10 +140,13 @@ uv run python -m drift.run --out metrics/drift.json   # M4: 4 drift types + retr
 uv run python -m pipeline.daily  # M5: the whole loop -> metrics/*.json + PNGs
 uv run python -m serving         # M5: FastAPI on :8000, /forecast from @champion
 
-uv run pytest -v               # 157 tests, no network
+uv run pytest -v               # 180 tests, no network
 
-cd dashboard && npm ci && npm run build   # M6: static dist/ over metrics/*.json
+cd dashboard && npm ci && npm test && npm run build   # M6: static dist/ over metrics/*.json
 ```
+
+Every command above is captured verbatim, with its real output and exit code, in
+[`docs/REPRODUCE.md`](docs/REPRODUCE.md).
 
 `python -m models.train` is the train/eval entrypoint: it scores **both** models
 on the same folds, logs the run to MLflow, registers the refit LightGBM and
@@ -612,11 +618,13 @@ metrics/    committed artifacts: baseline.json, model.json, drift.json,
             forecast.json, monitor.json, pipeline.json + tables + 2 PNGs
 dashboard/  Vite + React + ECharts over metrics/*.json — no deploy step here
             components.test.tsx  the banner tests (vitest)
-tests/      157 Python tests: idempotency, leakage (backtest *and* features),
+tests/      180 Python tests: idempotency, leakage (backtest *and* features),
             retries, secret redaction, registry wiring, PSI/KS vs scipy, drift
-            injection, the daily chain, the HTTP surface, both workflow YAMLs
+            injection, the daily chain, the HTTP surface, both workflow YAMLs,
+            and the published artifacts' own honesty contract
 docs/       writeup.md (real vs fixture, three bugs, what a real episode looks
-            like) · PUBLICATION-SCAN.md (pre-publication secret + size scan)
+            like) · REPRODUCE.md (real transcripts of every command)
+            PUBLICATION-SCAN.md (pre-publication secret + size scan)
             spec.md (original brief) · BLOCKED.md (the EIA key)
 .github/    ci.yml (active on publish) · daily.yml (inert until published)
 mlruns/     MLflow artifacts — gitignored, never committed (nor is mlflow.db)
@@ -643,3 +651,8 @@ change, and what a real episode is predicted to look like, is in
 
 R$0. EIA and Open-Meteo are free, GitHub Actions is free on a public repo, and
 the dashboard is a static `dist/`. No server stays on.
+
+## License
+
+[MIT](LICENSE). The code is yours to use. The numbers are not results, so there
+is nothing there to cite.

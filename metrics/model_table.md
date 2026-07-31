@@ -2,7 +2,7 @@
 
 > ⚠️ **SYNTHETIC — NOT REAL DATA.** These numbers come from a SEEDED SYNTHETIC FIXTURE, not from EIA data. They are a smoke test of the pipeline, NOT a benchmark. The real baseline is pending the EIA API key — see docs/BLOCKED.md.
 
-- generated: `2026-07-29T04:49:37+00:00`
+- generated: `2026-07-31T01:44:50+00:00`
 - source: `synthetic_fixture`
 - protocol: 56 daily folds x 24 horizons, identical for both models
 - overall MAE: baseline **2,559** -> LightGBM **2,181** MWh (-14.8%)

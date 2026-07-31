@@ -2,7 +2,7 @@
 
 > ⚠️ **SYNTHETIC — NOT REAL DATA.** These numbers come from a SEEDED SYNTHETIC FIXTURE, not from EIA data. They are a smoke test of the pipeline, NOT a benchmark. The real baseline is pending the EIA API key — see docs/BLOCKED.md.
 
-- generated: `2026-07-29T00:06:04+00:00`
+- generated: `2026-07-31T01:49:12+00:00`
 - source: `synthetic_fixture`
 - folds: 56 daily cutoffs over 8 weeks
 - overall: **MAE 2,559 MWh**, MAPE 2.77%

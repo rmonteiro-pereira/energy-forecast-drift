@@ -2,7 +2,7 @@
 
 > ⚠️ **SYNTHETIC — NOT REAL DATA.** These numbers come from a SEEDED SYNTHETIC FIXTURE, not from EIA data. They are a smoke test of the pipeline, NOT a benchmark. The real baseline is pending the EIA API key — see docs/BLOCKED.md.
 
-- generated: `2026-07-29T04:54:29+00:00`
+- generated: `2026-07-31T01:45:10+00:00`
 - source: `synthetic_fixture`
 - reference: `2026-06-16T00:00:00+00:00` → `2026-07-14T00:00:00+00:00` (2,688 rows)
 - current: `2026-07-14T00:00:00+00:00` → `2026-07-28T00:00:00+00:00` (1,312 rows)

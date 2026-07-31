@@ -131,6 +131,16 @@ def build_artifact(
     return {
         "milestone": "M1",
         "generated_at_utc": datetime.now(UTC).isoformat(timespec="seconds"),
+        # Provenance is hoisted to the top level, mirroring every other artifact.
+        # It is also still nested under `data`, which is where the richer block
+        # (seed, anchor, panel shape) lives. Duplicating the two fields is cheap;
+        # the alternative is a consumer reading `artifact["is_real"]`, getting
+        # `None` because this one artifact happens to nest it, and treating the
+        # falsy result as "not synthetic" by accident. Every published artifact
+        # answers `is_real` at the same key -- that is the contract, and
+        # `tests/test_artifacts.py` enforces it.
+        "is_real": provenance["is_real"],
+        "warning": None if provenance["is_real"] else SYNTHETIC_WARNING,
         "model": {
             "name": baseline.NAME,
             "description": "demand at the same hour, 7 days earlier",
