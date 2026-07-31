@@ -74,10 +74,16 @@ jobs:
             --survivors 30 | tee "$GITHUB_STEP_SUMMARY"
           exit "${PIPESTATUS[0]}"
 
-      - name: Upload the full survivor list
+      # `include-hidden-files` is required, not optional. `.mutmut-cache` starts
+      # with a dot, and upload-artifact has excluded hidden files by default
+      # since v4 — so without this the upload finds nothing and
+      # `if-no-files-found: error` fails the job *after* a 25-minute run. Found
+      # while triaging the v4 -> v7 bump, and it was already wrong at v4.
+      - name: Upload the mutation cache
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: mutation-report-${{ github.run_id }}
+          name: mutation-cache-${{ github.run_id }}
           path: .mutmut-cache
+          include-hidden-files: true
           if-no-files-found: error

@@ -30,12 +30,19 @@
 ---
 
 Hourly **electricity demand forecasting** for a US balancing authority (PJM),
-built around a live data feed so that **model drift is real, not simulated**.
+built around a live data feed **so that model drift will be observed rather than
+simulated — once the API key lands.** Today it is neither: the demand series is
+the synthetic fixture described above, and the drift numbers describe that
+fixture.
 
-The point of the project is not the forecast. It is the loop around it: a free
-cron pulls fresh demand and weather every day, re-scores the model against the
-actuals that arrive, and commits the metrics back to the repo — so drift
-accumulates in public, week after week, and can be pointed at.
+The point of the project is not the forecast. It is the loop around it, and the
+loop is built: one command chains ingest → features → score → rolling-MAE
+monitor → drift → artifacts, and `daily.yml` calls exactly that command. What it
+does *not* yet do is run — the workflow is dormant until a key exists, precisely
+so it cannot publish fixture numbers as though they were observations. When it is
+activated, it will pull fresh demand and weather daily, re-score the frozen model
+against the actuals that arrive, and commit the metrics back, so drift
+accumulates in public week after week and can be pointed at.
 
 ## What is real, and what is not
 
