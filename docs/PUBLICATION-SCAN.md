@@ -12,10 +12,18 @@ commands shown; nothing is summarised from memory. **Every candidate secret is m
 this document itself is going public, so it must not become the leak it is looking for.
 
 > **This is a pre-flight record with a date on it, not a standing guarantee.** The
-> repository has moved since: as of 2026-08-01 the history is **271 distinct blobs across
-> 57 commits** (`git rev-list --objects --all`), against the 125 across 21 stated above.
-> The scan has **not** been re-run over the difference, and this document does not claim it
-> has. What the difference consists of is documentation edits, the dashboard dependency
+> repository has moved since. As of 2026-08-01, what a plain `git clone` gets — `main` —
+> is **236 distinct blobs across 36 commits**:
+>
+> ```bash
+> git rev-list --objects main | cut -d' ' -f1 | sort -u \
+>   | git cat-file --batch-check='%(objecttype)' | sort | uniq -c
+> #   236 blob   126 tree    36 commit
+> ```
+>
+> The scan above covered 125 blobs across 21 commits, on every ref rather than on `main`
+> alone. It has **not** been re-run over the difference, and this document does not claim
+> it has. What the difference consists of is documentation edits, the dashboard dependency
 > bumps Dependabot opened, and the mutation-testing work — no data files and no new
 > credentials-shaped surface — but "I know what those commits are" is a weaker claim than
 > "I scanned them", and it is stated as the weaker one.
