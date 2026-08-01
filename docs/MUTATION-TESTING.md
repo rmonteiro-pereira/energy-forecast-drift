@@ -486,6 +486,23 @@ does **not** silently receive the other's status — plus its two complements: t
 duplicates whose statuses *agree* are not refused, and that an untouched file
 full of duplicates is never ambiguous.
 
+**One hole is known and open, and it is in the silent direction.** The refusal is
+scoped to runs of *adjacent* identical lines, which is what this section decided.
+An edit that creates an identical copy **separated** from the run reopens the
+same coin flip: `[def, L, L, return]` → `[def, L, pass, L, L, return]` makes
+`SequenceMatcher` call lines 1-2 the insertion and slide the old pair onto 3 and
+4, where both are killed, so the ratchet reports `held` and exits 0 — while the
+equally valid reading is that the survivor now at line 1 is one of the originals
+and a kill was lost. The old run maps contiguously onto a same-length new run, so
+the disturbance test, which compares shape rather than position, sees nothing.
+
+It is pinned as a `strict` xfail in `tests/test_mutation_ratchet.py`, so the day
+someone closes it the marker fails and has to be removed. Closing it properly
+means replacing "adjacent run" with something like "any identical copy reachable
+between the same two alignment anchors", which changes the semantics decided
+above and would also change the verdict of the mandated test from `ambiguous` to
+`regressed` in at least one case — a decision, not a patch. Tracked as FH-20.
+
 **And the previous cache must not be restored into place.**
 `cache.py::cached_mutation_status` returns `OK_KILLED` **without re-running**
 whenever the mutant was previously killed, on the stated assumption that *"if a

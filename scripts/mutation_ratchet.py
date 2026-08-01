@@ -72,6 +72,19 @@ above. **This refuses rather than guesses**: identities landing in a disturbed
 run of identical lines with non-uniform statuses are reported `ambiguous` and
 fail, to be adjudicated by a human, exactly as an unclassified survivor is.
 
+**Known limit, stated rather than discovered later.** That refusal is scoped to
+runs of *adjacent* identical lines, which is what issue #21 decided. An edit that
+creates an identical copy **separated** from the run re-opens the same coin flip
+through a geometry the run-scoped rule cannot represent: with `[def, L, L,
+return]` becoming `[def, L, pass, L, L, return]`, `SequenceMatcher` calls lines
+1-2 the insertion and slides the old pair onto 3 and 4. The old run maps
+contiguously onto a same-length new run, so the disturbance test — which compares
+shape, not position — concludes the alignment held. It did not; the surviving
+copy at line 1 is just as plausibly one of the originals. If it is, a lost kill
+exits 0. `tests/test_mutation_ratchet.py` pins this as a strict `xfail` so the
+hole is visible in code rather than only in prose, and closing it means changing
+the semantics #21 decided.
+
 ---
 
     uv run python scripts/mutation_ratchet.py --write .github/mutation-baseline.json

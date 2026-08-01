@@ -863,14 +863,22 @@ def test_the_diff_the_workflow_takes_cannot_mangle_a_path():
     """
     steps = workflow()["jobs"]["mutate"]["steps"]
     relevance = next(s for s in steps if s.get("id") == "relevance")
-    command = str(relevance.get("run", ""))
-    assert "core.quotepath=off" in command, (
-        "the relevance diff can emit quoted, octal-escaped paths for non-ASCII "
-        "filenames, which match nothing and skip the run silently"
+    # Comments stripped first, and the whole invocation asserted rather than the
+    # flag names. The first version of this guard could not fail: the step's own
+    # comment explains both flags by name, so deleting them from the command
+    # while leaving the prose that praises them kept every assertion true. A
+    # guard satisfiable by its own documentation is the same defect as
+    # `assert ... or True`, wearing a better disguise.
+    command = "\n".join(
+        line
+        for line in str(relevance.get("run", "")).splitlines()
+        if not line.lstrip().startswith("#")
     )
-    assert "--no-renames" in command, (
-        "rename detection reports only the new name, so renaming a mutated module "
-        "out to an unlisted path would be judged irrelevant"
+    assert "git -c core.quotepath=off diff --name-only --no-renames" in command, (
+        "the relevance step's actual diff command lost `core.quotepath=off` or "
+        "`--no-renames`. Without the first, a non-ASCII path arrives quoted and "
+        "octal-escaped and matches nothing; without the second, a rename reports "
+        "only the new name. Both skip the run silently, and a skip reports green."
     )
 
 

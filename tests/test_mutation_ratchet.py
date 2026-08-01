@@ -399,6 +399,48 @@ def test_a_unique_line_landing_in_a_disagreeing_new_run_is_refused(ratchet, tmp_
     assert code == 1, out
 
 
+@pytest.mark.xfail(
+    strict=True,
+    reason=(
+        "KNOWN HOLE, deliberately left open and deliberately not silent. The "
+        "refusal is scoped to runs of *adjacent* identical lines, which is what "
+        "issue #21 decided. An edit that creates an identical copy separated from "
+        "the run re-opens the same coin flip through a geometry the run-scoped "
+        "rule cannot represent, and this one lands in the silent-green direction. "
+        "Closing it means changing the decided semantics — see the note in "
+        "docs/MUTATION-TESTING.md and FH-20. `strict=True` so that whoever fixes "
+        "it is forced to delete this marker rather than leaving a stale xfail."
+    ),
+)
+def test_an_identical_copy_separated_from_the_run_is_also_undecidable(ratchet, tmp_path):
+    """The second adversarial pass found this; it is real and it is not fixed.
+
+    Baseline has two adjacent identical lines, both killed. The change inserts a
+    copy *and* a separator, so the file now holds three identical lines at 1, 3
+    and 4 — and `SequenceMatcher` chooses to call lines 1-2 the insertion,
+    sliding the old pair onto 3 and 4. Both land on kills, so the ratchet says
+    `held` and exits 0.
+
+    The equally valid reading is that the *original* pair is line 1 and one of
+    3/4, in which case the survivor at line 1 is a lost kill and this exits 0 on
+    a real regression. Which copy is "the original" is exactly as undecidable as
+    the adjacent case; the alignment merely hides it better, because the old run
+    maps contiguously onto a same-length new run and the disturbance test
+    compares shape, not position.
+    """
+    line = "    x = x + 1"
+    before = ["def f(x):", line, line, "return x"]
+    after = ["def f(x):", line, "pass", line, line, "return x"]
+    code, out = _run(
+        ratchet,
+        tmp_path,
+        {"m.py": (before, {(1, 0): "ok_killed", (2, 0): "ok_killed"})},
+        {"m.py": (after, {(1, 0): "bad_survived", (3, 0): "ok_killed", (4, 0): "ok_killed"})},
+    )
+    assert code == 1, f"an undecidable alignment passed silently:\n{out}"
+    assert "| **ambiguous** | **2** |" in out, out
+
+
 def test_adjacent_duplicates_that_agree_are_not_ambiguous(ratchet, tmp_path):
     """Identical lines produce identical mutations, so swapping equals swaps nothing.
 
