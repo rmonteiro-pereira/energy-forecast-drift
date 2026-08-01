@@ -101,8 +101,9 @@ The floor is **66**, set from the run before this one
 ([30680545024](https://github.com/rmonteiro-pereira/energy-forecast-drift/actions/runs/30680545024),
 316 / 474 = 66.7% at `41e5d02`). It is deliberately *not* raised in the same
 change that raised the score: a floor should follow a measurement it did not
-cause. See [the proposed killed-set ratchet](#proposed-a-ratchet-over-the-killed-set-alongside-the-floor)
-before tightening it — the percentage is not the quantity worth ratcheting.
+cause. See [the killed-set ratchet](#the-killed-set-ratchet-alongside-the-floor)
+before tightening it — the percentage is not the quantity worth ratcheting, and
+since #21 it is no longer the only thing that ratchets.
 
 ### The same commit scores differently on Windows
 
@@ -369,10 +370,27 @@ found inside the *accepted* pile — the lesson two sections above, that the
 dangerous half of a survivor list is the half already marked fine, had to be
 learned twice.
 
-### Proposed: a ratchet over the killed set, alongside the floor
+### The killed-set ratchet, alongside the floor
 
-**Not yet implemented.** These are the design notes, with the constraints
-established by reading mutmut 2.5.1's `cache.py` and diffing two real CI caches.
+**Implemented** in `scripts/mutation_ratchet.py`, gated in `mutation.yml`, and
+tested in `tests/test_mutation_ratchet.py`. What follows is the design and the
+constraints behind it, established by reading mutmut 2.5.1's `cache.py` and
+diffing two real CI caches; every one of them was re-verified against a real
+`.mutmut-cache` while the script was written.
+
+The baseline lives at `.github/mutation-baseline.json` and is **committed**, so
+losing a kill on purpose costs a visible diff in the pull request that loses it.
+That is the mechanism — not the file format, the attributability. Re-baselining
+*is* the adjudication: the workflow uploads a ready-made `mutation-baseline`
+artifact on every run, so accepting a loss means downloading it and committing it
+with a message that says why.
+
+It must be seeded from a run on the CI runner rather than a local one. The two
+platforms disagree by about 1.7 points here, in **both** directions — the Windows
+figure resolves to +8 killed and +1 survivor on `ubuntu-latest` — so a baseline
+measured on the wrong one would accuse the first correct run of a regression it
+did not cause. Until it is seeded, `--check` reports "not yet seeded", says in
+so many words that it is inert, and exits 0.
 
 **A ratchet over the killed *set*, not the rate:** persist which mutants were
 killed and fail on any `killed → survived` transition. It attributes per mutant
@@ -448,23 +466,44 @@ harmless exactly when their statuses **differ**, which is not hypothetical here:
 of the 21 colliding keys measured above, **2 mix a kill with a survivor**. There
 the migration can invent a regression or conceal one.
 
-So the rule for the implementation: when a migrated identity lands inside a run
-of adjacent identical lines whose statuses are not uniform, **do not transfer the
-status** — mark those identities ambiguous and require them to be retired or
-adjudicated explicitly, the same way an unclassified survivor is. A ratchet that
-guesses in the one place its key is undecidable is a ratchet that will eventually
-accuse the wrong commit. Worth a test of its own: insert a line before a
-consecutive duplicate and assert the original mutant does **not** silently
-receive the other's status.
+So the rule, and the implemented behaviour: when a migrated identity lands inside
+a run of adjacent identical lines **whose alignment moved** and whose statuses are
+not uniform, the status is **not transferred**. Those identities come out
+`ambiguous`, fail the check, and have to be adjudicated by a human — the same way
+an unclassified survivor is. A ratchet that guesses in the one place its key is
+undecidable is a ratchet that will eventually accuse the wrong commit.
+
+"Whose alignment moved" is the part that keeps this usable. An untouched run is
+not ambiguous, so an unchanged file produces none at all; refusing on every
+duplicate line regardless of whether anything happened to it would make the 21
+known colliding keys here permanently unadjudicable, which is a gate nobody can
+get past rather than a gate that bites.
+
+`tests/test_mutation_ratchet.py` carries the test this paragraph asked for by
+name — insert a line before a consecutive duplicate, assert the original mutant
+does **not** silently receive the other's status — plus its two complements: that
+duplicates whose statuses *agree* are not refused, and that an untouched file
+full of duplicates is never ambiguous.
 
 **And the previous cache must not be restored into place.**
 `cache.py::cached_mutation_status` returns `OK_KILLED` **without re-running**
 whenever the mutant was previously killed, on the stated assumption that *"if a
 mutant was killed, a change to the test suite will mean it's still killed."*
 That assumption is precisely the attack above. Restoring the cache would make the
-regression invisible rather than visible. The previous run's statuses must be
-read from the artifact **as data, for comparison only**, while the run itself
-starts clean.
+regression invisible rather than visible. So the previous run's statuses are read
+from the committed baseline **as data, for comparison only**, the live cache is
+opened read-only, and the run itself starts clean. A test asserts all three.
+
+**What it does not do.** A killed-set comparison is blind to a *new* survivor and
+to an *unclassified* one, so `scripts/mutation_survivors.py --check` and the
+percentage floor both stay. Three transitions have explicit rules rather than
+being left to fall through: an identity whose line was edited or deleted
+`retires` (not a regression — an edited line is a new mutant); one that is now
+`bad_timeout`, `untested` or `skipped` is `inconclusive` (neither a kill nor a
+regression, so a slow runner cannot accuse a commit); and one whose line survived
+unchanged while its mutant disappeared is `vanished`, which fails, because a kill
+cannot go missing without its line moving unless mutmut's operators changed — in
+which case the fix is a re-baseline that says so.
 
 ## The one thing worth taking away
 

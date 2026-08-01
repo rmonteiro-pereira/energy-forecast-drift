@@ -230,6 +230,50 @@ jobs:
             | tee -a "$GITHUB_STEP_SUMMARY"
           exit "${PIPESTATUS[0]}"
 
+      # The percentage floor above is a real gate and it is not enough. Measured:
+      # deleting the two assertions that were the only readers of
+      # `overall["bias"]` cost exactly one kill, and the suite stayed green, the
+      # adjudication stayed at exit 0, and 315/474 = 66.5% cleared the floor of
+      # 66. One mutant is 0.21 points, so any floor with headroom has room for
+      # deletions inside it — and 62% of the kills here would land on an existing
+      # ACCEPTED/GAP rule if they regressed, which `--check` never fails on.
+      #
+      # So this compares *which* mutants were killed, per mutant, against
+      # `.github/mutation-baseline.json`. It supplements the two gates above; it
+      # replaces neither, because a killed-set comparison is blind to a new
+      # survivor and to an unclassified one by construction.
+      - name: No mutant that was killed may be alive again
+        if: steps.relevance.outputs.relevant == 'true'
+        run: |
+          uv run python scripts/mutation_ratchet.py --check \
+            | tee -a "$GITHUB_STEP_SUMMARY"
+          exit "${PIPESTATUS[0]}"
+
+      # Re-baselining is the adjudication mechanism: losing a kill on purpose
+      # should cost a visible diff in the pull request that loses it. This makes
+      # that a download rather than a 36-minute local run — and it is how the
+      # baseline gets seeded in the first place, which has to happen here because
+      # the two platforms disagree by about 1.7 points and a baseline measured on
+      # the wrong one would accuse the first correct run of a regression.
+      #
+      # `continue-on-error` so a re-baseline candidate can never turn a green run
+      # red; it is a convenience, not a verdict.
+      - name: Build a re-baseline candidate
+        if: always() && steps.relevance.outputs.relevant == 'true'
+        continue-on-error: true
+        run: |
+          uv run python scripts/mutation_ratchet.py \
+            --write "${RUNNER_TEMP}/mutation-baseline.json"
+
+      - name: Upload the re-baseline candidate
+        if: always() && steps.relevance.outputs.relevant == 'true'
+        continue-on-error: true
+        uses: actions/upload-artifact@v7
+        with:
+          name: mutation-baseline-${{ github.run_id }}
+          path: ${{ runner.temp }}/mutation-baseline.json
+          if-no-files-found: ignore
+
       # `include-hidden-files` is required, not optional. `.mutmut-cache` starts
       # with a dot, and upload-artifact has excluded hidden files by default
       # since v4 — so without this the upload finds nothing and

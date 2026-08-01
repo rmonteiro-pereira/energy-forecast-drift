@@ -62,5 +62,12 @@ pyproject.toml
 scripts/mutation_score.py
 scripts/mutation_survivors.py
 scripts/mutation_relevance.py
+scripts/mutation_ratchet.py
 .github/mutation-paths.txt
 .github/workflows/mutation.yml
+
+# The killed set the ratchet compares against. Editing it is how a lost kill is
+# accepted on purpose, so editing it has to re-measure — otherwise the one file
+# whose diff means "a kill was given up" is the one file that never triggers the
+# check that would notice.
+.github/mutation-baseline.json

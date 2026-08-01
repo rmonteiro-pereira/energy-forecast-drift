@@ -756,19 +756,24 @@ def test_every_step_after_the_decision_is_gated_on_it():
         "change, not that it reports after doing the work anyway."
     )
 
-    upload = [s for s in steps if str(s.get("uses", "")).startswith("actions/upload-artifact")]
-    assert len(upload) == 1
-    condition = str(upload[0].get("if", ""))
-    assert "always()" in condition, (
+    uploads = [s for s in steps if str(s.get("uses", "")).startswith("actions/upload-artifact")]
+    assert uploads, "nothing is uploaded, so a failed run leaves nothing to diagnose it with"
+
+    cache_upload = [u for u in uploads if ".mutmut-cache" in str(u.get("with", {}).get("path"))]
+    assert len(cache_upload) == 1, "the mutmut cache is uploaded zero times or more than once"
+    assert "always()" in str(cache_upload[0].get("if", "")), (
         "the cache upload no longer runs on failure, so a run that fails the "
         "floor leaves nothing to diagnose it with"
     )
-    if str(upload[0].get("with", {}).get("if-no-files-found")) == "error":
-        assert "steps.relevance.outputs.relevant" in condition, (
-            "the upload is `if-no-files-found: error` under a bare `always()`. On "
-            "a skipped run there is no cache to upload, so this would fail the "
-            "very check #19 exists to make requireable."
-        )
+
+    for upload in uploads:
+        condition = str(upload.get("if", ""))
+        if str(upload.get("with", {}).get("if-no-files-found")) == "error":
+            assert "steps.relevance.outputs.relevant" in condition, (
+                f"{upload.get('name')!r} is `if-no-files-found: error` under a bare "
+                "`always()`. On a skipped run there is nothing to upload, so this "
+                "would fail the very check #19 exists to make requireable."
+            )
 
 
 # ---------------------------------------------------------------------------
