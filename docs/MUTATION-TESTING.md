@@ -83,7 +83,7 @@ The floor is **66**, set from the run before this one
 ([30680545024](https://github.com/rmonteiro-pereira/energy-forecast-drift/actions/runs/30680545024),
 316 / 474 = 66.7% at `41e5d02`). It is deliberately *not* raised in the same
 change that raised the score: a floor should follow a measurement it did not
-cause. See [the section on what replaces it](#what-replaces-the-percentage-floor)
+cause. See [the proposed killed-set ratchet](#proposed-a-ratchet-over-the-killed-set-alongside-the-floor)
 before tightening it — the percentage is not the quantity worth ratcheting.
 
 ### The same commit scores differently on Windows
@@ -347,15 +347,29 @@ found inside the *accepted* pile — the lesson two sections above, that the
 dangerous half of a survivor list is the half already marked fine, had to be
 learned twice.
 
-### What replaces the percentage floor
+### Proposed: a ratchet over the killed set, alongside the floor
+
+**Not yet implemented.** These are the design notes, with the constraints
+established by reading mutmut 2.5.1's `cache.py` and diffing two real CI caches.
 
 **A ratchet over the killed *set*, not the rate:** persist which mutants were
-killed, and fail on any `killed → survived` transition. It attributes per mutant,
-has no quantisation slack, and makes the adjudication rules irrelevant to the
-verdict — a regex cannot absorb a mutant that is compared against its own past.
+killed and fail on any `killed → survived` transition. It attributes per mutant
+and has no quantisation slack, so it catches the deleted-assertion attack the
+percentage floor missed.
 
-Two things the implementation must get right, both established by reading
-mutmut 2.5.1's `cache.py` and by diffing two real CI caches:
+**It supplements the adjudication gate; it does not replace it.** A killed-set
+comparison only sees identities that *were* killed and now are not. It says
+nothing about a **new** survivor on a new line, or an **unclassified** one — that
+is still `scripts/mutation_survivors.py --check`'s job, and dropping it would
+open a hole exactly where the ratchet is blind. Three transitions need explicit
+rules before this ships: an identity that is new, one that has disappeared
+(legitimate when its line was edited — see below), and one that was never killed
+to begin with.
+
+**"Killed" must mean the same thing here as in the score:** `ok_killed` and
+`ok_suspicious`; `bad_timeout` is unresolved and must not count as either a kill
+or a regression, or a slow runner will read as a weakened suite — which is the
+mistake the `KILLED` set already made once.
 
 **The integer primary key is not an identity.** `Mutant` uses Pony's implicit
 autoincrement `id` — the number `mutmut show <id>` takes. CI uploads
@@ -371,11 +385,32 @@ appears at seven different lines of `drift/detectors.py`. Adding `line_number`
 makes it unique (474/474) but reintroduces exactly the fragility the key was
 meant to avoid.
 
-What does work, verified unique and stable across both real runs: **`(filename,
-line_text, index, nth_occurrence_of_that_line_in_that_file)`** — 474/474 distinct,
-474/474 matched across runs, zero status disagreements. The occurrence ordinal
-disambiguates the 21 collisions and, unlike a line number, does not move when
-lines are inserted elsewhere.
+**An occurrence ordinal looks like the fix and is not.** Keying on `(filename,
+line_text, index, nth_occurrence_of_that_line_in_the_file)` is unique — 474/474
+distinct, 474/474 matched across both real runs — and it was proposed here on
+that basis. It is still wrong, and a counter-example settles it: with lines
+`[a, ), b, ), c]`, a mutant on the **second** `)` has ordinal 1. Insert another
+`)` above it and the file becomes `[a, ), ), b, ), c]` — the original line is now
+the *third* `)`, ordinal 2, while ordinal 1 now names the **newly inserted** line.
+The key silently transfers the old kill onto a different mutant. Deleting an
+earlier duplicate loses it the same way. Duplicated lines are exactly the 21
+colliding keys the ordinal was introduced to disambiguate, so the failure lands
+precisely where the mechanism is needed.
+
+**Use mutmut's own algorithm instead.** `cache.py::update_line_numbers` already
+solves this: it runs `difflib.SequenceMatcher` over the cached line texts against
+the current ones and, on each `equal` run, migrates the line number while keeping
+the row — so identity follows the line through insertions and deletions
+elsewhere. On `replace`/`delete` it drops the row, which is the correct
+semantics: an edited line is a new mutant, and the old kill's disappearance is
+not a regression. The same counter-example, migrated with `SequenceMatcher`,
+gives index 3 → 4 on insertion and 3 → 2 on deletion — both right.
+
+So: read the previous run's `(filename, line_number, line_text, index, status)`
+from the artifact, `SequenceMatcher` the previous line texts of each file against
+the current ones to migrate the line numbers, then compare on
+`(filename, migrated_line_number, index)`. Aligning *sequences* rather than
+counting occurrences is what makes duplicate lines tractable.
 
 **And the previous cache must not be restored into place.**
 `cache.py::cached_mutation_status` returns `OK_KILLED` **without re-running**

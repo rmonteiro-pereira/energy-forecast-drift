@@ -169,13 +169,17 @@ document already drew — *"the dangerous half of a survivor list is the half
 already marked fine"* — had to be drawn again. That one is now killed by a real
 test, proven by applying the mutant and watching `KeyError: 'rmse'`.
 
-**The decided direction is a ratchet over the killed *set*, not the percentage:**
+**The direction agreed is a ratchet over the killed *set*, not the percentage:**
 persist the identities of killed mutants and fail on any `killed → survived`
-transition. It gives per-mutant attribution, removes the quantisation slack, and
-makes the adjudication rules irrelevant to the verdict — a regex cannot absorb a
-mutant that is being compared against its own past. Design notes, including why
-the cache's integer primary key must **not** be the identity and what must be
-used instead, are in `docs/MUTATION-TESTING.md`. Not implemented here.
+transition. It gives per-mutant attribution and removes the quantisation slack.
+It **supplements** `--check` rather than replacing it — a killed-set comparison
+is blind to a *new* or *unclassified* survivor, which is precisely what the
+adjudication gate is for. Design notes are in `docs/MUTATION-TESTING.md`,
+including why the cache's integer primary key must not be the identity, why an
+occurrence ordinal fails on duplicated lines (a counter-example that killed the
+first proposal), and why `difflib.SequenceMatcher` — the algorithm mutmut itself
+uses in `update_line_numbers` — is what the migration must be built on. Not
+implemented here.
 
 **Shipping a mutation config that cannot run.** Rejected explicitly, because it
 is a live failure mode: a sibling project was found shipping `paths_to_mutate`
