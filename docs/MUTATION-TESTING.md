@@ -419,6 +419,29 @@ the current ones to migrate the line numbers, then compare on
 `(filename, migrated_line_number, index)`. Aligning *sequences* rather than
 counting occurrences is what makes duplicate lines tractable.
 
+**It is not a total order, though — a run of identical adjacent lines stays
+ambiguous, and the implementation must refuse rather than guess.** Inserting a
+`)` next to an existing `)` gives opcodes
+`[equal 0-2→0-2, insert 2-2→2-3, equal 2-3→3-4]`: old index 1 migrates to new
+index 1, and the *inserted* line becomes index 2. Which of the two identical
+lines is "the original" is not a question the text can answer, and
+`SequenceMatcher` picks one arbitrarily (consistently, but arbitrarily).
+
+Usually that is harmless — textually identical lines produce identical mutations,
+so the statuses being swapped belong to indistinguishable mutants. It stops being
+harmless exactly when their statuses **differ**, which is not hypothetical here:
+of the 21 colliding keys measured above, **2 mix a kill with a survivor**. There
+the migration can invent a regression or conceal one.
+
+So the rule for the implementation: when a migrated identity lands inside a run
+of adjacent identical lines whose statuses are not uniform, **do not transfer the
+status** — mark those identities ambiguous and require them to be retired or
+adjudicated explicitly, the same way an unclassified survivor is. A ratchet that
+guesses in the one place its key is undecidable is a ratchet that will eventually
+accuse the wrong commit. Worth a test of its own: insert a line before a
+consecutive duplicate and assert the original mutant does **not** silently
+receive the other's status.
+
 **And the previous cache must not be restored into place.**
 `cache.py::cached_mutation_status` returns `OK_KILLED` **without re-running**
 whenever the mutant was previously killed, on the stated assumption that *"if a
