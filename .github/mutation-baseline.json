@@ -1,0 +1,3135 @@
+{
+ "version": 1,
+ "files": {
+  "drift/detectors.py": {
+   "lines": [
+    "\"\"\"The four drift types, each producing one section of `metrics/drift.json`.",
+    "",
+    "They are genuinely different failure modes and a monitor that only implements",
+    "one of them is the usual mistake:",
+    "",
+    "* **feature drift** \u2014 the inputs moved. Leading indicator; the model may still",
+    "  be fine, because it may not lean on the column that moved.",
+    "* **target drift** \u2014 the thing being predicted moved. A new demand regime",
+    "  (a heatwave, a new large load on the grid) that the model has never fitted.",
+    "* **prediction drift** \u2014 the model's *output* distribution moved. This is the",
+    "  one you can compute with **no labels at all**, which matters here because the",
+    "  actual demand for the last hour arrives with a lag. It is the earliest signal",
+    "  available in production.",
+    "* **performance drift** \u2014 the errors got worse. The only signal that proves",
+    "  harm; also the slowest, because it has to wait for the actuals.",
+    "",
+    "The first three are distribution comparisons and share the same machinery",
+    "(`drift.stats`: PSI as the headline, KS as a second opinion). The fourth is a",
+    "rolling error comparison and has its own shape.",
+    "",
+    "Every section reports `severity` (`ok` / `warn` / `alert`), the numbers behind",
+    "it, and the thresholds that were applied \u2014 so the artifact explains its own",
+    "verdict without anyone re-reading this file.",
+    "\"\"\"",
+    "",
+    "from __future__ import annotations",
+    "",
+    "from dataclasses import dataclass, field",
+    "",
+    "import numpy as np",
+    "import pandas as pd",
+    "",
+    "from drift import stats",
+    "from drift.config import DEFAULT_THRESHOLDS, DriftThresholds, Severity",
+    "from drift.windows import (",
+    "    ABS_ERROR_COLUMN,",
+    "    ABS_PCT_ERROR_COLUMN,",
+    "    ERROR_COLUMN,",
+    "    PREDICTION_COLUMN,",
+    "    ScoredWindows,",
+    ")",
+    "from features import build as build_mod",
+    "",
+    "INSUFFICIENT_DATA = \"insufficient_data\"",
+    "",
+    "# Columns that are functions of the timestamp (or of the design grid) rather",
+    "# than of anything observed. Their PSI is still computed and reported \u2014 it is",
+    "# useful for sanity-checking the window geometry \u2014 but it is **excluded from the",
+    "# section verdict**, because it measures the calendar, not the data.",
+    "#",
+    "# Concretely: a 28-day reference window and a 14-day current window necessarily",
+    "# cover different months, so `month` has a PSI of ~7 on every healthy run, and",
+    "# `is_holiday` swings on whether either window happened to contain a holiday.",
+    "# Letting those drive the alarm would mean the feature-drift signal fires every",
+    "# single day and therefore means nothing.",
+    "DETERMINISTIC_COLUMNS = frozenset({*build_mod.CALENDAR_FEATURES, \"horizon_h\"})",
+    "",
+    "",
+    "@dataclass",
+    "class DriftSection:",
+    "    \"\"\"One drift type's verdict plus the evidence for it.\"\"\"",
+    "",
+    "    drift_type: str",
+    "    severity: Severity",
+    "    summary: str",
+    "    details: dict = field(default_factory=dict)",
+    "",
+    "    def as_dict(self) -> dict:",
+    "        return {",
+    "            \"drift_type\": self.drift_type,",
+    "            \"severity\": self.severity.value,",
+    "            \"drift_detected\": self.severity is not Severity.OK,",
+    "            \"summary\": self.summary,",
+    "            **self.details,",
+    "        }",
+    "",
+    "",
+    "# ---------------------------------------------------------------------------",
+    "# shared: one column, two windows",
+    "# ---------------------------------------------------------------------------",
+    "def compare_column(",
+    "    reference,",
+    "    current,",
+    "    name: str,",
+    "    thresholds: DriftThresholds = DEFAULT_THRESHOLDS,",
+    "    with_bins: bool = False,",
+    ") -> dict:",
+    "    \"\"\"PSI + KS + distribution summary for a single column.",
+    "",
+    "    The severity is driven by PSI. The KS p-value is recorded and can *raise*",
+    "    an `ok` to a `warn`, but never to an `alert` on its own: with thousands of",
+    "    rows KS rejects the null for shifts far too small to matter to a",
+    "    forecaster, so letting it alert would mean alerting every day.",
+    "    \"\"\"",
+    "    psi = stats.population_stability_index(",
+    "        reference,",
+    "        current,",
+    "        bins=thresholds.psi_bins,",
+    "        max_categorical_levels=thresholds.max_categorical_levels,",
+    "    )",
+    "    ks = stats.ks_two_sample(reference, current)",
+    "",
+    "    severity = thresholds.psi_severity(psi.psi)",
+    "    ks_significant = ks.p_value < thresholds.ks_p_alert",
+    "    if ks_significant and severity is Severity.OK:",
+    "        severity = Severity.WARN",
+    "",
+    "    insufficient = min(psi.reference_n, psi.current_n) < thresholds.min_samples",
+    "    if insufficient:",
+    "        severity = Severity.OK",
+    "",
+    "    return {",
+    "        \"column\": name,",
+    "        \"severity\": severity.value,",
+    "        \"drift_detected\": severity is not Severity.OK,",
+    "        \"insufficient_data\": insufficient,",
+    "        \"deterministic\": name in DETERMINISTIC_COLUMNS,",
+    "        \"psi\": psi.as_dict(with_detail=with_bins),",
+    "        \"ks\": {**ks.as_dict(), \"significant\": ks_significant},",
+    "        \"distribution\": stats.summarise(reference, current),",
+    "    }",
+    "",
+    "",
+    "def _section_from_columns(",
+    "    drift_type: str,",
+    "    columns: list[dict],",
+    "    thresholds: DriftThresholds,",
+    ") -> tuple[Severity, dict]:",
+    "    \"\"\"Roll per-column verdicts into a section verdict.",
+    "",
+    "    A single alerting column out of twenty is a note, not an emergency, so the",
+    "    section escalates on the *share* of drifted columns \u2014 except for",
+    "    single-column sections (target, prediction) where the share is the column.",
+    "",
+    "    Deterministic calendar columns are dropped here (see `DETERMINISTIC_COLUMNS`):",
+    "    they are reported in `columns` but never vote.",
+    "    \"\"\"",
+    "    scored = [",
+    "        c for c in columns if not c[\"insufficient_data\"] and not c.get(\"deterministic\", False)",
+    "    ]",
+    "    if not scored:",
+    "        return Severity.OK, {",
+    "            \"columns_scored\": 0,",
+    "            # Reported on this branch too, not only the scored one. A consumer",
+    "            # should not have to discover that the artifact's key set depends on",
+    "            # whether anything happened to be eligible -- and \"everything was",
+    "            # excluded as deterministic\" is precisely when a reader most wants",
+    "            # to know *which* columns those were.",
+    "            \"columns_excluded_deterministic\": sorted(",
+    "                c[\"column\"] for c in columns if c.get(\"deterministic\", False)",
+    "            ),",
+    "            \"note\": (",
+    "                \"no column was eligible: every one was either below the minimum \"",
+    "                \"sample size or a deterministic calendar column\"",
+    "            ),",
+    "        }",
+    "",
+    "    alerting = [c for c in scored if c[\"severity\"] == Severity.ALERT.value]",
+    "    warning = [c for c in scored if c[\"severity\"] == Severity.WARN.value]",
+    "    share = len(alerting) / len(scored)",
+    "",
+    "    if len(scored) == 1:",
+    "        severity = Severity(scored[0][\"severity\"])",
+    "    elif share >= thresholds.drifted_share_alert:",
+    "        severity = Severity.ALERT",
+    "    elif alerting or share >= thresholds.drifted_share_warn or warning:",
+    "        severity = Severity.WARN",
+    "    else:",
+    "        severity = Severity.OK",
+    "",
+    "    worst = max(scored, key=lambda c: c[\"psi\"][\"psi\"])",
+    "    return severity, {",
+    "        \"columns_scored\": len(scored),",
+    "        \"columns_alerting\": len(alerting),",
+    "        \"columns_warning\": len(warning),",
+    "        \"columns_excluded_deterministic\": sorted(",
+    "            c[\"column\"] for c in columns if c.get(\"deterministic\", False)",
+    "        ),",
+    "        \"drifted_share\": round(share, 4),",
+    "        \"max_psi\": worst[\"psi\"][\"psi\"],",
+    "        \"max_psi_column\": worst[\"column\"],",
+    "    }",
+    "",
+    "",
+    "# ---------------------------------------------------------------------------",
+    "# 1. feature drift",
+    "# ---------------------------------------------------------------------------",
+    "def feature_drift(",
+    "    windows: ScoredWindows,",
+    "    thresholds: DriftThresholds = DEFAULT_THRESHOLDS,",
+    "    columns: tuple[str, ...] | None = None,",
+    ") -> DriftSection:",
+    "    \"\"\"PSI + KS on every model input, ranked worst-first.\"\"\"",
+    "    columns = columns or build_mod.FEATURE_COLUMNS",
+    "    per_column = [",
+    "        compare_column(",
+    "            windows.reference[name],",
+    "            windows.current[name],",
+    "            name,",
+    "            thresholds,",
+    "            with_bins=False,",
+    "        )",
+    "        for name in columns",
+    "        if name in windows.reference.columns",
+    "    ]",
+    "    # Worst first, but the deterministic calendar columns sink to the bottom:",
+    "    # they do not vote, so they should not head the table a human reads either.",
+    "    per_column.sort(key=lambda c: (not c[\"deterministic\"], c[\"psi\"][\"psi\"]), reverse=True)",
+    "",
+    "    severity, rollup = _section_from_columns(\"feature\", per_column, thresholds)",
+    "    if rollup.get(\"columns_scored\", 0) == 0:",
+    "        summary = \"not enough rows in one of the windows to score feature drift\"",
+    "    else:",
+    "        summary = (",
+    "            f\"{rollup['columns_alerting']}/{rollup['columns_scored']} feature(s) above \"",
+    "            f\"PSI {thresholds.psi_alert}; worst is {rollup['max_psi_column']} \"",
+    "            f\"at PSI {rollup['max_psi']:.3f}\"",
+    "        )",
+    "",
+    "    return DriftSection(",
+    "        drift_type=\"feature\",",
+    "        severity=severity,",
+    "        summary=summary,",
+    "        details={",
+    "            \"description\": \"distribution shift in the model inputs (leading indicator)\",",
+    "            \"note\": (",
+    "                \"deterministic calendar columns are reported but excluded from the \"",
+    "                \"verdict \u2014 their PSI measures which dates the windows cover, not the data\"",
+    "            ),",
+    "            **rollup,",
+    "            \"columns\": per_column,",
+    "        },",
+    "    )",
+    "",
+    "",
+    "# ---------------------------------------------------------------------------",
+    "# 2. target drift",
+    "# ---------------------------------------------------------------------------",
+    "def target_drift(",
+    "    windows: ScoredWindows,",
+    "    thresholds: DriftThresholds = DEFAULT_THRESHOLDS,",
+    ") -> DriftSection:",
+    "    \"\"\"Has the demand distribution itself moved between the two windows?\"\"\"",
+    "    column = compare_column(",
+    "        windows.reference[build_mod.TARGET_COLUMN],",
+    "        windows.current[build_mod.TARGET_COLUMN],",
+    "        \"y_actual_demand_mwh\",",
+    "        thresholds,",
+    "        with_bins=True,",
+    "    )",
+    "    severity, rollup = _section_from_columns(\"target\", [column], thresholds)",
+    "    shift = column[\"distribution\"][\"mean_shift\"]",
+    "",
+    "    return DriftSection(",
+    "        drift_type=\"target\",",
+    "        severity=severity,",
+    "        summary=(",
+    "            f\"actual demand PSI {column['psi']['psi']:.3f}, mean moved \"",
+    "            f\"{shift:+,.0f} MWh between the reference and current windows\"",
+    "            if shift is not None",
+    "            else \"not enough rows to score target drift\"",
+    "        ),",
+    "        details={",
+    "            \"description\": \"distribution shift in the observed demand (a new load regime)\",",
+    "            **rollup,",
+    "            \"columns\": [column],",
+    "        },",
+    "    )",
+    "",
+    "",
+    "# ---------------------------------------------------------------------------",
+    "# 3. prediction drift",
+    "# ---------------------------------------------------------------------------",
+    "def prediction_drift(",
+    "    windows: ScoredWindows,",
+    "    thresholds: DriftThresholds = DEFAULT_THRESHOLDS,",
+    ") -> DriftSection:",
+    "    \"\"\"Has the model's output distribution moved? Computable without labels.\"\"\"",
+    "    column = compare_column(",
+    "        windows.reference[PREDICTION_COLUMN],",
+    "        windows.current[PREDICTION_COLUMN],",
+    "        \"yhat_forecast_mwh\",",
+    "        thresholds,",
+    "        with_bins=True,",
+    "    )",
+    "    severity, rollup = _section_from_columns(\"prediction\", [column], thresholds)",
+    "    shift = column[\"distribution\"][\"mean_shift\"]",
+    "",
+    "    return DriftSection(",
+    "        drift_type=\"prediction\",",
+    "        severity=severity,",
+    "        summary=(",
+    "            f\"forecast PSI {column['psi']['psi']:.3f}, mean moved {shift:+,.0f} MWh \"",
+    "            \"(label-free signal: available before the actuals arrive)\"",
+    "            if shift is not None",
+    "            else \"not enough rows to score prediction drift\"",
+    "        ),",
+    "        details={",
+    "            \"description\": (",
+    "                \"distribution shift in the model output; the only drift signal that \"",
+    "                \"needs no ground truth, so it is the earliest one available\"",
+    "            ),",
+    "            **rollup,",
+    "            \"columns\": [column],",
+    "        },",
+    "    )",
+    "",
+    "",
+    "# ---------------------------------------------------------------------------",
+    "# 4. performance drift",
+    "# ---------------------------------------------------------------------------",
+    "def _window_errors(frame: pd.DataFrame) -> dict:",
+    "    absolute = frame[ABS_ERROR_COLUMN].dropna()",
+    "    percentage = frame[ABS_PCT_ERROR_COLUMN].dropna()",
+    "    if absolute.empty:",
+    "        return {\"n\": 0, \"mae\": None, \"mape_pct\": None, \"rmse\": None, \"bias\": None}",
+    "    return {",
+    "        \"n\": len(absolute),",
+    "        \"mae\": round(float(absolute.mean()), 4),",
+    "        \"mape_pct\": round(float(percentage.mean()), 4) if len(percentage) else None,",
+    "        \"rmse\": round(float(np.sqrt(np.mean(np.square(frame[ERROR_COLUMN].dropna())))), 4),",
+    "        \"bias\": round(float(frame[ERROR_COLUMN].dropna().mean()), 4),",
+    "    }",
+    "",
+    "",
+    "def rolling_error_series(",
+    "    windows: ScoredWindows,",
+    "    window_hours: int = DEFAULT_THRESHOLDS.rolling_window_hours,",
+    ") -> pd.DataFrame:",
+    "    \"\"\"Daily MAE/MAPE across both windows, plus their rolling mean.",
+    "",
+    "    Aggregated by the *target* day rather than by the forecast origin: a",
+    "    monitoring chart answers \"how wrong were we about Tuesday\", and that is a",
+    "    property of Tuesday, not of the moment the forecast was made.",
+    "    \"\"\"",
+    "    frame = pd.concat(",
+    "        [windows.reference.assign(window=\"reference\"), windows.current.assign(window=\"current\")],",
+    "        ignore_index=True,",
+    "    )",
+    "    frame = frame.assign(day=pd.DatetimeIndex(frame[\"target_utc\"]).floor(\"D\"))",
+    "",
+    "    daily = (",
+    "        frame.groupby(\"day\")",
+    "        .agg(",
+    "            mae=(ABS_ERROR_COLUMN, \"mean\"),",
+    "            mape_pct=(ABS_PCT_ERROR_COLUMN, \"mean\"),",
+    "            bias=(ERROR_COLUMN, \"mean\"),",
+    "            n=(ABS_ERROR_COLUMN, \"size\"),",
+    "            window=(\"window\", \"last\"),",
+    "        )",
+    "        .reset_index()",
+    "        .sort_values(\"day\")",
+    "    )",
+    "",
+    "    span_days = max(1, window_hours // 24)",
+    "    daily[\"mae_rolling\"] = daily[\"mae\"].rolling(span_days, min_periods=1).mean()",
+    "    daily[\"mape_rolling\"] = daily[\"mape_pct\"].rolling(span_days, min_periods=1).mean()",
+    "    return daily",
+    "",
+    "",
+    "def performance_drift(",
+    "    windows: ScoredWindows,",
+    "    thresholds: DriftThresholds = DEFAULT_THRESHOLDS,",
+    ") -> DriftSection:",
+    "    \"\"\"Rolling MAE / MAPE degradation of the frozen model, current vs reference.",
+    "",
+    "    Both windows are out of sample for the booster (see `drift.windows`), so a",
+    "    difference between them is a property of the world, not of the fit.",
+    "    \"\"\"",
+    "    reference = _window_errors(windows.reference)",
+    "    current = _window_errors(windows.current)",
+    "    daily = rolling_error_series(windows, thresholds.rolling_window_hours)",
+    "",
+    "    if not reference[\"n\"] or not current[\"n\"] or not reference[\"mae\"]:",
+    "        return DriftSection(",
+    "            drift_type=\"performance\",",
+    "            severity=Severity.OK,",
+    "            summary=\"not enough scored rows to measure performance drift\",",
+    "            details={",
+    "                \"description\": \"degradation of the rolling forecast error\",",
+    "                \"status\": INSUFFICIENT_DATA,",
+    "                \"reference\": reference,",
+    "                \"current\": current,",
+    "                \"rolling\": [],",
+    "            },",
+    "        )",
+    "",
+    "    mae_ratio = current[\"mae\"] / reference[\"mae\"] - 1.0",
+    "    mape_delta_pp = (",
+    "        current[\"mape_pct\"] - reference[\"mape_pct\"]",
+    "        if current[\"mape_pct\"] is not None and reference[\"mape_pct\"] is not None",
+    "        else None",
+    "    )",
+    "",
+    "    severities = [Severity.OK]",
+    "    if mae_ratio >= thresholds.mae_degradation_alert:",
+    "        severities.append(Severity.ALERT)",
+    "    elif mae_ratio >= thresholds.mae_degradation_warn:",
+    "        severities.append(Severity.WARN)",
+    "",
+    "    if mape_delta_pp is not None:",
+    "        if mape_delta_pp >= thresholds.mape_degradation_alert_pp:",
+    "            severities.append(Severity.ALERT)",
+    "        elif mape_delta_pp >= thresholds.mape_degradation_warn_pp:",
+    "            severities.append(Severity.WARN)",
+    "",
+    "    severity = Severity.worst(severities)",
+    "    peak = daily.loc[daily[\"mae_rolling\"].idxmax()] if len(daily) else None",
+    "",
+    "    return DriftSection(",
+    "        drift_type=\"performance\",",
+    "        severity=severity,",
+    "        summary=(",
+    "            f\"MAE {reference['mae']:,.0f} -> {current['mae']:,.0f} MWh \"",
+    "            f\"({mae_ratio:+.1%})\"",
+    "            + (f\", MAPE {mape_delta_pp:+.2f} pp\" if mape_delta_pp is not None else \"\")",
+    "        ),",
+    "        details={",
+    "            \"description\": (",
+    "                \"degradation of the frozen model's rolling error; the only signal that \"",
+    "                \"proves harm, and the slowest, because it waits for the actuals\"",
+    "            ),",
+    "            \"reference\": reference,",
+    "            \"current\": current,",
+    "            \"mae_degradation\": round(float(mae_ratio), 6),",
+    "            \"mape_degradation_pp\": round(float(mape_delta_pp), 4)",
+    "            if mape_delta_pp is not None",
+    "            else None,",
+    "            \"rolling_window_hours\": thresholds.rolling_window_hours,",
+    "            \"worst_rolling_mae\": round(float(peak[\"mae_rolling\"]), 4) if peak is not None else None,",
+    "            \"worst_rolling_mae_day_utc\": peak[\"day\"].isoformat() if peak is not None else None,",
+    "            \"rolling\": [",
+    "                {",
+    "                    \"day_utc\": row.day.isoformat(),",
+    "                    \"window\": row.window,",
+    "                    \"mae\": round(float(row.mae), 2),",
+    "                    \"mape_pct\": round(float(row.mape_pct), 4),",
+    "                    \"bias\": round(float(row.bias), 2),",
+    "                    \"mae_rolling\": round(float(row.mae_rolling), 2),",
+    "                    \"mape_rolling\": round(float(row.mape_rolling), 4),",
+    "                    \"n\": int(row.n),",
+    "                }",
+    "                for row in daily.itertuples(index=False)",
+    "            ],",
+    "        },",
+    "    )",
+    "",
+    "",
+    "# ---------------------------------------------------------------------------",
+    "# drift over time",
+    "# ---------------------------------------------------------------------------",
+    "def drift_timeline(",
+    "    windows: ScoredWindows,",
+    "    thresholds: DriftThresholds = DEFAULT_THRESHOLDS,",
+    "    window_days: int = 7,",
+    ") -> list[dict]:",
+    "    \"\"\"PSI of a trailing window against the reference, one point per day.",
+    "",
+    "    The four sections above answer \"is there drift *now*\". This answers \"since",
+    "    when\", which is the question anyone actually asks when an alarm goes off \u2014",
+    "    and it is the series the dashboard plots.",
+    "",
+    "    Each point compares the trailing `window_days` ending that day against the",
+    "    **whole reference window**. Points that fall inside the reference are",
+    "    therefore partly self-comparisons, and that is deliberate: they show what",
+    "    normal PSI wobble looks like for this data, which is the only way to read",
+    "    whether a later excursion is large. The alternative \u2014 starting the series at",
+    "    the current window \u2014 gives a chart with no baseline on it.",
+    "    \"\"\"",
+    "    frame = pd.concat(",
+    "        [windows.reference.assign(window=\"reference\"), windows.current.assign(window=\"current\")],",
+    "        ignore_index=True,",
+    "    )",
+    "    if frame.empty:",
+    "        return []",
+    "",
+    "    targets = pd.DatetimeIndex(frame[\"target_utc\"])",
+    "    frame = frame.assign(day=targets.floor(\"D\"))",
+    "",
+    "    reference = windows.reference",
+    "    scored_features = [",
+    "        name",
+    "        for name in build_mod.FEATURE_COLUMNS",
+    "        if name not in DETERMINISTIC_COLUMNS and name in reference.columns",
+    "    ]",
+    "",
+    "    span = pd.Timedelta(days=window_days)",
+    "    points: list[dict] = []",
+    "",
+    "    for day, rows in frame.groupby(\"day\", sort=True):",
+    "        trailing = frame[(frame[\"day\"] <= day) & (frame[\"day\"] > day - span)]",
+    "        if len(trailing) < thresholds.min_samples:",
+    "            continue",
+    "",
+    "        def psi(column: str, trailing: pd.DataFrame = trailing) -> float:",
+    "            return stats.population_stability_index(",
+    "                reference[column],",
+    "                trailing[column],",
+    "                bins=thresholds.psi_bins,",
+    "                max_categorical_levels=thresholds.max_categorical_levels,",
+    "            ).psi",
+    "",
+    "        feature_psis = {name: psi(name) for name in scored_features}",
+    "        worst = max(feature_psis, key=feature_psis.get) if feature_psis else None",
+    "",
+    "        points.append(",
+    "            {",
+    "                \"day_utc\": pd.Timestamp(day).isoformat(),",
+    "                \"window\": rows[\"window\"].iloc[-1],",
+    "                \"n\": len(trailing),",
+    "                \"target_psi\": round(psi(build_mod.TARGET_COLUMN), 6),",
+    "                \"prediction_psi\": round(psi(PREDICTION_COLUMN), 6),",
+    "                \"feature_max_psi\": round(float(feature_psis[worst]), 6) if worst else None,",
+    "                \"feature_max_column\": worst,",
+    "                \"mae\": round(float(rows[ABS_ERROR_COLUMN].mean()), 2),",
+    "            }",
+    "        )",
+    "",
+    "    return points",
+    "",
+    "",
+    "def run_all(",
+    "    windows: ScoredWindows,",
+    "    thresholds: DriftThresholds = DEFAULT_THRESHOLDS,",
+    ") -> dict[str, DriftSection]:",
+    "    \"\"\"All four detectors, keyed by drift type \u2014 the body of `metrics/drift.json`.\"\"\"",
+    "    return {",
+    "        \"feature\": feature_drift(windows, thresholds),",
+    "        \"target\": target_drift(windows, thresholds),",
+    "        \"prediction\": prediction_drift(windows, thresholds),",
+    "        \"performance\": performance_drift(windows, thresholds),",
+    "    }"
+   ],
+   "mutants": [
+    [
+     43,
+     0,
+     "bad_survived"
+    ],
+    [
+     43,
+     1,
+     "bad_survived"
+    ],
+    [
+     55,
+     0,
+     "ok_killed"
+    ],
+    [
+     55,
+     1,
+     "bad_survived"
+    ],
+    [
+     55,
+     2,
+     "ok_killed"
+    ],
+    [
+     58,
+     0,
+     "ok_killed"
+    ],
+    [
+     65,
+     0,
+     "bad_survived"
+    ],
+    [
+     69,
+     0,
+     "bad_survived"
+    ],
+    [
+     70,
+     0,
+     "bad_survived"
+    ],
+    [
+     71,
+     0,
+     "bad_survived"
+    ],
+    [
+     71,
+     1,
+     "bad_survived"
+    ],
+    [
+     72,
+     0,
+     "bad_survived"
+    ],
+    [
+     73,
+     0,
+     "ok_killed"
+    ],
+    [
+     85,
+     0,
+     "bad_survived"
+    ],
+    [
+     99,
+     0,
+     "ok_killed"
+    ],
+    [
+     100,
+     0,
+     "ok_killed"
+    ],
+    [
+     102,
+     0,
+     "ok_killed"
+    ],
+    [
+     103,
+     0,
+     "ok_killed"
+    ],
+    [
+     103,
+     1,
+     "ok_killed"
+    ],
+    [
+     104,
+     0,
+     "ok_killed"
+    ],
+    [
+     104,
+     1,
+     "ok_killed"
+    ],
+    [
+     105,
+     0,
+     "ok_killed"
+    ],
+    [
+     107,
+     0,
+     "ok_killed"
+    ],
+    [
+     107,
+     1,
+     "ok_killed"
+    ],
+    [
+     109,
+     0,
+     "ok_killed"
+    ],
+    [
+     112,
+     0,
+     "ok_killed"
+    ],
+    [
+     113,
+     0,
+     "ok_killed"
+    ],
+    [
+     114,
+     0,
+     "bad_survived"
+    ],
+    [
+     114,
+     1,
+     "bad_survived"
+    ],
+    [
+     115,
+     0,
+     "ok_killed"
+    ],
+    [
+     116,
+     0,
+     "ok_killed"
+    ],
+    [
+     116,
+     1,
+     "ok_killed"
+    ],
+    [
+     117,
+     0,
+     "ok_killed"
+    ],
+    [
+     118,
+     0,
+     "ok_killed"
+    ],
+    [
+     118,
+     1,
+     "ok_killed"
+    ],
+    [
+     118,
+     2,
+     "ok_killed"
+    ],
+    [
+     119,
+     0,
+     "ok_killed"
+    ],
+    [
+     138,
+     0,
+     "ok_killed"
+    ],
+    [
+     138,
+     1,
+     "ok_killed"
+    ],
+    [
+     138,
+     2,
+     "ok_killed"
+    ],
+    [
+     138,
+     3,
+     "ok_killed"
+    ],
+    [
+     138,
+     4,
+     "bad_survived"
+    ],
+    [
+     138,
+     5,
+     "ok_killed"
+    ],
+    [
+     139,
+     0,
+     "ok_killed"
+    ],
+    [
+     140,
+     0,
+     "ok_killed"
+    ],
+    [
+     142,
+     0,
+     "ok_killed"
+    ],
+    [
+     142,
+     1,
+     "ok_killed"
+    ],
+    [
+     148,
+     0,
+     "ok_killed"
+    ],
+    [
+     149,
+     0,
+     "ok_killed"
+    ],
+    [
+     149,
+     1,
+     "ok_killed"
+    ],
+    [
+     149,
+     2,
+     "bad_survived"
+    ],
+    [
+     151,
+     0,
+     "bad_survived"
+    ],
+    [
+     152,
+     0,
+     "bad_survived"
+    ],
+    [
+     153,
+     0,
+     "bad_survived"
+    ],
+    [
+     157,
+     0,
+     "ok_killed"
+    ],
+    [
+     157,
+     1,
+     "ok_killed"
+    ],
+    [
+     157,
+     2,
+     "ok_killed"
+    ],
+    [
+     158,
+     0,
+     "ok_killed"
+    ],
+    [
+     158,
+     1,
+     "ok_killed"
+    ],
+    [
+     158,
+     2,
+     "ok_killed"
+    ],
+    [
+     159,
+     0,
+     "ok_killed"
+    ],
+    [
+     159,
+     1,
+     "ok_killed"
+    ],
+    [
+     161,
+     0,
+     "ok_killed"
+    ],
+    [
+     161,
+     1,
+     "bad_survived"
+    ],
+    [
+     162,
+     0,
+     "ok_killed"
+    ],
+    [
+     162,
+     1,
+     "ok_killed"
+    ],
+    [
+     162,
+     2,
+     "ok_killed"
+    ],
+    [
+     163,
+     0,
+     "ok_killed"
+    ],
+    [
+     164,
+     0,
+     "ok_killed"
+    ],
+    [
+     165,
+     0,
+     "ok_killed"
+    ],
+    [
+     165,
+     1,
+     "ok_killed"
+    ],
+    [
+     166,
+     0,
+     "ok_killed"
+    ],
+    [
+     168,
+     0,
+     "ok_killed"
+    ],
+    [
+     170,
+     0,
+     "ok_killed"
+    ],
+    [
+     170,
+     1,
+     "ok_killed"
+    ],
+    [
+     170,
+     2,
+     "ok_killed"
+    ],
+    [
+     170,
+     3,
+     "ok_killed"
+    ],
+    [
+     172,
+     0,
+     "ok_killed"
+    ],
+    [
+     173,
+     0,
+     "ok_killed"
+    ],
+    [
+     174,
+     0,
+     "bad_survived"
+    ],
+    [
+     175,
+     0,
+     "ok_killed"
+    ],
+    [
+     176,
+     0,
+     "ok_killed"
+    ],
+    [
+     176,
+     1,
+     "ok_killed"
+    ],
+    [
+     176,
+     2,
+     "bad_survived"
+    ],
+    [
+     178,
+     0,
+     "ok_killed"
+    ],
+    [
+     178,
+     1,
+     "bad_survived"
+    ],
+    [
+     179,
+     0,
+     "ok_killed"
+    ],
+    [
+     179,
+     1,
+     "ok_killed"
+    ],
+    [
+     179,
+     2,
+     "ok_killed"
+    ],
+    [
+     180,
+     0,
+     "ok_killed"
+    ],
+    [
+     180,
+     1,
+     "ok_killed"
+    ],
+    [
+     193,
+     0,
+     "ok_killed"
+    ],
+    [
+     193,
+     1,
+     "ok_killed"
+    ],
+    [
+     200,
+     0,
+     "bad_survived"
+    ],
+    [
+     203,
+     0,
+     "ok_killed"
+    ],
+    [
+     204,
+     0,
+     "ok_killed"
+    ],
+    [
+     207,
+     0,
+     "bad_survived"
+    ],
+    [
+     207,
+     1,
+     "ok_killed"
+    ],
+    [
+     207,
+     2,
+     "ok_killed"
+    ],
+    [
+     207,
+     3,
+     "ok_killed"
+    ],
+    [
+     207,
+     4,
+     "ok_killed"
+    ],
+    [
+     207,
+     5,
+     "bad_survived"
+    ],
+    [
+     209,
+     0,
+     "bad_survived"
+    ],
+    [
+     209,
+     1,
+     "ok_killed"
+    ],
+    [
+     210,
+     0,
+     "ok_killed"
+    ],
+    [
+     210,
+     1,
+     "bad_survived"
+    ],
+    [
+     210,
+     2,
+     "ok_killed"
+    ],
+    [
+     210,
+     3,
+     "ok_killed"
+    ],
+    [
+     211,
+     0,
+     "ok_killed"
+    ],
+    [
+     211,
+     1,
+     "ok_killed"
+    ],
+    [
+     214,
+     0,
+     "ok_killed"
+    ],
+    [
+     214,
+     1,
+     "ok_killed"
+    ],
+    [
+     214,
+     2,
+     "ok_killed"
+    ],
+    [
+     215,
+     0,
+     "ok_killed"
+    ],
+    [
+     215,
+     1,
+     "ok_killed"
+    ],
+    [
+     216,
+     0,
+     "ok_killed"
+    ],
+    [
+     216,
+     1,
+     "bad_survived"
+    ],
+    [
+     217,
+     0,
+     "ok_killed"
+    ],
+    [
+     220,
+     0,
+     "bad_survived"
+    ],
+    [
+     224,
+     0,
+     "bad_survived"
+    ],
+    [
+     224,
+     1,
+     "bad_survived"
+    ],
+    [
+     225,
+     0,
+     "bad_survived"
+    ],
+    [
+     226,
+     0,
+     "bad_survived"
+    ],
+    [
+     227,
+     0,
+     "bad_survived"
+    ],
+    [
+     229,
+     0,
+     "ok_killed"
+    ],
+    [
+     230,
+     0,
+     "ok_killed"
+    ],
+    [
+     246,
+     0,
+     "bad_survived"
+    ],
+    [
+     248,
+     0,
+     "bad_survived"
+    ],
+    [
+     249,
+     0,
+     "ok_killed"
+    ],
+    [
+     250,
+     0,
+     "bad_survived"
+    ],
+    [
+     250,
+     1,
+     "ok_killed"
+    ],
+    [
+     251,
+     0,
+     "ok_killed"
+    ],
+    [
+     251,
+     1,
+     "ok_killed"
+    ],
+    [
+     251,
+     2,
+     "bad_survived"
+    ],
+    [
+     254,
+     0,
+     "bad_survived"
+    ],
+    [
+     257,
+     0,
+     "ok_killed"
+    ],
+    [
+     257,
+     1,
+     "ok_killed"
+    ],
+    [
+     257,
+     2,
+     "bad_survived"
+    ],
+    [
+     258,
+     0,
+     "bad_survived"
+    ],
+    [
+     259,
+     0,
+     "bad_survived"
+    ],
+    [
+     260,
+     0,
+     "bad_survived"
+    ],
+    [
+     263,
+     0,
+     "bad_survived"
+    ],
+    [
+     263,
+     1,
+     "bad_survived"
+    ],
+    [
+     264,
+     0,
+     "ok_killed"
+    ],
+    [
+     265,
+     0,
+     "ok_killed"
+    ],
+    [
+     281,
+     0,
+     "bad_survived"
+    ],
+    [
+     283,
+     0,
+     "bad_survived"
+    ],
+    [
+     284,
+     0,
+     "ok_killed"
+    ],
+    [
+     285,
+     0,
+     "bad_survived"
+    ],
+    [
+     285,
+     1,
+     "ok_killed"
+    ],
+    [
+     286,
+     0,
+     "ok_killed"
+    ],
+    [
+     286,
+     1,
+     "ok_killed"
+    ],
+    [
+     286,
+     2,
+     "bad_survived"
+    ],
+    [
+     289,
+     0,
+     "bad_survived"
+    ],
+    [
+     292,
+     0,
+     "ok_killed"
+    ],
+    [
+     292,
+     1,
+     "ok_killed"
+    ],
+    [
+     292,
+     2,
+     "bad_survived"
+    ],
+    [
+     293,
+     0,
+     "bad_survived"
+    ],
+    [
+     294,
+     0,
+     "bad_survived"
+    ],
+    [
+     295,
+     0,
+     "bad_survived"
+    ],
+    [
+     298,
+     0,
+     "bad_survived"
+    ],
+    [
+     299,
+     0,
+     "bad_survived"
+    ],
+    [
+     300,
+     0,
+     "bad_survived"
+    ],
+    [
+     302,
+     0,
+     "ok_killed"
+    ],
+    [
+     303,
+     0,
+     "bad_survived"
+    ],
+    [
+     312,
+     0,
+     "ok_killed"
+    ],
+    [
+     313,
+     0,
+     "ok_killed"
+    ],
+    [
+     315,
+     0,
+     "ok_killed"
+    ],
+    [
+     315,
+     1,
+     "ok_killed"
+    ],
+    [
+     315,
+     2,
+     "bad_survived"
+    ],
+    [
+     315,
+     3,
+     "bad_survived"
+    ],
+    [
+     315,
+     4,
+     "bad_survived"
+    ],
+    [
+     315,
+     5,
+     "bad_survived"
+    ],
+    [
+     317,
+     0,
+     "ok_killed"
+    ],
+    [
+     318,
+     0,
+     "ok_killed"
+    ],
+    [
+     318,
+     1,
+     "bad_survived"
+    ],
+    [
+     319,
+     0,
+     "ok_killed"
+    ],
+    [
+     319,
+     1,
+     "bad_survived"
+    ],
+    [
+     320,
+     0,
+     "bad_survived"
+    ],
+    [
+     320,
+     1,
+     "bad_survived"
+    ],
+    [
+     321,
+     0,
+     "bad_survived"
+    ],
+    [
+     321,
+     1,
+     "bad_survived"
+    ],
+    [
+     336,
+     0,
+     "ok_killed"
+    ],
+    [
+     336,
+     1,
+     "ok_killed"
+    ],
+    [
+     337,
+     0,
+     "bad_survived"
+    ],
+    [
+     338,
+     0,
+     "ok_killed"
+    ],
+    [
+     339,
+     0,
+     "ok_killed"
+    ],
+    [
+     339,
+     1,
+     "ok_killed"
+    ],
+    [
+     339,
+     2,
+     "ok_killed"
+    ],
+    [
+     342,
+     0,
+     "ok_killed"
+    ],
+    [
+     344,
+     0,
+     "ok_killed"
+    ],
+    [
+     345,
+     0,
+     "ok_killed"
+    ],
+    [
+     346,
+     0,
+     "ok_killed"
+    ],
+    [
+     347,
+     0,
+     "ok_killed"
+    ],
+    [
+     348,
+     0,
+     "ok_killed"
+    ],
+    [
+     348,
+     1,
+     "ok_killed"
+    ],
+    [
+     351,
+     0,
+     "ok_killed"
+    ],
+    [
+     352,
+     0,
+     "ok_killed"
+    ],
+    [
+     354,
+     0,
+     "bad_survived"
+    ],
+    [
+     354,
+     1,
+     "ok_killed"
+    ],
+    [
+     354,
+     2,
+     "bad_survived"
+    ],
+    [
+     354,
+     3,
+     "ok_killed"
+    ],
+    [
+     355,
+     0,
+     "ok_killed"
+    ],
+    [
+     355,
+     1,
+     "ok_killed"
+    ],
+    [
+     355,
+     2,
+     "ok_killed"
+    ],
+    [
+     355,
+     3,
+     "ok_killed"
+    ],
+    [
+     356,
+     0,
+     "ok_killed"
+    ],
+    [
+     356,
+     1,
+     "ok_killed"
+    ],
+    [
+     356,
+     2,
+     "bad_survived"
+    ],
+    [
+     356,
+     3,
+     "ok_killed"
+    ],
+    [
+     369,
+     0,
+     "ok_killed"
+    ],
+    [
+     370,
+     0,
+     "ok_killed"
+    ],
+    [
+     371,
+     0,
+     "ok_killed"
+    ],
+    [
+     373,
+     0,
+     "ok_killed"
+    ],
+    [
+     373,
+     1,
+     "ok_killed"
+    ],
+    [
+     373,
+     2,
+     "ok_killed"
+    ],
+    [
+     373,
+     3,
+     "ok_killed"
+    ],
+    [
+     373,
+     4,
+     "ok_killed"
+    ],
+    [
+     373,
+     5,
+     "ok_killed"
+    ],
+    [
+     373,
+     6,
+     "ok_killed"
+    ],
+    [
+     375,
+     0,
+     "bad_survived"
+    ],
+    [
+     377,
+     0,
+     "bad_survived"
+    ],
+    [
+     379,
+     0,
+     "bad_survived"
+    ],
+    [
+     379,
+     1,
+     "bad_survived"
+    ],
+    [
+     380,
+     0,
+     "ok_killed"
+    ],
+    [
+     381,
+     0,
+     "bad_survived"
+    ],
+    [
+     382,
+     0,
+     "bad_survived"
+    ],
+    [
+     383,
+     0,
+     "bad_survived"
+    ],
+    [
+     387,
+     0,
+     "ok_killed"
+    ],
+    [
+     387,
+     1,
+     "ok_killed"
+    ],
+    [
+     387,
+     2,
+     "ok_killed"
+    ],
+    [
+     387,
+     3,
+     "ok_killed"
+    ],
+    [
+     387,
+     4,
+     "ok_killed"
+    ],
+    [
+     387,
+     5,
+     "ok_killed"
+    ],
+    [
+     389,
+     0,
+     "ok_killed"
+    ],
+    [
+     389,
+     1,
+     "ok_killed"
+    ],
+    [
+     389,
+     2,
+     "ok_killed"
+    ],
+    [
+     390,
+     0,
+     "ok_killed"
+    ],
+    [
+     390,
+     1,
+     "ok_killed"
+    ],
+    [
+     390,
+     2,
+     "ok_killed"
+    ],
+    [
+     390,
+     3,
+     "ok_killed"
+    ],
+    [
+     390,
+     4,
+     "bad_survived"
+    ],
+    [
+     392,
+     0,
+     "ok_killed"
+    ],
+    [
+     394,
+     0,
+     "ok_killed"
+    ],
+    [
+     395,
+     0,
+     "ok_killed"
+    ],
+    [
+     397,
+     0,
+     "ok_killed"
+    ],
+    [
+     400,
+     0,
+     "ok_killed"
+    ],
+    [
+     401,
+     0,
+     "ok_killed"
+    ],
+    [
+     403,
+     0,
+     "ok_killed"
+    ],
+    [
+     406,
+     0,
+     "ok_killed"
+    ],
+    [
+     407,
+     0,
+     "ok_killed"
+    ],
+    [
+     407,
+     1,
+     "bad_survived"
+    ],
+    [
+     410,
+     0,
+     "bad_survived"
+    ],
+    [
+     413,
+     0,
+     "ok_killed"
+    ],
+    [
+     413,
+     1,
+     "ok_killed"
+    ],
+    [
+     413,
+     2,
+     "bad_survived"
+    ],
+    [
+     414,
+     0,
+     "bad_survived"
+    ],
+    [
+     415,
+     0,
+     "ok_killed"
+    ],
+    [
+     415,
+     1,
+     "bad_survived"
+    ],
+    [
+     415,
+     2,
+     "bad_survived"
+    ],
+    [
+     415,
+     3,
+     "bad_survived"
+    ],
+    [
+     418,
+     0,
+     "bad_survived"
+    ],
+    [
+     419,
+     0,
+     "bad_survived"
+    ],
+    [
+     420,
+     0,
+     "bad_survived"
+    ],
+    [
+     422,
+     0,
+     "bad_survived"
+    ],
+    [
+     423,
+     0,
+     "ok_killed"
+    ],
+    [
+     424,
+     0,
+     "ok_killed"
+    ],
+    [
+     424,
+     1,
+     "bad_survived"
+    ],
+    [
+     425,
+     0,
+     "bad_survived"
+    ],
+    [
+     425,
+     1,
+     "bad_survived"
+    ],
+    [
+     426,
+     0,
+     "bad_survived"
+    ],
+    [
+     428,
+     0,
+     "bad_survived"
+    ],
+    [
+     429,
+     0,
+     "bad_survived"
+    ],
+    [
+     429,
+     1,
+     "ok_killed"
+    ],
+    [
+     429,
+     2,
+     "bad_survived"
+    ],
+    [
+     429,
+     3,
+     "bad_survived"
+    ],
+    [
+     430,
+     0,
+     "bad_survived"
+    ],
+    [
+     430,
+     1,
+     "ok_killed"
+    ],
+    [
+     430,
+     2,
+     "bad_survived"
+    ],
+    [
+     431,
+     0,
+     "bad_survived"
+    ],
+    [
+     433,
+     0,
+     "bad_survived"
+    ],
+    [
+     434,
+     0,
+     "bad_survived"
+    ],
+    [
+     435,
+     0,
+     "bad_survived"
+    ],
+    [
+     435,
+     1,
+     "bad_survived"
+    ],
+    [
+     436,
+     0,
+     "bad_survived"
+    ],
+    [
+     436,
+     1,
+     "bad_survived"
+    ],
+    [
+     437,
+     0,
+     "bad_survived"
+    ],
+    [
+     437,
+     1,
+     "bad_survived"
+    ],
+    [
+     438,
+     0,
+     "bad_survived"
+    ],
+    [
+     438,
+     1,
+     "bad_survived"
+    ],
+    [
+     439,
+     0,
+     "bad_survived"
+    ],
+    [
+     439,
+     1,
+     "bad_survived"
+    ],
+    [
+     440,
+     0,
+     "bad_survived"
+    ],
+    [
+     442,
+     0,
+     "bad_survived"
+    ],
+    [
+     454,
+     0,
+     "bad_survived"
+    ],
+    [
+     470,
+     0,
+     "ok_killed"
+    ],
+    [
+     470,
+     1,
+     "ok_killed"
+    ],
+    [
+     471,
+     0,
+     "bad_survived"
+    ],
+    [
+     472,
+     0,
+     "ok_killed"
+    ],
+    [
+     476,
+     0,
+     "ok_killed"
+    ],
+    [
+     476,
+     1,
+     "ok_killed"
+    ],
+    [
+     477,
+     0,
+     "ok_killed"
+    ],
+    [
+     477,
+     1,
+     "ok_killed"
+    ],
+    [
+     479,
+     0,
+     "ok_killed"
+    ],
+    [
+     483,
+     0,
+     "ok_killed"
+    ],
+    [
+     483,
+     1,
+     "ok_killed"
+    ],
+    [
+     483,
+     2,
+     "ok_killed"
+    ],
+    [
+     484,
+     0,
+     "ok_killed"
+    ],
+    [
+     486,
+     0,
+     "ok_killed"
+    ],
+    [
+     487,
+     0,
+     "ok_killed"
+    ],
+    [
+     489,
+     0,
+     "ok_killed"
+    ],
+    [
+     489,
+     1,
+     "bad_survived"
+    ],
+    [
+     490,
+     0,
+     "ok_killed"
+    ],
+    [
+     490,
+     1,
+     "ok_killed"
+    ],
+    [
+     490,
+     2,
+     "ok_killed"
+    ],
+    [
+     490,
+     3,
+     "ok_killed"
+    ],
+    [
+     490,
+     4,
+     "ok_killed"
+    ],
+    [
+     490,
+     5,
+     "ok_killed"
+    ],
+    [
+     490,
+     6,
+     "ok_killed"
+    ],
+    [
+     491,
+     0,
+     "ok_killed"
+    ],
+    [
+     492,
+     0,
+     "ok_killed"
+    ],
+    [
+     502,
+     0,
+     "ok_killed"
+    ],
+    [
+     503,
+     0,
+     "ok_killed"
+    ],
+    [
+     507,
+     0,
+     "ok_killed"
+    ],
+    [
+     508,
+     0,
+     "ok_killed"
+    ],
+    [
+     508,
+     1,
+     "ok_killed"
+    ],
+    [
+     508,
+     2,
+     "bad_survived"
+    ],
+    [
+     508,
+     3,
+     "bad_survived"
+    ],
+    [
+     509,
+     0,
+     "ok_killed"
+    ],
+    [
+     510,
+     0,
+     "ok_killed"
+    ],
+    [
+     510,
+     1,
+     "bad_survived"
+    ],
+    [
+     511,
+     0,
+     "bad_survived"
+    ],
+    [
+     511,
+     1,
+     "bad_survived"
+    ],
+    [
+     512,
+     0,
+     "ok_killed"
+    ],
+    [
+     512,
+     1,
+     "bad_survived"
+    ],
+    [
+     513,
+     0,
+     "ok_killed"
+    ],
+    [
+     514,
+     0,
+     "ok_killed"
+    ],
+    [
+     514,
+     1,
+     "bad_survived"
+    ],
+    [
+     527,
+     0,
+     "ok_killed"
+    ],
+    [
+     528,
+     0,
+     "ok_killed"
+    ],
+    [
+     529,
+     0,
+     "ok_killed"
+    ],
+    [
+     530,
+     0,
+     "ok_killed"
+    ]
+   ]
+  },
+  "models/backtest.py": {
+   "lines": [
+    "\"\"\"Walk-forward backtest \u2014 the evaluation protocol for every model in this repo.",
+    "",
+    "Protocol",
+    "--------",
+    "The window is cut into daily **folds**. Each fold has a cutoff instant `T0`",
+    "(00:00 UTC by default). At that point the model may see the series up to, but",
+    "**strictly before**, `T0`; it forecasts horizons `h = 1..H` hours ahead, i.e.",
+    "the timestamps `T0 + h`. The cutoff then slides forward one day and the whole",
+    "thing repeats.",
+    "",
+    "This is the part a random train/test split gets wrong on time series: a",
+    "shuffled split lets the model learn from Thursday to predict Wednesday. Here,",
+    "information only ever flows forward, and the slice handed to the model is built",
+    "by `_history_before` \u2014 a single place that enforces `index < cutoff`, on top of",
+    "the model's own assertion in `models.baseline.predict`.",
+    "",
+    "Metrics are computed per horizon (a 1 h-ahead error and a 24 h-ahead error are",
+    "different problems) and pooled across folds.",
+    "\"\"\"",
+    "",
+    "from __future__ import annotations",
+    "",
+    "import logging",
+    "from dataclasses import dataclass, field",
+    "",
+    "import numpy as np",
+    "import pandas as pd",
+    "",
+    "log = logging.getLogger(__name__)",
+    "",
+    "DEFAULT_HORIZONS = tuple(range(1, 25))",
+    "DEFAULT_WEEKS = 8",
+    "DEFAULT_CUTOFF_HOUR = 0  # fold boundary, UTC",
+    "",
+    "",
+    "@dataclass",
+    "class BacktestResult:",
+    "    predictions: pd.DataFrame  # one row per (fold, horizon)",
+    "    by_horizon: pd.DataFrame",
+    "    overall: dict",
+    "    folds: list[pd.Timestamp] = field(default_factory=list)",
+    "    skipped_folds: int = 0",
+    "    warnings: list[str] = field(default_factory=list)",
+    "",
+    "",
+    "def _history_before(series: pd.Series, cutoff: pd.Timestamp) -> pd.Series:",
+    "    \"\"\"The only slice a model is allowed to see for a fold at `cutoff`.",
+    "",
+    "    Strictly `<`, never `<=`: the hour stamped `T0` is not complete at `T0`.",
+    "    \"\"\"",
+    "    return series[series.index < cutoff]",
+    "",
+    "",
+    "def make_cutoffs(",
+    "    index: pd.DatetimeIndex,",
+    "    weeks: int,",
+    "    horizons: tuple[int, ...],",
+    "    cutoff_hour: int,",
+    "    min_history_hours: int,",
+    ") -> list[pd.Timestamp]:",
+    "    \"\"\"Daily fold cutoffs over the last `weeks`, keeping folds fully evaluable.",
+    "",
+    "    A cutoff is kept only when (a) enough history precedes it for the model to",
+    "    have something to read, and (b) the actuals for every horizon exist, so",
+    "    each horizon is scored on exactly the same set of folds.",
+    "    \"\"\"",
+    "    if len(index) == 0:",
+    "        return []",
+    "",
+    "    max_h = max(horizons)",
+    "    first_usable = index.min() + pd.Timedelta(hours=min_history_hours)",
+    "    last_usable = index.max() - pd.Timedelta(hours=max_h)",
+    "",
+    "    # Start of the most recent `weeks` window, snapped to the cutoff hour.",
+    "    window_start = (index.max() - pd.Timedelta(weeks=weeks)).normalize() + pd.Timedelta(",
+    "        hours=cutoff_hour",
+    "    )",
+    "    start = max(window_start, first_usable.ceil(\"D\") + pd.Timedelta(hours=cutoff_hour))",
+    "",
+    "    if start > last_usable:",
+    "        return []",
+    "",
+    "    return list(pd.date_range(start, last_usable, freq=\"D\"))",
+    "",
+    "",
+    "def run(",
+    "    series: pd.Series,",
+    "    predict_fn,",
+    "    *,",
+    "    horizons: tuple[int, ...] = DEFAULT_HORIZONS,",
+    "    weeks: int = DEFAULT_WEEKS,",
+    "    cutoff_hour: int = DEFAULT_CUTOFF_HOUR,",
+    "    min_history_hours: int = 168,",
+    ") -> BacktestResult:",
+    "    \"\"\"Run the walk-forward backtest.",
+    "",
+    "    `predict_fn(history, target_times, cutoff) -> Series` is the model. It gets",
+    "    only the pre-cutoff history; anything it returns is treated as the forecast",
+    "    for `target_times`.",
+    "    \"\"\"",
+    "    series = series.dropna().sort_index()",
+    "    horizons = tuple(sorted(horizons))",
+    "    cutoffs = make_cutoffs(series.index, weeks, horizons, cutoff_hour, min_history_hours)",
+    "",
+    "    if not cutoffs:",
+    "        raise ValueError(",
+    "            \"Not enough history for a walk-forward backtest: need at least \"",
+    "            f\"{min_history_hours}h of warm-up plus {weeks} week(s) of folds, \"",
+    "            f\"got {len(series)} hour(s).\"",
+    "        )",
+    "",
+    "    records: list[dict] = []",
+    "    used_folds: list[pd.Timestamp] = []",
+    "    skipped = 0",
+    "    warnings: list[str] = []",
+    "",
+    "    for cutoff in cutoffs:",
+    "        history = _history_before(series, cutoff)",
+    "        if history.empty:",
+    "            skipped += 1",
+    "            continue",
+    "",
+    "        target_times = pd.DatetimeIndex([cutoff + pd.Timedelta(hours=h) for h in horizons])",
+    "        preds = predict_fn(history, target_times, cutoff)",
+    "        actuals = series.reindex(target_times)",
+    "",
+    "        fold_records = [",
+    "            {",
+    "                \"cutoff_utc\": cutoff,",
+    "                \"horizon_h\": h,",
+    "                \"target_utc\": t,",
+    "                \"actual\": actuals.loc[t],",
+    "                \"prediction\": preds.loc[t],",
+    "            }",
+    "            for h, t in zip(horizons, target_times, strict=True)",
+    "        ]",
+    "",
+    "        usable = [r for r in fold_records if _is_scorable(r)]",
+    "        if len(usable) < len(fold_records):",
+    "            skipped += 1",
+    "            warnings.append(",
+    "                f\"fold {cutoff.isoformat()}: \"",
+    "                f\"{len(fold_records) - len(usable)} horizon(s) unscorable (gaps in the series)\"",
+    "            )",
+    "            continue",
+    "",
+    "        records.extend(usable)",
+    "        used_folds.append(cutoff)",
+    "",
+    "    if not records:",
+    "        raise ValueError(\"Every fold was unscorable \u2014 the series has too many gaps.\")",
+    "",
+    "    predictions = pd.DataFrame.from_records(records)",
+    "    predictions[\"error\"] = predictions[\"prediction\"] - predictions[\"actual\"]",
+    "    predictions[\"abs_error\"] = predictions[\"error\"].abs()",
+    "    predictions[\"abs_pct_error\"] = (predictions[\"abs_error\"] / predictions[\"actual\"].abs()) * 100.0",
+    "",
+    "    by_horizon = (",
+    "        predictions.groupby(\"horizon_h\")",
+    "        .agg(",
+    "            mae=(\"abs_error\", \"mean\"),",
+    "            mape_pct=(\"abs_pct_error\", \"mean\"),",
+    "            rmse=(\"error\", lambda e: float(np.sqrt(np.mean(np.square(e))))),",
+    "            bias=(\"error\", \"mean\"),",
+    "            n=(\"abs_error\", \"size\"),",
+    "        )",
+    "        .reset_index()",
+    "    )",
+    "",
+    "    overall = {",
+    "        \"mae\": float(predictions[\"abs_error\"].mean()),",
+    "        \"mape_pct\": float(predictions[\"abs_pct_error\"].mean()),",
+    "        \"rmse\": float(np.sqrt(np.mean(np.square(predictions[\"error\"])))),",
+    "        \"bias\": float(predictions[\"error\"].mean()),",
+    "        \"n\": len(predictions),",
+    "    }",
+    "",
+    "    log.info(",
+    "        \"Backtest: %d fold(s), %d horizon(s), MAE=%.1f MAPE=%.2f%%\",",
+    "        len(used_folds),",
+    "        len(horizons),",
+    "        overall[\"mae\"],",
+    "        overall[\"mape_pct\"],",
+    "    )",
+    "",
+    "    return BacktestResult(",
+    "        predictions=predictions,",
+    "        by_horizon=by_horizon,",
+    "        overall=overall,",
+    "        folds=used_folds,",
+    "        skipped_folds=skipped,",
+    "        warnings=warnings,",
+    "    )",
+    "",
+    "",
+    "def _is_scorable(record: dict) -> bool:",
+    "    actual, prediction = record[\"actual\"], record[\"prediction\"]",
+    "    if pd.isna(actual) or pd.isna(prediction):",
+    "        return False",
+    "    # MAPE is undefined at zero demand; such an hour is a data error anyway.",
+    "    return float(actual) != 0.0",
+    "",
+    "",
+    "def markdown_table(by_horizon: pd.DataFrame, every: int = 1) -> str:",
+    "    \"\"\"Render the per-horizon table for the README / metrics artifact.\"\"\"",
+    "    rows = by_horizon[by_horizon[\"horizon_h\"] % every == 0] if every > 1 else by_horizon",
+    "    lines = [",
+    "        \"| Horizon (h) | MAE (MWh) | MAPE (%) | RMSE (MWh) | Bias (MWh) | n |\",",
+    "        \"|---:|---:|---:|---:|---:|---:|\",",
+    "    ]",
+    "    for row in rows.itertuples(index=False):",
+    "        lines.append(",
+    "            f\"| {int(row.horizon_h)} | {row.mae:,.0f} | {row.mape_pct:.2f} | \"",
+    "            f\"{row.rmse:,.0f} | {row.bias:+,.0f} | {int(row.n)} |\"",
+    "        )",
+    "    return \"\\n\".join(lines)"
+   ],
+   "mutants": [
+    [
+     28,
+     0,
+     "ok_killed"
+    ],
+    [
+     30,
+     0,
+     "ok_killed"
+    ],
+    [
+     30,
+     1,
+     "ok_killed"
+    ],
+    [
+     30,
+     2,
+     "ok_killed"
+    ],
+    [
+     31,
+     0,
+     "bad_survived"
+    ],
+    [
+     31,
+     1,
+     "bad_survived"
+    ],
+    [
+     32,
+     0,
+     "bad_survived"
+    ],
+    [
+     32,
+     1,
+     "ok_killed"
+    ],
+    [
+     35,
+     0,
+     "ok_killed"
+    ],
+    [
+     40,
+     0,
+     "bad_survived"
+    ],
+    [
+     41,
+     0,
+     "bad_survived"
+    ],
+    [
+     41,
+     1,
+     "bad_survived"
+    ],
+    [
+     42,
+     0,
+     "bad_survived"
+    ],
+    [
+     50,
+     0,
+     "ok_killed"
+    ],
+    [
+     66,
+     0,
+     "ok_killed"
+    ],
+    [
+     66,
+     1,
+     "ok_killed"
+    ],
+    [
+     69,
+     0,
+     "ok_killed"
+    ],
+    [
+     70,
+     0,
+     "ok_killed"
+    ],
+    [
+     70,
+     1,
+     "ok_killed"
+    ],
+    [
+     71,
+     0,
+     "ok_killed"
+    ],
+    [
+     71,
+     1,
+     "ok_killed"
+    ],
+    [
+     74,
+     0,
+     "ok_killed"
+    ],
+    [
+     74,
+     1,
+     "bad_survived"
+    ],
+    [
+     76,
+     0,
+     "ok_killed"
+    ],
+    [
+     77,
+     0,
+     "ok_killed"
+    ],
+    [
+     77,
+     1,
+     "bad_survived"
+    ],
+    [
+     77,
+     2,
+     "ok_killed"
+    ],
+    [
+     79,
+     0,
+     "ok_killed"
+    ],
+    [
+     82,
+     0,
+     "ok_killed"
+    ],
+    [
+     92,
+     0,
+     "bad_survived"
+    ],
+    [
+     100,
+     0,
+     "ok_killed"
+    ],
+    [
+     101,
+     0,
+     "ok_killed"
+    ],
+    [
+     102,
+     0,
+     "ok_killed"
+    ],
+    [
+     104,
+     0,
+     "ok_killed"
+    ],
+    [
+     106,
+     0,
+     "bad_survived"
+    ],
+    [
+     107,
+     0,
+     "bad_survived"
+    ],
+    [
+     108,
+     0,
+     "bad_survived"
+    ],
+    [
+     111,
+     0,
+     "ok_killed"
+    ],
+    [
+     112,
+     0,
+     "ok_killed"
+    ],
+    [
+     113,
+     0,
+     "ok_killed"
+    ],
+    [
+     113,
+     1,
+     "ok_killed"
+    ],
+    [
+     114,
+     0,
+     "ok_killed"
+    ],
+    [
+     117,
+     0,
+     "ok_killed"
+    ],
+    [
+     119,
+     0,
+     "bad_survived"
+    ],
+    [
+     119,
+     1,
+     "ok_killed"
+    ],
+    [
+     119,
+     2,
+     "ok_killed"
+    ],
+    [
+     120,
+     0,
+     "ok_killed"
+    ],
+    [
+     122,
+     0,
+     "ok_killed"
+    ],
+    [
+     122,
+     1,
+     "ok_killed"
+    ],
+    [
+     123,
+     0,
+     "ok_killed"
+    ],
+    [
+     124,
+     0,
+     "ok_killed"
+    ],
+    [
+     128,
+     0,
+     "bad_survived"
+    ],
+    [
+     129,
+     0,
+     "ok_killed"
+    ],
+    [
+     130,
+     0,
+     "ok_killed"
+    ],
+    [
+     131,
+     0,
+     "ok_killed"
+    ],
+    [
+     132,
+     0,
+     "ok_killed"
+    ],
+    [
+     134,
+     0,
+     "bad_survived"
+    ],
+    [
+     135,
+     0,
+     "ok_killed"
+    ],
+    [
+     137,
+     0,
+     "ok_killed"
+    ],
+    [
+     138,
+     0,
+     "ok_killed"
+    ],
+    [
+     139,
+     0,
+     "ok_killed"
+    ],
+    [
+     139,
+     1,
+     "ok_killed"
+    ],
+    [
+     139,
+     2,
+     "ok_killed"
+    ],
+    [
+     141,
+     0,
+     "bad_survived"
+    ],
+    [
+     142,
+     0,
+     "bad_survived"
+    ],
+    [
+     142,
+     1,
+     "bad_survived"
+    ],
+    [
+     144,
+     0,
+     "ok_killed"
+    ],
+    [
+     149,
+     0,
+     "ok_killed"
+    ],
+    [
+     150,
+     0,
+     "ok_killed"
+    ],
+    [
+     152,
+     0,
+     "ok_killed"
+    ],
+    [
+     153,
+     0,
+     "ok_killed"
+    ],
+    [
+     153,
+     1,
+     "ok_killed"
+    ],
+    [
+     153,
+     2,
+     "ok_killed"
+    ],
+    [
+     153,
+     3,
+     "ok_killed"
+    ],
+    [
+     153,
+     4,
+     "ok_killed"
+    ],
+    [
+     154,
+     0,
+     "ok_killed"
+    ],
+    [
+     154,
+     1,
+     "ok_killed"
+    ],
+    [
+     154,
+     2,
+     "ok_killed"
+    ],
+    [
+     155,
+     0,
+     "ok_killed"
+    ],
+    [
+     155,
+     1,
+     "ok_killed"
+    ],
+    [
+     155,
+     2,
+     "ok_killed"
+    ],
+    [
+     155,
+     3,
+     "ok_killed"
+    ],
+    [
+     155,
+     4,
+     "ok_killed"
+    ],
+    [
+     155,
+     5,
+     "ok_killed"
+    ],
+    [
+     155,
+     6,
+     "ok_killed"
+    ],
+    [
+     158,
+     0,
+     "ok_killed"
+    ],
+    [
+     160,
+     0,
+     "ok_killed"
+    ],
+    [
+     160,
+     1,
+     "ok_killed"
+    ],
+    [
+     161,
+     0,
+     "ok_killed"
+    ],
+    [
+     161,
+     1,
+     "ok_killed"
+    ],
+    [
+     162,
+     0,
+     "ok_killed"
+    ],
+    [
+     162,
+     1,
+     "ok_killed"
+    ],
+    [
+     163,
+     0,
+     "ok_killed"
+    ],
+    [
+     163,
+     1,
+     "ok_killed"
+    ],
+    [
+     164,
+     0,
+     "ok_killed"
+    ],
+    [
+     164,
+     1,
+     "ok_killed"
+    ],
+    [
+     167,
+     0,
+     "ok_killed"
+    ],
+    [
+     170,
+     0,
+     "ok_killed"
+    ],
+    [
+     170,
+     1,
+     "ok_killed"
+    ],
+    [
+     171,
+     0,
+     "ok_killed"
+    ],
+    [
+     171,
+     1,
+     "ok_killed"
+    ],
+    [
+     172,
+     0,
+     "ok_killed"
+    ],
+    [
+     172,
+     1,
+     "ok_killed"
+    ],
+    [
+     173,
+     0,
+     "ok_killed"
+    ],
+    [
+     173,
+     1,
+     "ok_killed"
+    ],
+    [
+     174,
+     0,
+     "ok_killed"
+    ],
+    [
+     175,
+     0,
+     "ok_killed"
+    ],
+    [
+     178,
+     0,
+     "bad_survived"
+    ],
+    [
+     181,
+     0,
+     "ok_killed"
+    ],
+    [
+     182,
+     0,
+     "ok_killed"
+    ],
+    [
+     196,
+     0,
+     "ok_killed"
+    ],
+    [
+     196,
+     1,
+     "ok_killed"
+    ],
+    [
+     196,
+     2,
+     "ok_killed"
+    ],
+    [
+     197,
+     0,
+     "ok_killed"
+    ],
+    [
+     198,
+     0,
+     "ok_killed"
+    ],
+    [
+     200,
+     0,
+     "ok_killed"
+    ],
+    [
+     200,
+     1,
+     "ok_killed"
+    ],
+    [
+     203,
+     0,
+     "ok_killed"
+    ],
+    [
+     205,
+     0,
+     "bad_survived"
+    ],
+    [
+     205,
+     1,
+     "bad_survived"
+    ],
+    [
+     205,
+     2,
+     "bad_survived"
+    ],
+    [
+     205,
+     3,
+     "bad_survived"
+    ],
+    [
+     205,
+     4,
+     "bad_survived"
+    ],
+    [
+     205,
+     5,
+     "bad_survived"
+    ],
+    [
+     205,
+     6,
+     "ok_killed"
+    ],
+    [
+     207,
+     0,
+     "bad_survived"
+    ],
+    [
+     208,
+     0,
+     "bad_survived"
+    ],
+    [
+     209,
+     0,
+     "ok_killed"
+    ],
+    [
+     210,
+     0,
+     "bad_survived"
+    ],
+    [
+     212,
+     0,
+     "bad_survived"
+    ],
+    [
+     213,
+     0,
+     "bad_survived"
+    ],
+    [
+     215,
+     0,
+     "bad_survived"
+    ]
+   ]
+  }
+ }
+}

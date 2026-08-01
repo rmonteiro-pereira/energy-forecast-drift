@@ -378,20 +378,31 @@ constraints behind it, established by reading mutmut 2.5.1's `cache.py` and
 diffing two real CI caches; every one of them was re-verified against a real
 `.mutmut-cache` while the script was written.
 
-The baseline lives at `.github/mutation-baseline.json` and is **committed once
-seeded** — it is not in the tree yet, see below — so losing a kill on purpose
-costs a visible diff in the pull request that loses it.
+The baseline lives at `.github/mutation-baseline.json` and **is committed**, so
+losing a kill on purpose costs a visible diff in the pull request that loses it.
 That is the mechanism — not the file format, the attributability. Re-baselining
 *is* the adjudication: the workflow uploads a ready-made `mutation-baseline`
 artifact on every run, so accepting a loss means downloading it and committing it
 with a message that says why.
 
-It must be seeded from a run on the CI runner rather than a local one. The two
+**Seeded 2026-08-01 from run 30719872567** on `ubuntu-latest`, at `b2bad0c`:
+**317 kills of 474 mutants**, 342 in `drift/detectors.py` and 132 in
+`models/backtest.py`. The gate is live rather than inert from this commit on.
+
+It had to be seeded from a run on the CI runner rather than a local one. The two
 platforms disagree by about 1.7 points here, in **both** directions — the Windows
 figure resolves to +8 killed and +1 survivor on `ubuntu-latest` — so a baseline
-measured on the wrong one would accuse the first correct run of a regression it
-did not cause. Until it is seeded, `--check` reports "not yet seeded", says in
-so many words that it is inert, and exits 0.
+measured on the wrong one would have accused the first correct run of a
+regression it did not cause. With no baseline present, `--check` reports "not yet
+seeded", says in so many words that it is inert, and exits 0; that is the
+bootstrap state, and it is now behind us.
+
+One property worth recording because it was measured rather than assumed: the
+seeding run predates the widened ambiguity rule, and the widened script reads
+that baseline without complaint — 317 `held`, zero regressed, zero ambiguous,
+exit 0. The rule changed how identities are *compared*; `build_baseline` and the
+schema did not move, and a mismatch would have failed loudly on `SCHEMA_VERSION`
+rather than silently.
 
 **A ratchet over the killed *set*, not the rate:** persist which mutants were
 killed and fail on any `killed → survived` transition. It attributes per mutant
