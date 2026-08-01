@@ -2,8 +2,10 @@
 
 > **The headline number is 66.9%**, measured on the CI runner
 > ([run 30684416557](https://github.com/rmonteiro-pereira/energy-forecast-drift/actions/runs/30684416557),
-> `ubuntu-latest`). The identical code scores **1.7 points lower on Windows**, for
-> a reason worth knowing; both numbers, and the reason, are below. It is published here because a measured mediocre
+> `ubuntu-latest`). **Windows scores lower on the same code, by about 1.7
+> points**, for a reason worth knowing — the exact figure below is measured at an
+> earlier commit, so treat it as the size of the effect and not as a subtraction
+> from 66.9%. It is published here because a measured mediocre
 > score with the survivors listed is worth more than a flattering one — and
 > because finding out *which* assertions were missing already produced a real fix.
 
@@ -54,7 +56,8 @@ uv run python scripts/mutation_score.py --floor 66       # the CI floor
 uv run python scripts/mutation_survivors.py --check      # every survivor judged
 ```
 
-> **On Windows, expect roughly 1.7 points lower, and that is not a regression.** See
+> **On Windows, expect roughly 1.7 points lower, and that is not a regression.**
+> (Measured at `41e5d02`; no Windows run exists for the current commit.) See
 > [the platform note](#the-same-commit-scores-differently-on-windows) below before
 > concluding the score dropped.
 
@@ -91,7 +94,10 @@ before tightening it — the percentage is not the quantity worth ratcheting.
 The local run of the same code, on Windows, 2026-07-31, gave `drift/detectors.py`
 **209 / 342** and `models/backtest.py` **99 / 132** — **308 / 474 = 65.0%**.
 
-**65.0% locally, 66.7% in CI, at the same commit `41e5d02`.** The difference is
+**65.0% locally, 66.7% in CI, both at commit `41e5d02`** — the last commit
+measured on both platforms, and therefore the only honest platform comparison
+available. The current 66.9% is a *later* commit, measured on CI only, so it is
+not the other end of this comparison. The difference is
 entirely the nine `untested` mutants described
 [below](#every-one-of-the-157-survivors-is-adjudicated): Windows leaves nine
 mutants untested and the score counts them as not-killed; this runner leaves
@@ -335,10 +341,11 @@ text a human reads. Re-running the adjudicator over the current results:
 - **195 of the 316 kills (62%)** would land on an existing ACCEPTED or GAP rule
   if they regressed, including MAE, MAPE, RMSE and bias;
 - **`--check` fails only on UNADJUDICATED**, never on a GAP verdict;
-- **46 of the 95 survivors filed as prose sit on `"key": <expression>` lines** —
-  they are not prose either.
+- **47 of the 96 survivors then filed as prose sat on `"key": <expression>`
+  lines** — they are not prose either. One of the 47 is killed by this change,
+  leaving **46 of 95** today.
 
-One of those 47 was a real gap, live on `main` and shipped: `"rmse"` →
+That one was a real gap, live on `main` and shipped: `"rmse"` →
 `"XXrmseXX"` at `models/backtest.py:172` survived every run on record, because
 **no test in this repository mentioned rmse at all** (`grep -rn rmse tests/`
 returned nothing). It is killed now, by a test whose kill was verified by
