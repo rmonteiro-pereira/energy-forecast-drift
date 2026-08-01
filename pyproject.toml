@@ -129,10 +129,13 @@ disable_error_code = ["operator", "arg-type", "union-attr", "index", "call-overl
 #     `index < cutoff` becoming `index <= cutoff` is a one-character temporal
 #     leak that makes every metric look better and breaks nothing visibly.
 #
-# Not run in CI: a full pass takes tens of minutes, which is the wrong trade for
-# every push. It is run deliberately, and the score is recorded in
-# docs/MUTATION-TESTING.md with the surviving mutants listed rather than
-# summarised.
+# Not run on every push: a full pass takes tens of minutes, which is the wrong
+# trade for a typo fix. It *is* run in CI -- .github/workflows/mutation.yml, on
+# pull requests that touch these two modules or `tests/`, weekly for dependency
+# drift, and on demand -- and the score is recorded in docs/MUTATION-TESTING.md
+# with the surviving mutants listed rather than summarised. (This comment read
+# "Not run in CI" for a week after that workflow landed. It is exactly the genre
+# of stale claim the rest of this repository is built to catch.)
 #
 #   uv run --extra dev mutmut run
 #   uv run --extra dev mutmut results

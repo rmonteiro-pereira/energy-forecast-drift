@@ -1,9 +1,11 @@
 # Mutation testing
 
-> **The headline number is 65.0%.** It is published here
-> because a measured mediocre score with the survivors listed is worth more than
-> a flattering one — and because finding out *which* assertions were missing
-> already produced a real fix.
+> **The headline number is 66.7%**, measured on the CI runner
+> ([run 30680545024](https://github.com/rmonteiro-pereira/energy-forecast-drift/actions/runs/30680545024),
+> `ubuntu-latest`, commit `41e5d02`). The same commit scores **65.0%** on Windows,
+> and both numbers are below. It is published here because a measured mediocre
+> score with the survivors listed is worth more than a flattering one — and
+> because finding out *which* assertions were missing already produced a real fix.
 
 A green suite says the tests ran. It does not say they would have noticed if the
 code were wrong. Mutation testing answers the second question: change the code in
@@ -15,12 +17,26 @@ Scope, and why these two files, is in
 
 ## This actually runs — it is not a config sitting in a file
 
-`.github/workflows/mutation.yml` runs it **weekly and on demand**, writes the
-score into the job summary, and fails when it drops below a floor. There is no
-`if: false`, and `tests/test_mutation_config.py` (15 tests) asserts that the
-mutated paths exist and contain real code, that every test file named in the
-runner exists, that the runner invokes pytest, that no step is disabled, and
-that the workflow has a trigger that can fire.
+`.github/workflows/mutation.yml` runs it **on every pull request that touches
+something able to move the score** — the two mutated modules, the seven test files
+that drive them, or the mutation tooling — plus **weekly** for dependency drift
+and **on demand**. It writes the score into the job summary and fails when the
+score drops below a floor. There is no `if: false`, and
+`tests/test_mutation_config.py` asserts that the mutated paths exist and contain
+real code, that every test file named in the runner exists, that the runner
+invokes pytest, that no step is disabled, that the workflow has a trigger that
+can fire, **that the pull-request `paths` filter names every test the runner
+drives**, and **that the floor is compared against the score this document
+publishes**.
+
+> **The trigger used to be the schedule alone, and that was the wrong choice.**
+> Mutation testing measures the strength of a *test suite*, and a suite only
+> changes in a commit — so a calendar trigger fires precisely when nothing
+> changed and stays silent when something did. A red Monday 04:40 has no culprit
+> commit; it has a week of them. The full argument, and why the cron is *kept*
+> for the one job it is genuinely the only trigger for — a dependency release
+> changing behaviour under a suite nobody touched — is in the 2026-08-01
+> amendment to [ADR 0007](adr/0007-mutation-testing-scoped-not-global.md).
 
 That guard exists because the opposite is a real failure mode: a config aimed at
 directories that do not exist, behind a job set to `if: false`, reports a perfect
@@ -34,9 +50,13 @@ exits non-zero whenever *any* mutant survives, which is permanently true here.
 
 ```bash
 uv run --extra dev mutmut run                            # ~28 min for 474 mutants
-uv run python scripts/mutation_score.py --floor 65       # the number below
+uv run python scripts/mutation_score.py --floor 66       # the CI floor
 uv run python scripts/mutation_survivors.py --check      # every survivor judged
 ```
+
+> **On Windows, expect 65.0% and not 66.7%, and that is not a regression.** See
+> [the platform note](#the-same-commit-scores-differently-on-windows) below before
+> concluding the score dropped.
 
 `scripts/mutation_score.py` is committed, not scratch tooling — the figure in
 this document is only worth something if someone else can regenerate it.
@@ -49,13 +69,39 @@ this document is only worth something if someone else can regenerate it.
 
 ## The score
 
-Measured on commit `aa7f424` + the gap-closing tests, 2026-07-31.
+**The measurement the floor is set from**, on the CI runner —
+[run 30680545024](https://github.com/rmonteiro-pereira/energy-forecast-drift/actions/runs/30680545024),
+`ubuntu-latest`, commit `41e5d02`, 2026-08-01:
 
 | File | Killed | Total | Score |
 |---|---:|---:|---:|
-| `drift/detectors.py` | 209 | 342 | **61.1%** |
+| `drift/detectors.py` | 217 | 342 | **63.5%** |
 | `models/backtest.py` | 99 | 132 | **75.0%** |
-| **Total** | **308** | **474** | **65.0%** |
+| **Total** | **316** | **474** | **66.7%** |
+
+The floor is **66**.
+
+### The same commit scores differently on Windows
+
+The local run of the same code, on Windows, 2026-07-31, gave `drift/detectors.py`
+**209 / 342** and `models/backtest.py` **99 / 132** — **308 / 474 = 65.0%**.
+
+**65.0% locally, 66.7% in CI, same code.** The difference is entirely the nine
+`untested` mutants described [below](#every-one-of-the-157-survivors-is-adjudicated):
+Windows leaves nine mutants untested and the score counts them as not-killed;
+this runner leaves **none** (`Raw statuses: {'ok_killed': 316, 'bad_survived':
+158}` — no `untested` key at all). Of the nine, eight resolve as killed and one
+as a survivor, which is exactly `308 + 8 = 316` and `157 + 1 = 158`.
+
+That gap of 1.7 points is why the floor is set from a CI run rather than a local
+one. The floor before this was `65`, taken from the rounded **65.0%** above —
+a number that was both measured on the wrong platform *and* rounded up from
+`308/474 = 64.9789%`, which the gate then compared unrounded. It would have
+failed on its own measurement, and it had never run at that value: the workflow
+had one execution in its whole history, at floor 50. Both halves are fixed —
+`scripts/mutation_score.py` now compares the number it prints, and
+`tests/test_mutation_config.py` pins the 308/474 case so the report and the
+verdict cannot disagree again.
 
 ### Every run, because the trajectory is the interesting part
 
@@ -65,10 +111,16 @@ Measured on commit `aa7f424` + the gap-closing tests, 2026-07-31.
 | 2 — after `tests/test_drift_boundaries.py` | 248 / 474 | 52.3% | 21 new boundary tests |
 | 3 — after closing three named gaps | 290 / 474 | 61.2% | 18 tests over `drift_timeline`, the MAPE formula and fold accounting |
 | 4 — after killing 19 of the 21 named gaps | 308 / 474 | **65.0%** | 13 tests written against the *mutant diffs*, not the prose descriptions of them |
+| 5 — **the same code, on the CI runner** | 316 / 474 | **66.7%** | *no test changed.* Runs 1–4 were local, on Windows; this one is `ubuntu-latest`, and the nine `untested` mutants resolve there |
 
-Across the four runs `drift/detectors.py` went **42.0% → 48.8% → 57.9% → 61.1%**
-and `models/backtest.py` **61.4% → 61.4% → 69.7% → 75.0%**. The mutant count rose
-from 470 to 474 because the artifact fix described below added four mutable lines.
+Runs 1–4 are local (Windows). Across them `drift/detectors.py` went
+**42.0% → 48.8% → 57.9% → 61.1%** and `models/backtest.py`
+**61.4% → 61.4% → 69.7% → 75.0%**. The mutant count rose from 470 to 474 because
+the artifact fix described below added four mutable lines.
+
+**Run 5 is the platform, not progress**, and it is listed as a run precisely so
+nobody reads the jump as a test improvement. It is also the run the floor is set
+from, because it is the environment the gate executes in.
 
 Run 4 is the one worth reading the method for. Every previous round wrote tests
 from the *description* of a gap; this one pulled `mutmut show <id>` for all 21 and
@@ -121,7 +173,7 @@ happened to be eligible, and "everything was excluded as deterministic" is
 precisely when a reader most wants to know which columns those were. Both
 branches now report it.
 
-## Every one of the 157 survivors is adjudicated
+## Every one of the 158 survivors is adjudicated
 
 Not summarised — **adjudicated**. Each surviving mutant matches exactly one rule
 in [`scripts/mutation_survivors.py`](../scripts/mutation_survivors.py), and each
@@ -134,17 +186,22 @@ uv run python scripts/mutation_survivors.py            # the full table
 uv run python scripts/mutation_survivors.py --check    # the CI gate
 ```
 
-**157 mutants across 130 source lines. 4 are real gaps (2.5%); 153 are
+**158 mutants across 124 source lines. 4 are real gaps (2.5%); 154 are
 accepted.**
 
-> **9 mutants mutmut never tested**, and the score counts them as not-killed.
-> `308 + 157 = 465`, not 474; the missing nine sit at `untested`. Every one is on
-> a syntax-continuation line — a bare `)` or `]` — where mutmut attributes a
-> mutant it then cannot meaningfully run. Counting them as failures makes the
-> headline *worse* than the tested evidence supports, which is the direction an
-> unexplained gap in the arithmetic should always be resolved. They are named
-> here rather than quietly dropped from the denominator, and
-> `tests/test_mutation_config.py` now fails if this disclosure disappears.
+> **0 mutants mutmut never tested** on the CI runner: `316 + 158 = 474` exactly,
+> and the raw statuses carry no `untested` key at all. **The local Windows run
+> leaves nine**, and the score counts those as not-killed — `308 + 157 = 465`,
+> not 474. Every one of the nine is on a syntax-continuation line (a bare `)` or
+> `]`) where mutmut attributes a mutant it then cannot meaningfully run; on Linux
+> eight of them are killed and one survives, which is precisely the 1.7-point gap
+> between the two platforms.
+>
+> They are named rather than quietly dropped from the denominator, in either
+> direction: counting them as failures makes the headline *worse* than the tested
+> evidence supports, which is the direction an unexplained hole in the arithmetic
+> should always be resolved. `tests/test_mutation_config.py` fails if this
+> disclosure disappears, and the arithmetic in that test uses the number.
 
 > **The gap count has now moved four times, in both directions.** An early draft
 > put it at 14 — a guess from eyeballing categories, too flattering by nearly
@@ -190,11 +247,11 @@ unexamined.
 | `accepted:equivalent-unreachable-get-default` | `rollup.get("columns_scored", 0)` → `…, 1)` | The default is dead code. `_section_from_columns` returns `columns_scored` on **both** branches — `0` on the nothing-eligible path, `len(scored)` on the other — so the key is always present and the fallback never evaluates. |
 | `accepted:equivalent-first-increment-from-zero` | `skipped += 1` → `skipped = 1` | They differ only if `skipped` is already non-zero, and it cannot be: cutoffs ascend and `start >= series.min()` always holds, so at most the *first* cutoff has empty history, reached on iteration one with `skipped == 0`. The sibling `-= 1` and `+= 2` mutants on that line **are** killed, by the exact-count assertion. |
 
-### The accepted survivors — 153 mutants, and why each is not a defect
+### The accepted survivors — 154 mutants, and why each is not a defect
 
 | Rule | Lines | Mutants | Reason |
 |---|---:|---:|---|
-| `accepted:human-readable-text` | 74 | 95 | Summaries, notes, log messages, f-strings. Asserting exact wording breaks on every copy edit and protects nothing; the artifact *schema* is asserted separately. |
+| `accepted:human-readable-text` | 75 | 96 | Summaries, notes, log messages, f-strings. Asserting exact wording breaks on every copy edit and protects nothing; the artifact *schema* is asserted separately. **This is the only row that differs between platforms** — the one Windows-`untested` mutant that survives on Linux lands here. |
 | `accepted:sort-or-selection-order` | 2 | 3 | Sort keys and `idxmax` selection deciding presentation order. The *set* is asserted; the order in a report is not a correctness property. **Narrowed this round** — it used to cover 8 mutants, four of which were `make_cutoffs` arithmetic and are now `gap:fold-window-arithmetic`. |
 | `accepted:equivalent-unreachable-get-default` | 1 | 1 | **Provably equivalent** — argued in full above. The `.get` default is unreachable because both return paths always set the key. |
 | `accepted:equivalent-first-increment-from-zero` | 1 | 1 | **Provably equivalent** — argued in full above. `skipped` is provably 0 when that branch is reached, so `= 1` and `+= 1` cannot differ. |
@@ -221,9 +278,9 @@ the row is dropped because a count of zero in a table of survivors is noise.
 
 - It covers **two files**. The other ~4,500 lines are unmeasured. This is not a
   repo-wide quality figure and is not presented as one.
-- 65.0% is still a **modest score**. Roughly a third of the small changes you
+- 66.7% is still a **modest score**. Roughly a third of the small changes you
   could make to those two files would go unnoticed by the suite. The mitigating
-  detail is *which* third: 95 of the 157 surviving mutants are prose, and every
+  detail is *which* third: 96 of the 158 surviving mutants are prose, and every
   comparison that drives the alarm is now pinned. The mitigating detail is not an
   excuse — 4 survivors are genuine gaps and they are listed above by name.
 - **It says nothing about whether the thresholds themselves are right.** Mutation
@@ -231,7 +288,7 @@ the row is dropped because a count of zero in a table of survivors is noise.
   right place to alert is a different question, and it now has its own answer:
   [`docs/DRIFT-EVALUATION.md`](DRIFT-EVALUATION.md) runs the shipped detectors
   against real weather and finds the thresholds **fire on two of three control
-  windows where nothing changed**. A 65% mutation score and a false-positive-prone
+  windows where nothing changed**. A 67% mutation score and a false-positive-prone
   threshold are entirely compatible — the code correctly implements a rule that is
   itself miscalibrated, which is exactly why both measurements exist.
 
