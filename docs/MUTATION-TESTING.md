@@ -453,7 +453,7 @@ the current ones to migrate the line numbers, then compare on
 `(filename, migrated_line_number, index)`. Aligning *sequences* rather than
 counting occurrences is what makes duplicate lines tractable.
 
-**It is not a total order, though — a run of identical adjacent lines stays
+**It is not a total order, though — identical lines whose alignment moved stay
 ambiguous, and the implementation must refuse rather than guess.** Inserting a
 `)` next to an existing `)` gives opcodes
 `[equal 0-2→0-2, insert 2-2→2-3, equal 2-3→3-4]`: old index 1 migrates to new
@@ -467,41 +467,68 @@ harmless exactly when their statuses **differ**, which is not hypothetical here:
 of the 21 colliding keys measured above, **2 mix a kill with a survivor**. There
 the migration can invent a regression or conceal one.
 
-So the rule, and the implemented behaviour: when a migrated identity lands inside
-a run of adjacent identical lines **whose alignment moved** and whose statuses are
-not uniform, the status is **not transferred**. Those identities come out
-`ambiguous`, fail the check, and have to be adjudicated by a human — the same way
-an unclassified survivor is. A ratchet that guesses in the one place its key is
-undecidable is a ratchet that will eventually accuse the wrong commit.
+So the rule, and the implemented behaviour: identical copies of one line belong
+to the same **exchange region** unless a *matched* line of different text sits
+between them. Matched lines are the anchors the alignment is pinned to;
+unmatched lines — the insertions and deletions of the edit itself — pin nothing.
+When a region's alignment **moved** (a copy is unmatched, the copy count
+changed, or the images do not cover the new region exactly), every identity in
+it is judged by its **possible readings**: one per copy it could have aligned
+to, plus retirement when the copy count dropped — the only case where the text
+itself proves a copy went away. Readings that all name the same failure produce
+that failure (`regressed`, when every candidate copy is alive); readings that
+are all harmless let the alignment's arbitrary choice stand; readings that
+genuinely disagree come out `ambiguous`, fail the check, and have to be
+adjudicated by a human — the same way an unclassified survivor is. A ratchet
+that guesses in the one place its key is undecidable is a ratchet that will
+eventually accuse the wrong commit.
 
-"Whose alignment moved" is the part that keeps this usable. An untouched run is
-not ambiguous, so an unchanged file produces none at all; refusing on every
-duplicate line regardless of whether anything happened to it would make the 21
-known colliding keys here permanently unadjudicable, which is a gate nobody can
-get past rather than a gate that bites.
+"Whose alignment moved" is still the part that keeps this usable. An untouched
+region is not contested, so an unchanged file produces no refusal at all;
+refusing on every duplicate line regardless of whether anything happened to it
+would make the 21 known colliding keys here permanently unadjudicable, which is
+a gate nobody can get past rather than a gate that bites. Measured rather than
+asserted: over the real `drift/detectors.py` and `models/backtest.py` — 41
+duplicated line texts between them — with deliberately *mixed* statuses on every
+duplicate, an unchanged file, a whole-file shift and a mid-file insertion each
+produce zero ambiguous and zero failing verdicts.
 
-`tests/test_mutation_ratchet.py` carries the test this paragraph asked for by
-name — insert a line before a consecutive duplicate, assert the original mutant
-does **not** silently receive the other's status — plus its two complements: that
-duplicates whose statuses *agree* are not refused, and that an untouched file
-full of duplicates is never ambiguous.
+`tests/test_mutation_ratchet.py` carries the test this section asked for by name
+— insert a line before a consecutive duplicate, assert the original mutant does
+**not** silently receive the other's status. Under the region rule its verdict
+is `regressed` rather than `ambiguous`: every copy the kill could have aligned
+to is alive, so no reading saves it — the verdict change the paragraph below
+predicted when the hole was recorded. Its complements stay: duplicates whose
+statuses *agree* are not refused, an untouched file full of duplicates is never
+ambiguous, and an all-harmless disagreement (which of two killed copies
+retired?) follows the alignment instead of crying wolf.
 
-**One hole is known and open, and it is in the silent direction.** The refusal is
-scoped to runs of *adjacent* identical lines, which is what this section decided.
-An edit that creates an identical copy **separated** from the run reopens the
-same coin flip: `[def, L, L, return]` → `[def, L, pass, L, L, return]` makes
-`SequenceMatcher` call lines 1-2 the insertion and slide the old pair onto 3 and
-4, where both are killed, so the ratchet reports `held` and exits 0 — while the
-equally valid reading is that the survivor now at line 1 is one of the originals
-and a kill was lost. The old run maps contiguously onto a same-length new run, so
-the disturbance test, which compares shape rather than position, sees nothing.
+**The separated-copy hole is closed (FH-20).** The refusal was first scoped to
+runs of *adjacent* identical lines, which is what this section originally
+decided, and an edit that created an identical copy **separated** from the run
+reopened the coin flip in the silent direction: `[def, L, L, return]` →
+`[def, L, pass, L, L, return]` makes `SequenceMatcher` call lines 1-2 the
+insertion and slide the old pair onto 3 and 4, where both are killed, so the
+run-scoped ratchet reported `held` and exited 0 — while the equally valid
+reading is that the survivor now at line 1 is one of the originals and a kill
+was lost. The old run mapped contiguously onto a same-length new run, so a
+disturbance test that compared shape rather than position saw nothing. Under the
+region rule the inserted `pass` — matched to nothing — separates nothing: the
+three copies form one region, its alignment moved, its readings disagree, and
+both identities come out `ambiguous` at exit 1. The strict xfail that pinned the
+hole is gone; the same scenario is now a plain passing test. Widening the scope
+superseded the adjacent-run semantics deliberately — a decision, recorded here,
+not a patch.
 
-It is pinned as a `strict` xfail in `tests/test_mutation_ratchet.py`, so the day
-someone closes it the marker fails and has to be removed. Closing it properly
-means replacing "adjacent run" with something like "any identical copy reachable
-between the same two alignment anchors", which changes the semantics decided
-above and would also change the verdict of the mandated test from `ambiguous` to
-`regressed` in at least one case — a decision, not a patch. Tracked as FH-20.
+**What the region rule still cannot see, stated rather than discovered later.**
+The anchors are single lines. A duplicated multi-line *block* — `[A, B]`
+inserted beside an existing `[A, B]` — puts a matched `B` between the two copies
+of `A`, so each copy sits in its own region and the same coin flip returns one
+level up, at block granularity, where a status disagreement between the blocks
+would again transfer silently. And a region whose copies were all dropped by the
+matcher retires without refusal, trusting that nothing corresponds — including
+the popular lines autojunk declines to match, exactly as mutmut itself drops
+them.
 
 **And the previous cache must not be restored into place.**
 `cache.py::cached_mutation_status` returns `OK_KILLED` **without re-running**

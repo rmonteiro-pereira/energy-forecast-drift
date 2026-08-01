@@ -282,17 +282,20 @@ DUPLICATED = [
 
 
 def test_inserting_a_line_beside_a_duplicate_does_not_transfer_the_status(ratchet, tmp_path):
-    """The test the design notes asked for by name.
+    """The test the design notes asked for by name — its verdict changed under FH-20.
 
-    `SequenceMatcher` cannot say which of two adjacent identical lines is "the
-    original" — inserting a third gives `[equal 0-3->0-3, insert 3-3->3-4,
-    equal 3-4->4-5]`, and the assignment is consistent but arbitrary. Harmless
-    when the statuses agree; not harmless when they differ, which is 2 of the 21
-    colliding keys measured on the real cache.
-
-    So the killed mutant must come out `ambiguous` — **not** silently inheriting
-    the survivor's status, and **not** silently keeping its own. A ratchet that
-    guesses where its key is undecidable will eventually accuse the wrong commit.
+    Issue #21 mandated that the killed mutant must not silently inherit the
+    survivor's status, scoped the refusal to *adjacent* runs, and under that
+    scope this case came out `ambiguous`. FH-20 superseded that scope: the
+    refusal now covers whole exchange regions and judges a contested identity by
+    its possible readings — and here **every** copy the kill could have aligned
+    to is `bad_survived`, so every reading loses the kill. A verdict no reading
+    can save is not ambiguous; it is a regression, and naming it one keeps
+    `ambiguous` meaning "a human could still find this harmless". Everything #21
+    actually required still holds at the same exit code: the status is not
+    silently transferred, the gate fails, and the mutant is named — the change,
+    predicted in docs/MUTATION-TESTING.md when the hole was recorded, is only
+    that the failure now carries its sharper, correct name.
     """
     inserted = [
         "def f(x):",
@@ -313,17 +316,17 @@ def test_inserting_a_line_beside_a_duplicate_does_not_transfer_the_status(ratche
             )
         },
     )
-    assert "| **ambiguous** | **1** |" in out, (
-        f"the killed mutant was migrated across an undecidable alignment "
-        f"instead of being refused:\n{out}"
+    assert "| **regressed** | **1** |" in out, (
+        f"every reading of this alignment loses the kill, so it must be a definite "
+        f"regression rather than a shrug:\n{out}"
     )
-    assert "| **regressed** | **0** |" in out, (
-        f"an undecidable identity was reported as a definite regression, which is "
-        f"exactly the wrong-commit accusation the refusal exists to prevent:\n{out}"
+    assert "| **ambiguous** | **0** |" in out, (
+        f"a kill whose every candidate copy is alive was refused as ambiguous "
+        f"instead of being reported as the regression it certainly is:\n{out}"
     )
+    assert "`m.py` line 1 index 0" in out, f"the report does not name the regressed mutant:\n{out}"
     assert code == 1, (
-        f"an ambiguous identity has to be adjudicated by a human, the same way an "
-        f"unclassified survivor is — passing silently defeats the point:\n{out}"
+        f"a kill was lost on every reading of the alignment and the ratchet passed:\n{out}"
     )
 
 
@@ -399,34 +402,24 @@ def test_a_unique_line_landing_in_a_disagreeing_new_run_is_refused(ratchet, tmp_
     assert code == 1, out
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "KNOWN HOLE, deliberately left open and deliberately not silent. The "
-        "refusal is scoped to runs of *adjacent* identical lines, which is what "
-        "issue #21 decided. An edit that creates an identical copy separated from "
-        "the run re-opens the same coin flip through a geometry the run-scoped "
-        "rule cannot represent, and this one lands in the silent-green direction. "
-        "Closing it means changing the decided semantics — see the note in "
-        "docs/MUTATION-TESTING.md and FH-20. `strict=True` so that whoever fixes "
-        "it is forced to delete this marker rather than leaving a stale xfail."
-    ),
-)
 def test_an_identical_copy_separated_from_the_run_is_also_undecidable(ratchet, tmp_path):
-    """The second adversarial pass found this; it is real and it is not fixed.
+    """The hole the second adversarial pass found — FH-20 — now closed.
 
     Baseline has two adjacent identical lines, both killed. The change inserts a
     copy *and* a separator, so the file now holds three identical lines at 1, 3
     and 4 — and `SequenceMatcher` chooses to call lines 1-2 the insertion,
-    sliding the old pair onto 3 and 4. Both land on kills, so the ratchet says
-    `held` and exits 0.
+    sliding the old pair onto 3 and 4. Both land on kills, so the run-scoped
+    rule issue #21 decided said `held` and exited 0: the old run mapped
+    contiguously onto a same-length new run, and a disturbance test that
+    compared shape, not position, saw nothing.
 
     The equally valid reading is that the *original* pair is line 1 and one of
-    3/4, in which case the survivor at line 1 is a lost kill and this exits 0 on
-    a real regression. Which copy is "the original" is exactly as undecidable as
-    the adjacent case; the alignment merely hides it better, because the old run
-    maps contiguously onto a same-length new run and the disturbance test
-    compares shape, not position.
+    3/4 — in which case the survivor at line 1 is a lost kill exiting 0. The
+    region rule sees what the run rule could not: the inserted `pass` was never
+    aligned to anything, so it separates nothing, all three copies share one
+    exchange region, and the readings disagree (`held` for the copies at 3/4,
+    `regressed` for the copy at 1). Both identities are refused. This was
+    pinned as a strict xfail while the hole was open; it is a plain test now.
     """
     line = "    x = x + 1"
     before = ["def f(x):", line, line, "return x"]
@@ -439,6 +432,55 @@ def test_an_identical_copy_separated_from_the_run_is_also_undecidable(ratchet, t
     )
     assert code == 1, f"an undecidable alignment passed silently:\n{out}"
     assert "| **ambiguous** | **2** |" in out, out
+
+
+def test_a_separated_copy_whose_statuses_agree_is_not_refused(ratchet, tmp_path):
+    """The FH-20 geometry must bite only when the readings disagree.
+
+    Same shape as the closed hole — an identical copy on the far side of an
+    inserted separator — but every copy in the region is killed, so every
+    reading is `held` and the arbitrary choice between copies cannot hide a
+    lost kill. 21 keys collide on identical lines in this repository; a rule
+    that refused on geometry alone, with no disagreement to refuse over, would
+    make them permanently unadjudicable — a gate nobody can get past rather
+    than a gate that bites.
+    """
+    line = "    x = x + 1"
+    before = ["def f(x):", line, line, "return x"]
+    after = ["def f(x):", line, "pass", line, line, "return x"]
+    code, out = _run(
+        ratchet,
+        tmp_path,
+        {"m.py": (before, {(1, 0): "ok_killed", (2, 0): "ok_killed"})},
+        {"m.py": (after, {(1, 0): "ok_killed", (3, 0): "ok_killed", (4, 0): "ok_killed"})},
+    )
+    assert code == 0, f"agreeing copies across a separator were refused:\n{out}"
+    assert "| **ambiguous** | **0** |" in out, out
+    assert "| held | 2 |" in out, out
+
+
+def test_deleting_one_of_two_identical_killed_lines_stays_benign(ratchet, tmp_path):
+    """When every reading is harmless, the alignment's arbitrary choice stands.
+
+    Both copies were killed; one was deleted. Which copy retired is exactly as
+    undecidable as ever — but every assignment of names gives `held` to one
+    identity and `retired` to the other, and none of them loses a kill.
+    Refusing here would turn deleting a line beside a killed duplicate into an
+    adjudication event, which is the wolf-crying that gets gates turned off.
+    Contrast `test_deleting_one_of_two_identical_lines_refuses_instead_of_accusing`,
+    where the surviving copy is alive and one reading really is a regression.
+    """
+    shrunk = ["def f(x):", "    x = x + 1", "    return x"]
+    code, out = _run(
+        ratchet,
+        tmp_path,
+        {"m.py": (DUPLICATED, {(1, 0): "ok_killed", (2, 0): "ok_killed"})},
+        {"m.py": (shrunk, {(1, 0): "ok_killed"})},
+    )
+    assert code == 0, f"a harmless deletion beside a killed duplicate was refused:\n{out}"
+    assert "| **ambiguous** | **0** |" in out, out
+    assert "| held | 1 |" in out, out
+    assert "| retired | 1 |" in out, out
 
 
 def test_adjacent_duplicates_that_agree_are_not_ambiguous(ratchet, tmp_path):

@@ -62,28 +62,46 @@ data, and is never written to `.mutmut-cache`.
 
 ---
 
-`SequenceMatcher` still cannot disambiguate a run of **adjacent identical
-lines**. Inserting a `)` beside a `)` gives
-`[equal 0-2->0-2, insert 2-2->2-3, equal 2-3->3-4]`, and which of the two
-identical lines is "the original" is not a question the text can answer;
-`SequenceMatcher` picks one consistently but arbitrarily. That is harmless when
-the statuses match and not harmless when they differ — 2 of the 21 collisions
-above. **This refuses rather than guesses**: identities landing in a disturbed
-run of identical lines with non-uniform statuses are reported `ambiguous` and
-fail, to be adjudicated by a human, exactly as an unclassified survivor is.
+`SequenceMatcher` still cannot disambiguate **identical lines**. Inserting a `)`
+beside a `)` gives `[equal 0-2->0-2, insert 2-2->2-3, equal 2-3->3-4]`, and
+which of the two identical lines is "the original" is not a question the text
+can answer; `SequenceMatcher` picks one consistently but arbitrarily. That is
+harmless when the statuses match and not harmless when they differ — 2 of the 21
+collisions above. **This refuses rather than guesses.**
 
-**Known limit, stated rather than discovered later.** That refusal is scoped to
-runs of *adjacent* identical lines, which is what issue #21 decided. An edit that
-creates an identical copy **separated** from the run re-opens the same coin flip
-through a geometry the run-scoped rule cannot represent: with `[def, L, L,
-return]` becoming `[def, L, pass, L, L, return]`, `SequenceMatcher` calls lines
-1-2 the insertion and slides the old pair onto 3 and 4. The old run maps
-contiguously onto a same-length new run, so the disturbance test — which compares
-shape, not position — concludes the alignment held. It did not; the surviving
-copy at line 1 is just as plausibly one of the originals. If it is, a lost kill
-exits 0. `tests/test_mutation_ratchet.py` pins this as a strict `xfail` so the
-hole is visible in code rather than only in prose, and closing it means changing
-the semantics #21 decided.
+The refusal's scope is the **exchange region**: two copies of the same text
+belong to one region unless a *matched* line of different text sits between
+them. Matched lines are the anchors the alignment is pinned to; unmatched lines
+— the insertions and deletions of the edit itself — pin nothing. Issue #21
+originally scoped the refusal to runs of *adjacent* identical lines, and FH-20
+closed the gap that scope left open: with `[def, L, L, return]` becoming
+`[def, L, pass, L, L, return]`, `SequenceMatcher` calls lines 1-2 the insertion
+and slides the old pair onto 3 and 4 — the old run maps contiguously onto a
+same-length new run, so a shape-only disturbance test saw nothing, while the
+surviving copy at line 1 was just as plausibly one of the originals. The
+inserted `pass` was never aligned to anything, so it separates nothing: under
+the region rule the three copies are one coin flip, and the identity is refused.
+
+A contested identity — one whose region's alignment moved — is judged by its
+**possible readings**: one per copy in the new region it could have aligned to,
+plus retirement when the copy count dropped, the only case where the text itself
+proves a copy went away. When every reading is harmless (`held`, `retired`,
+`inconclusive`), the arbitrary choice cannot hide a lost kill, so the choice
+stands — that is what keeps the 21 known collisions here adjudicable and the
+gate passable. When every reading is the same failure, that failure is reported
+as itself: a kill whose every candidate copy is alive is `regressed`, not
+`ambiguous`, because no reading saves it. Only when the readings genuinely
+disagree is the identity `ambiguous` — refused rather than guessed, to be
+adjudicated by a human, exactly as an unclassified survivor is.
+
+**What the region rule still cannot see, stated rather than discovered later.**
+The anchors are single lines. A duplicated multi-line *block* — `[A, B]`
+inserted beside an existing `[A, B]` — puts a matched `B` between the two copies
+of `A`, so each copy sits in its own region and the same coin flip returns one
+level up, at block granularity. And a region whose copies were all dropped by
+the matcher retires without refusal, trusting that nothing corresponds —
+including the popular lines autojunk declines to match, exactly as mutmut itself
+drops them.
 
 ---
 
@@ -102,7 +120,9 @@ import importlib.util
 import json
 import sqlite3
 import sys
+from bisect import bisect_right
 from difflib import SequenceMatcher
+from itertools import pairwise
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[1]
@@ -249,87 +269,42 @@ def migrate(old_lines: list[str], new_lines: list[str]) -> dict[int, int]:
     return mapping
 
 
-def identical_runs(lines: list[str]) -> list[tuple[int, int]]:
-    """Maximal runs of two or more consecutive identical lines, as `[start, end)`."""
-    runs: list[tuple[int, int]] = []
-    start = 0
-    for index in range(1, len(lines) + 1):
-        if index == len(lines) or lines[index] != lines[start]:
-            if index - start >= 2:
-                runs.append((start, index))
-            start = index
-    return runs
+def exchange_groups(lines: list[str], matched: set[int]) -> dict[int, tuple[int, ...]]:
+    """Line index -> every copy of that line's text it could be confused with.
 
+    Two copies of the same text belong to one group unless a **matched** line of
+    different text sits between them. Matched lines are the alignment's anchors
+    — they were paired with a definite partner on the other side, so no copy can
+    cross them without breaking the alignment. Unmatched lines pin nothing: they
+    are the insertions and deletions of the edit itself, which is exactly what
+    the run-scoped rule this replaces got wrong — `[L, pass, L]` with the `pass`
+    freshly inserted is two runs but one coin flip, because the `pass` was never
+    aligned to anything (FH-20).
 
-def runs_by_line(lines: list[str]) -> dict[int, tuple[int, int]]:
-    """Line index -> the identical-line run containing it, singletons included.
-
-    Singletons are in the map on purpose. A line that is unique in the old file
-    can still land *inside* a run in the new one — someone added a line identical
-    to it — and that is a genuinely undecidable alignment even though nothing
-    about the old side looked duplicated.
+    Singletons are in the map on purpose, for the same reason they always were:
+    a line that is unique in the old file can still land beside a fresh
+    identical copy in the new one, and that alignment is just as unforced.
     """
-    index: dict[int, tuple[int, int]] = {n: (n, n + 1) for n in range(len(lines))}
-    for start, end in identical_runs(lines):
-        for line in range(start, end):
-            index[line] = (start, end)
-    return index
+    anchors = sorted(matched)
+    positions: dict[str, list[int]] = {}
+    for number, text in enumerate(lines):
+        positions.setdefault(text, []).append(number)
 
-
-def ambiguous_identities(old: dict, new: dict, mapping: dict[int, int]) -> set[tuple[int, int]]:
-    """`(old_line, index)` pairs whose status cannot be migrated without guessing.
-
-    The ambiguity is *between the lines of a run of identical text*, so it is
-    decided per run and per mutation index — never per line. Keying it by line
-    puts every identity in a group of one, where every set of statuses is
-    trivially uniform and nothing is ever refused.
-
-    A run is **disturbed** when its alignment moved: the old run and the new run
-    it maps onto are different lengths, or the old lines do not land on the new
-    run consecutively and exactly. That is precisely when `SequenceMatcher` had
-    to pick which of several identical lines is "the original" — a question the
-    text cannot answer, and one it answers consistently but arbitrarily.
-
-    Both sides are then inspected, and this is the part the first version got
-    wrong twice:
-
-      * **Both sides' runs.** Looking only at runs in the *new* file misses a run
-        that shrank — delete one of two adjacent identical lines and there is no
-        run left to notice, so a coin-flip alignment was being reported as a
-        definite regression, or as a retirement that silently swallowed a real
-        one.
-      * **Both sides' statuses.** Requiring the *baseline* statuses to disagree
-        misses the case where a single unique identity lands in a new run whose
-        members disagree: one baseline status is trivially uniform, so it
-        transferred, and which new line to read from was still a guess.
-
-    An untouched run is not disturbed, so an unchanged file produces no ambiguity
-    at all. Refusing on every duplicate line regardless would make the 21 known
-    collisions in this repository permanently unadjudicable — a gate nobody can
-    get past rather than a gate that bites.
-    """
-    old_runs = runs_by_line(old["lines"])
-    new_runs = runs_by_line(new["lines"])
-    ambiguous: set[tuple[int, int]] = set()
-
-    for a1, a2 in sorted(set(old_runs.values())):
-        images = [mapping[line] for line in range(a1, a2) if line in mapping]
-        if not images:
-            # The whole run went away. Nothing to attribute it to, and nothing to
-            # guess between: retirement is the honest verdict.
-            continue
-        b1, b2 = new_runs[images[0]]
-        if (a2 - a1) == (b2 - b1) and images == list(range(b1, b2)):
-            continue  # the alignment held; no guess was made
-
-        indices = {i for line, i in old["mutants"] if a1 <= line < a2}
-        indices |= {i for line, i in new["mutants"] if b1 <= line < b2}
-        for index in indices:
-            before = {old["mutants"].get((line, index)) for line in range(a1, a2)}
-            after = {new["mutants"].get((line, index)) for line in range(b1, b2)}
-            if len(before) > 1 or len(after) > 1:
-                ambiguous.update((line, index) for line in range(a1, a2))
-    return ambiguous
+    groups: dict[int, tuple[int, ...]] = {}
+    for copies in positions.values():
+        group = [copies[0]]
+        for previous, current in pairwise(copies):
+            # Any matched line strictly between two consecutive copies has
+            # different text — a copy between them would itself be in `copies`.
+            cut = bisect_right(anchors, previous)
+            if cut < len(anchors) and anchors[cut] < current:
+                for line in group:
+                    groups[line] = tuple(group)
+                group = []
+            group.append(current)
+        for line in group:
+            groups[line] = tuple(group)
+    return groups
 
 
 # ---------------------------------------------------------------------------
@@ -350,12 +325,78 @@ RETIRED = "retired"
 #: the silent loss this exists to catch — but it is what a change of mutmut
 #: version also looks like, so the message says so.
 VANISHED = "vanished"
-#: Landed in a disturbed run of identical lines carrying more than one status.
-#: Refused rather than guessed.
+#: Landed among identical copies whose alignment moved and whose possible
+#: readings disagree about the verdict. Refused rather than guessed.
 AMBIGUOUS = "ambiguous"
 
 #: The verdicts that fail the gate.
 FAILING = {REGRESSED, VANISHED, AMBIGUOUS}
+#: The verdicts that do not. A contested identity whose every reading is in this
+#: set falls through to the alignment's own choice: the choice is arbitrary, but
+#: no reading loses a kill, so refusing would only cry wolf.
+HARMLESS = {HELD, RETIRED, INCONCLUSIVE}
+
+
+def contested_identities(
+    old: dict, new: dict, mapping: dict[int, int]
+) -> dict[tuple[int, int], set[str]]:
+    """`(old_line, index)` -> every verdict the identity could honestly receive.
+
+    Decided per exchange group and per mutation index — never per line. Keying
+    it by line puts every identity in a group of one, where nothing is ever
+    contested.
+
+    A group is **contested** when its alignment moved: some copy is unmatched,
+    the copy count changed, or the images do not cover the new group exactly.
+    When every copy is matched and the images are exactly the new group, any
+    equally-sized alignment pairs the copies the same way, so nothing was
+    guessed — an untouched file therefore produces no contested identity at all,
+    which is what keeps the 21 known collisions in this repository adjudicable.
+
+    For a contested group, which copy is which is precisely the unanswerable
+    question, so no per-copy ordering information is used: every copy in the new
+    group is a possible reading for every identity in the old one. Retirement is
+    a possible reading only when the copy count dropped — that is the one case
+    where the text itself proves some copy went away. Admitting a retirement
+    reading the text cannot force would let every duplicated regression excuse
+    itself as "my line was deleted", which is the silent-green direction this
+    gate exists to close.
+    """
+    old_groups = exchange_groups(old["lines"], set(mapping))
+    new_groups = exchange_groups(new["lines"], set(mapping.values()))
+    contested: dict[tuple[int, int], set[str]] = {}
+
+    for group in set(old_groups.values()):
+        images = [mapping[line] for line in group if line in mapping]
+        if not images:
+            # Every copy went away. Nothing to attribute it to, and nothing to
+            # guess between: retirement is the honest verdict.
+            continue
+        # Monotonicity puts all images inside one new group: a matched line of
+        # different text between two images would have its partner between the
+        # two old copies, which would have split the old group.
+        new_group = new_groups[images[0]]
+        if len(group) == len(new_group) and images == list(new_group):
+            continue  # every copy is matched and pinned; the alignment is forced
+
+        for index in {i for line, i in old["mutants"] if line in group}:
+            possible: set[str] = set()
+            for line in new_group:
+                status = new["mutants"].get((line, index))
+                if status is None:
+                    possible.add(VANISHED)
+                elif status in KILLED:
+                    possible.add(HELD)
+                elif status in UNRESOLVED:
+                    possible.add(INCONCLUSIVE)
+                else:
+                    possible.add(REGRESSED)
+            if len(group) > len(new_group):
+                possible.add(RETIRED)
+            for line in group:
+                if (line, index) in old["mutants"]:
+                    contested[(line, index)] = possible
+    return contested
 
 
 def compare(baseline: dict[str, dict], current: dict[str, dict]) -> list[dict]:
@@ -384,29 +425,62 @@ def compare(baseline: dict[str, dict], current: dict[str, dict]) -> list[dict]:
             continue
 
         mapping = migrate(old["lines"], new["lines"])
-        ambiguous = ambiguous_identities(old, new, mapping)
+        contested = contested_identities(old, new, mapping)
 
         for line, index in sorted(killed_before):
             record = {"file": filename, "line": line, "index": index}
             new_line = mapping.get(line)
 
-            # Checked before retirement, deliberately. When one of two adjacent
-            # identical lines is deleted, `SequenceMatcher` drops one of them
-            # arbitrarily — so "its line was deleted" is itself the guess, and a
-            # real regression can hide inside a retirement.
-            if (line, index) in ambiguous:
-                findings.append(
-                    {
-                        **record,
-                        "verdict": AMBIGUOUS,
-                        "detail": (
-                            "it sits in a run of identical lines whose alignment moved "
-                            "and whose statuses disagree. Which line is the original is "
-                            "not a question the text can answer, so the status was not "
-                            "transferred."
-                        ),
-                    }
-                )
+            # Judged before retirement, deliberately. When one of several
+            # identical copies is deleted, `SequenceMatcher` drops one of them
+            # arbitrarily — so "its line was deleted" is itself one of the
+            # readings, and a real regression can hide inside a retirement.
+            # An all-harmless reading set falls through instead: the choice is
+            # still arbitrary, but no reading loses a kill, so nothing that
+            # matters was guessed.
+            possible = contested.get((line, index))
+            if possible is not None and not possible <= HARMLESS:
+                if possible == {REGRESSED}:
+                    # Every copy it could have aligned to is alive. The
+                    # alignment is ambiguous; the verdict is not — calling this
+                    # `ambiguous` would let `ambiguous` stop meaning "a human
+                    # could still find this harmless".
+                    findings.append(
+                        {
+                            **record,
+                            "verdict": REGRESSED,
+                            "detail": (
+                                "every identical copy it could have aligned to is "
+                                "alive, so no reading of the alignment saves it"
+                            ),
+                        }
+                    )
+                elif possible == {VANISHED}:
+                    findings.append(
+                        {
+                            **record,
+                            "verdict": VANISHED,
+                            "detail": (
+                                "no identical copy it could have aligned to carries a "
+                                f"mutant at index {index}, so no reading of the "
+                                "alignment explains it"
+                            ),
+                        }
+                    )
+                else:
+                    findings.append(
+                        {
+                            **record,
+                            "verdict": AMBIGUOUS,
+                            "detail": (
+                                "it sits among identical copies of its line whose "
+                                "alignment moved and whose possible readings disagree "
+                                f"({', '.join(sorted(possible))}). Which copy is the "
+                                "original is not a question the text can answer, so "
+                                "the status was not transferred."
+                            ),
+                        }
+                    )
                 continue
 
             if new_line is None:
@@ -516,11 +590,11 @@ def report(findings: list[dict], baseline: dict[str, dict], current: dict[str, d
     if counts[AMBIGUOUS]:
         lines.append(
             "\n::error::Some identities could not be migrated without guessing: they "
-            "landed in a run of adjacent identical lines whose alignment moved and "
-            "whose statuses disagree. Which line is the original is not decidable "
-            "from the text, and a ratchet that guesses there will eventually accuse "
-            "the wrong commit. Adjudicate by regenerating the baseline in a commit "
-            "that says what happened."
+            "sit among identical copies of their line whose alignment moved and "
+            "whose possible readings disagree. Which copy is the original is not "
+            "decidable from the text, and a ratchet that guesses there will "
+            "eventually accuse the wrong commit. Adjudicate by regenerating the "
+            "baseline in a commit that says what happened."
         )
     if not (counts[REGRESSED] or counts[VANISHED] or counts[AMBIGUOUS]):
         lines.append("\nNo kill was lost.")
