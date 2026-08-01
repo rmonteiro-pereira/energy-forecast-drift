@@ -134,24 +134,34 @@ def test_rendered_tables_warn_above_the_numbers(name: str):
         )
 
 
-def test_readme_leads_with_the_synthetic_banner():
+def test_readme_leads_with_the_provenance_banner():
     """First thing in the file, and rendered as an alert rather than a blockquote.
 
     GitHub always puts the file listing above the README, so nothing here can be
     in the literal first viewport. What *can* be controlled is that the warning is
     the first thing inside the README and that it renders in GitHub's red
     `caution` style rather than as a grey blockquote a reader's eye slides past.
+
+    This used to demand the word SYNTHETIC, because everything was. On
+    2026-08-01 the key landed and four of the six artifacts became real, which
+    made that demand enforce a false statement — the banner is the most-read
+    text in the repository and it was claiming every number was a fixture. The
+    guard is not dropped, it is re-aimed: whatever the split happens to be, the
+    top of the README has to name the part that is *not* real, so a reviewer
+    skimming cannot walk away thinking all of it is.
     """
     lines = (REPO / "README.md").read_text(encoding="utf-8").splitlines()
     head_lines = lines[:12]
     head = "\n".join(head_lines).upper()
 
-    assert "SYNTHETIC" in head, (
-        "the README's first 12 lines do not say the data is synthetic — "
-        "a reviewer skimming the top of the page would not know"
+    assert "IS_REAL" in head or "SYNTHETIC" in head or "FIXTURE" in head, (
+        "the README's first 12 lines do not tell a reviewer how to tell real "
+        "numbers from fixture ones — and this repository publishes both"
     )
-    assert "BENCHMARK" in head, (
-        "the README's first 12 lines do not say these numbers are not a benchmark"
+    assert "NOT" in head, (
+        "the README's first 12 lines make no negative claim. Every version of "
+        "this banner has had to say what is *not* real; a purely positive "
+        "opening is how a synthetic number gets quoted as a result"
     )
     assert any(line.strip() == "> [!CAUTION]" for line in head_lines), (
         "the banner is not a GitHub `> [!CAUTION]` alert. Without it the block "
