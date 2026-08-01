@@ -48,7 +48,7 @@ accumulates in public week after week and can be pointed at.
 
 | | Status | Notes |
 |---|---|---|
-| **The code** | ✅ real, complete, tested | 363 Python tests + 4 dashboard tests, no network. Every path below runs today, and [`docs/REPRODUCE.md`](docs/REPRODUCE.md) has the transcripts. The tests are themselves measured — see [mutation testing](docs/MUTATION-TESTING.md). |
+| **The code** | ✅ real, complete, tested | 367 Python tests + 4 dashboard tests, no network. Every path below runs today, and [`docs/REPRODUCE.md`](docs/REPRODUCE.md) has the transcripts. The tests are themselves measured — see [mutation testing](docs/MUTATION-TESTING.md). |
 | **Open-Meteo temperature** | ⚠️ **real, and it reaches the drift evaluation — but never the model** | No key needed, and the client genuinely runs. The whole of [`docs/DRIFT-EVALUATION.md`](docs/DRIFT-EVALUATION.md) is real Philadelphia ERA5 observations, and **those derived results are committed**; only the raw series is not (it is cached under gitignored `reports/`). What the temperature never reaches is the **model**: `models/data.py::resolve_panel` falls back to the fixture *as a whole* when the lake has no EIA demand, which is the permanent state today, so `models/fixtures.py` synthesises the temperature too and every number below is fixture temperature, not Open-Meteo. |
 | **EIA hourly demand** | ❌ **absent** | The client is finished and not stubbed. It has never been given a key. |
 | **The demand series used everywhere** | ❌ **seeded synthetic fixture** | `models/fixtures.py`, seed `20260728`. A plausible curve, not a measurement. |
@@ -162,7 +162,7 @@ uv run python -m drift.run --out metrics/drift.json   # M4: 4 drift types + retr
 uv run python -m pipeline.daily  # M5: the whole loop -> metrics/*.json + PNGs
 uv run python -m serving         # M5: FastAPI on :8000, /forecast from @champion
 
-uv run pytest -v               # 363 tests, no network
+uv run pytest -v               # 367 tests, no network
 
 cd dashboard && npm ci && npm test && npm run build   # M6: static dist/ over metrics/*.json
 ```
@@ -220,7 +220,7 @@ left unbolded so that nothing here reads as a headline.
 | 12 | 2,681 | 2.53 | 3,322 | -500 | 56 |
 | 18 | 2,906 | 2.46 | 3,397 | -520 | 56 |
 | 24 | 2,844 | 3.46 | 3,623 | -178 | 56 |
-| overall | 2,559 | 2.77 | 3,173 | -487 | 1,363 |
+| overall | 2,559 | 2.77 | 3,173 | -487 | 1,367 |
 
 *(fixture-derived — `metrics/baseline.json` carries `"is_real": false`)*
 
@@ -287,14 +287,30 @@ is not evidence that LightGBM beats a seasonal naive on PJM. Unbolded on purpose
 | | MAE (MWh) | MAPE (%) |
 |---|---:|---:|
 | seasonal naive | 2,559 | 2.77 |
-| LightGBM | 2,181 | 2.38 |
-| delta | −378 (−14.8%) | −0.39 pp |
+| LightGBM | 2,194 | 2.40 |
+| delta | −365 (−14.3%) | −0.38 pp |
 
 *(fixture-derived — `metrics/model.json` carries `"is_real": false`)*
 
-LightGBM leads on 23 of the 24 horizons *on this fixture*. Full per-horizon
+LightGBM leads on 24 of the 24 horizons *on this fixture*. Full per-horizon
 comparison: [`metrics/model_table.md`](metrics/model_table.md); machine-readable
 [`metrics/model.json`](metrics/model.json).
+
+**The forecast-weather ablation says these features made it worse here, and that
+is correct.** `models.train` re-scores the identical protocol with the `fcst_`
+columns removed and publishes the difference under `ablation` in
+`metrics/model.json`: MAE **2,181 without** them against **2,194 with**, i.e.
+**+0.59%**. The reason is a property of the fixture, not of the features — the
+synthetic temperature is a smooth seasonal and diurnal curve plus a slow random
+walk, so its value at the target hour is nearly implied by the calendar and the
+last observation, and a forecast carrying realistic 1.5 °C error loses to
+persistence. Real weather is nowhere near that predictable. **Only a run on real
+demand answers this**, and the artifact says so in its own `warning` field rather
+than leaving the reader to work it out.
+
+Worth noting for anyone checking the change was additive: 2,181 is the MAE this
+repository committed *before* forecast weather existed, to the cent. The ablation
+does not approximate the old model — it reproduces it.
 
 Top gain-based importances: `demand_lag_168h` (39%),
 `demand_same_hour_of_week_mean_4w` (20%), `demand_lag_48h` (7%),
@@ -664,7 +680,7 @@ metrics/    committed artifacts: baseline.json, model.json, drift.json,
             forecast.json, monitor.json, pipeline.json + tables + 2 PNGs
 dashboard/  Vite + React + ECharts over metrics/*.json — no deploy step here
             components.test.tsx  the banner tests (vitest)
-tests/      363 Python tests: idempotency, leakage (backtest *and* features),
+tests/      367 Python tests: idempotency, leakage (backtest *and* features),
             retries, secret redaction, registry wiring, PSI/KS vs scipy, drift
             injection, threshold boundaries, the daily chain, the HTTP surface,
             both workflow YAMLs, and the artifacts' own honesty contract

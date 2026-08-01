@@ -36,7 +36,7 @@ uv run python -m serving         # FastAPI on :8000
 ## Tests, lint and types
 
 ```bash
-uv run pytest                     # 363 tests, no network        (~20 s)
+uv run pytest                     # 367 tests, no network        (~20 s)
 uv run ruff check . && uv run ruff format --check .
 uv run mypy                       # scoped -- see docs/adr/0002
 cd dashboard && npm ci && npm test && npm run build

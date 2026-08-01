@@ -1,6 +1,6 @@
 {
   "milestone": "M2+M3",
-  "generated_at_utc": "2026-07-31T01:44:50+00:00",
+  "generated_at_utc": "2026-08-01T23:32:37+00:00",
   "is_real": false,
   "warning": "These numbers come from a SEEDED SYNTHETIC FIXTURE, not from EIA data. They are a smoke test of the pipeline, NOT a benchmark. The real baseline is pending the EIA API key \u2014 see docs/BLOCKED.md.",
   "models": {
@@ -33,7 +33,7 @@
       "train_origin_stride_hours": 6,
       "refits": 56,
       "train_rows_last_fold": 16376,
-      "n_features": 20,
+      "n_features": 27,
       "features": [
         "horizon_h",
         "hour",
@@ -54,7 +54,14 @@
         "demand_roll_mean_168h",
         "temp_lag_168h",
         "temp_last_1h",
-        "temp_roll_mean_24h"
+        "temp_roll_mean_24h",
+        "temp_fcst_target",
+        "temp_fcst_spread_target",
+        "humidity_fcst_target",
+        "dewpoint_fcst_target",
+        "wind_fcst_target",
+        "cloud_fcst_target",
+        "temp_fcst_target_minus_lag_168h"
       ]
     }
   },
@@ -71,7 +78,8 @@
       "start_utc": "2026-01-09T00:00:00+00:00",
       "end_utc": "2026-07-28T00:00:00+00:00",
       "missing_demand_hours": 0,
-      "has_temperature": true
+      "has_temperature": true,
+      "has_weather_forecast": true
     }
   },
   "backtest": {
@@ -323,441 +331,461 @@
     },
     "lightgbm": {
       "overall": {
-        "mae": 2181.0606,
-        "mape_pct": 2.3829,
-        "rmse": 2740.4317,
-        "bias": 161.1379,
+        "mae": 2193.9357,
+        "mape_pct": 2.3974,
+        "rmse": 2740.3849,
+        "bias": 163.2883,
         "n": 1344
       },
       "by_horizon": [
         {
           "horizon_h": 1,
-          "mae": 2055.82,
-          "mape_pct": 2.6527,
-          "rmse": 2593.47,
-          "bias": 54.82,
+          "mae": 2069.97,
+          "mape_pct": 2.6706,
+          "rmse": 2578.73,
+          "bias": 34.51,
           "n": 56
         },
         {
           "horizon_h": 2,
-          "mae": 2375.19,
-          "mape_pct": 3.198,
-          "rmse": 2917.01,
-          "bias": 39.01,
+          "mae": 2280.3,
+          "mape_pct": 3.074,
+          "rmse": 2776.32,
+          "bias": 89.45,
           "n": 56
         },
         {
           "horizon_h": 3,
-          "mae": 2097.49,
-          "mape_pct": 2.9012,
-          "rmse": 2529.35,
-          "bias": 466.26,
+          "mae": 2077.74,
+          "mape_pct": 2.8804,
+          "rmse": 2583.5,
+          "bias": 535.28,
           "n": 56
         },
         {
           "horizon_h": 4,
-          "mae": 2132.44,
-          "mape_pct": 3.0064,
-          "rmse": 2707.87,
-          "bias": 710.45,
+          "mae": 2219.85,
+          "mape_pct": 3.1279,
+          "rmse": 2724.86,
+          "bias": 844.5,
           "n": 56
         },
         {
           "horizon_h": 5,
-          "mae": 1936.99,
-          "mape_pct": 2.6429,
-          "rmse": 2427.86,
-          "bias": 216.01,
+          "mae": 2002.73,
+          "mape_pct": 2.7257,
+          "rmse": 2484.01,
+          "bias": 296.39,
           "n": 56
         },
         {
           "horizon_h": 6,
-          "mae": 2117.62,
-          "mape_pct": 2.7908,
-          "rmse": 2665.11,
-          "bias": 202.18,
+          "mae": 2145.51,
+          "mape_pct": 2.824,
+          "rmse": 2723.23,
+          "bias": 200.0,
           "n": 56
         },
         {
           "horizon_h": 7,
-          "mae": 2319.66,
-          "mape_pct": 3.015,
-          "rmse": 3153.58,
-          "bias": 657.43,
+          "mae": 2371.67,
+          "mape_pct": 3.0732,
+          "rmse": 3195.17,
+          "bias": 755.42,
           "n": 56
         },
         {
           "horizon_h": 8,
-          "mae": 2228.05,
-          "mape_pct": 2.6671,
-          "rmse": 2900.25,
-          "bias": 843.45,
+          "mae": 2246.98,
+          "mape_pct": 2.6772,
+          "rmse": 2804.8,
+          "bias": 540.95,
           "n": 56
         },
         {
           "horizon_h": 9,
-          "mae": 2302.22,
-          "mape_pct": 2.6237,
-          "rmse": 2964.29,
-          "bias": 899.46,
+          "mae": 2303.14,
+          "mape_pct": 2.626,
+          "rmse": 2985.17,
+          "bias": 654.9,
           "n": 56
         },
         {
           "horizon_h": 10,
-          "mae": 2391.4,
-          "mape_pct": 2.5395,
-          "rmse": 2952.13,
-          "bias": 518.4,
+          "mae": 2299.84,
+          "mape_pct": 2.4492,
+          "rmse": 2904.23,
+          "bias": 626.06,
           "n": 56
         },
         {
           "horizon_h": 11,
-          "mae": 2383.56,
-          "mape_pct": 2.3666,
-          "rmse": 2978.54,
-          "bias": 230.31,
+          "mae": 2440.9,
+          "mape_pct": 2.4289,
+          "rmse": 2969.03,
+          "bias": 317.57,
           "n": 56
         },
         {
           "horizon_h": 12,
-          "mae": 2580.55,
-          "mape_pct": 2.4464,
-          "rmse": 3019.57,
-          "bias": 48.4,
+          "mae": 2611.36,
+          "mape_pct": 2.4852,
+          "rmse": 3197.9,
+          "bias": 111.83,
           "n": 56
         },
         {
           "horizon_h": 13,
-          "mae": 2194.96,
-          "mape_pct": 1.9991,
-          "rmse": 2743.91,
-          "bias": 0.18,
+          "mae": 2229.91,
+          "mape_pct": 2.033,
+          "rmse": 2728.73,
+          "bias": -149.88,
           "n": 56
         },
         {
           "horizon_h": 14,
-          "mae": 2259.24,
-          "mape_pct": 1.9821,
-          "rmse": 2773.02,
-          "bias": -93.73,
+          "mae": 2137.63,
+          "mape_pct": 1.877,
+          "rmse": 2684.42,
+          "bias": 42.25,
           "n": 56
         },
         {
           "horizon_h": 15,
-          "mae": 1745.18,
-          "mape_pct": 1.4984,
-          "rmse": 2138.12,
-          "bias": -52.06,
+          "mae": 1709.93,
+          "mape_pct": 1.4677,
+          "rmse": 2070.63,
+          "bias": 52.95,
           "n": 56
         },
         {
           "horizon_h": 16,
-          "mae": 1992.34,
-          "mape_pct": 1.6973,
-          "rmse": 2373.67,
-          "bias": -529.39,
+          "mae": 2107.24,
+          "mape_pct": 1.7915,
+          "rmse": 2458.52,
+          "bias": -561.57,
           "n": 56
         },
         {
           "horizon_h": 17,
-          "mae": 1874.37,
-          "mape_pct": 1.5749,
-          "rmse": 2486.36,
-          "bias": -460.89,
+          "mae": 1942.66,
+          "mape_pct": 1.6371,
+          "rmse": 2506.63,
+          "bias": -551.06,
           "n": 56
         },
         {
           "horizon_h": 18,
-          "mae": 2103.08,
-          "mape_pct": 1.7766,
-          "rmse": 2485.63,
-          "bias": -594.19,
+          "mae": 2192.24,
+          "mape_pct": 1.8522,
+          "rmse": 2545.8,
+          "bias": -498.3,
           "n": 56
         },
         {
           "horizon_h": 19,
-          "mae": 2047.24,
-          "mape_pct": 1.7802,
-          "rmse": 2535.77,
-          "bias": 3.91,
+          "mae": 2117.54,
+          "mape_pct": 1.8426,
+          "rmse": 2591.69,
+          "bias": 17.43,
           "n": 56
         },
         {
           "horizon_h": 20,
-          "mae": 2102.47,
-          "mape_pct": 1.8943,
-          "rmse": 2599.1,
-          "bias": -428.37,
+          "mae": 1985.26,
+          "mape_pct": 1.7811,
+          "rmse": 2479.54,
+          "bias": -380.7,
           "n": 56
         },
         {
           "horizon_h": 21,
-          "mae": 2022.27,
-          "mape_pct": 1.9825,
-          "rmse": 2544.7,
-          "bias": -39.47,
+          "mae": 1875.09,
+          "mape_pct": 1.8342,
+          "rmse": 2378.02,
+          "bias": 28.4,
           "n": 56
         },
         {
           "horizon_h": 22,
-          "mae": 2198.58,
-          "mape_pct": 2.3647,
-          "rmse": 2872.63,
-          "bias": 441.69,
+          "mae": 2252.46,
+          "mape_pct": 2.4159,
+          "rmse": 2845.57,
+          "bias": 409.67,
           "n": 56
         },
         {
           "horizon_h": 23,
-          "mae": 2282.84,
-          "mape_pct": 2.5974,
-          "rmse": 2862.76,
-          "bias": 422.52,
+          "mae": 2343.02,
+          "mape_pct": 2.6658,
+          "rmse": 2883.5,
+          "bias": 363.74,
           "n": 56
         },
         {
           "horizon_h": 24,
-          "mae": 2601.88,
-          "mape_pct": 3.191,
-          "rmse": 3245.81,
-          "bias": 310.93,
+          "mae": 2691.49,
+          "mape_pct": 3.296,
+          "rmse": 3323.58,
+          "bias": 139.13,
           "n": 56
         }
       ]
     },
     "comparison": {
-      "mae_delta": -378.15,
-      "mae_delta_pct": -14.78,
-      "mape_delta_pct_points": -0.3903,
-      "horizons_won": 23,
+      "mae_delta": -365.27,
+      "mae_delta_pct": -14.27,
+      "mape_delta_pct_points": -0.3758,
+      "horizons_won": 24,
       "horizons_total": 24,
       "by_horizon": [
         {
           "horizon_h": 1,
           "baseline_mae": 2621.28,
-          "model_mae": 2055.82,
-          "mae_delta": -565.45,
-          "mae_delta_pct": -21.57
+          "model_mae": 2069.97,
+          "mae_delta": -551.31,
+          "mae_delta_pct": -21.03
         },
         {
           "horizon_h": 2,
           "baseline_mae": 2931.56,
-          "model_mae": 2375.19,
-          "mae_delta": -556.37,
-          "mae_delta_pct": -18.98
+          "model_mae": 2280.3,
+          "mae_delta": -651.26,
+          "mae_delta_pct": -22.22
         },
         {
           "horizon_h": 3,
           "baseline_mae": 2310.18,
-          "model_mae": 2097.49,
-          "mae_delta": -212.69,
-          "mae_delta_pct": -9.21
+          "model_mae": 2077.74,
+          "mae_delta": -232.44,
+          "mae_delta_pct": -10.06
         },
         {
           "horizon_h": 4,
           "baseline_mae": 2532.93,
-          "model_mae": 2132.44,
-          "mae_delta": -400.49,
-          "mae_delta_pct": -15.81
+          "model_mae": 2219.85,
+          "mae_delta": -313.09,
+          "mae_delta_pct": -12.36
         },
         {
           "horizon_h": 5,
           "baseline_mae": 2203.59,
-          "model_mae": 1936.99,
-          "mae_delta": -266.61,
-          "mae_delta_pct": -12.1
+          "model_mae": 2002.73,
+          "mae_delta": -200.86,
+          "mae_delta_pct": -9.12
         },
         {
           "horizon_h": 6,
           "baseline_mae": 2490.89,
-          "model_mae": 2117.62,
-          "mae_delta": -373.27,
-          "mae_delta_pct": -14.99
+          "model_mae": 2145.51,
+          "mae_delta": -345.38,
+          "mae_delta_pct": -13.87
         },
         {
           "horizon_h": 7,
           "baseline_mae": 2904.18,
-          "model_mae": 2319.66,
-          "mae_delta": -584.52,
-          "mae_delta_pct": -20.13
+          "model_mae": 2371.67,
+          "mae_delta": -532.51,
+          "mae_delta_pct": -18.34
         },
         {
           "horizon_h": 8,
           "baseline_mae": 2511.95,
-          "model_mae": 2228.05,
-          "mae_delta": -283.9,
-          "mae_delta_pct": -11.3
+          "model_mae": 2246.98,
+          "mae_delta": -264.97,
+          "mae_delta_pct": -10.55
         },
         {
           "horizon_h": 9,
           "baseline_mae": 2647.94,
-          "model_mae": 2302.22,
-          "mae_delta": -345.72,
-          "mae_delta_pct": -13.06
+          "model_mae": 2303.14,
+          "mae_delta": -344.79,
+          "mae_delta_pct": -13.02
         },
         {
           "horizon_h": 10,
           "baseline_mae": 2381.45,
-          "model_mae": 2391.4,
-          "mae_delta": 9.94,
-          "mae_delta_pct": 0.42
+          "model_mae": 2299.84,
+          "mae_delta": -81.61,
+          "mae_delta_pct": -3.43
         },
         {
           "horizon_h": 11,
           "baseline_mae": 3127.23,
-          "model_mae": 2383.56,
-          "mae_delta": -743.67,
-          "mae_delta_pct": -23.78
+          "model_mae": 2440.9,
+          "mae_delta": -686.33,
+          "mae_delta_pct": -21.95
         },
         {
           "horizon_h": 12,
           "baseline_mae": 2681.13,
-          "model_mae": 2580.55,
-          "mae_delta": -100.58,
-          "mae_delta_pct": -3.75
+          "model_mae": 2611.36,
+          "mae_delta": -69.77,
+          "mae_delta_pct": -2.6
         },
         {
           "horizon_h": 13,
           "baseline_mae": 2375.34,
-          "model_mae": 2194.96,
-          "mae_delta": -180.38,
-          "mae_delta_pct": -7.59
+          "model_mae": 2229.91,
+          "mae_delta": -145.43,
+          "mae_delta_pct": -6.12
         },
         {
           "horizon_h": 14,
           "baseline_mae": 2633.38,
-          "model_mae": 2259.24,
-          "mae_delta": -374.14,
-          "mae_delta_pct": -14.21
+          "model_mae": 2137.63,
+          "mae_delta": -495.75,
+          "mae_delta_pct": -18.83
         },
         {
           "horizon_h": 15,
           "baseline_mae": 1927.67,
-          "model_mae": 1745.18,
-          "mae_delta": -182.49,
-          "mae_delta_pct": -9.47
+          "model_mae": 1709.93,
+          "mae_delta": -217.74,
+          "mae_delta_pct": -11.3
         },
         {
           "horizon_h": 16,
           "baseline_mae": 2473.87,
-          "model_mae": 1992.34,
-          "mae_delta": -481.53,
-          "mae_delta_pct": -19.46
+          "model_mae": 2107.24,
+          "mae_delta": -366.64,
+          "mae_delta_pct": -14.82
         },
         {
           "horizon_h": 17,
           "baseline_mae": 2643.0,
-          "model_mae": 1874.37,
-          "mae_delta": -768.63,
-          "mae_delta_pct": -29.08
+          "model_mae": 1942.66,
+          "mae_delta": -700.33,
+          "mae_delta_pct": -26.5
         },
         {
           "horizon_h": 18,
           "baseline_mae": 2905.54,
-          "model_mae": 2103.08,
-          "mae_delta": -802.46,
-          "mae_delta_pct": -27.62
+          "model_mae": 2192.24,
+          "mae_delta": -713.31,
+          "mae_delta_pct": -24.55
         },
         {
           "horizon_h": 19,
           "baseline_mae": 2576.23,
-          "model_mae": 2047.24,
-          "mae_delta": -528.99,
-          "mae_delta_pct": -20.53
+          "model_mae": 2117.54,
+          "mae_delta": -458.69,
+          "mae_delta_pct": -17.8
         },
         {
           "horizon_h": 20,
           "baseline_mae": 2356.53,
-          "model_mae": 2102.47,
-          "mae_delta": -254.07,
-          "mae_delta_pct": -10.78
+          "model_mae": 1985.26,
+          "mae_delta": -371.27,
+          "mae_delta_pct": -15.76
         },
         {
           "horizon_h": 21,
           "baseline_mae": 2376.3,
-          "model_mae": 2022.27,
-          "mae_delta": -354.03,
-          "mae_delta_pct": -14.9
+          "model_mae": 1875.09,
+          "mae_delta": -501.22,
+          "mae_delta_pct": -21.09
         },
         {
           "horizon_h": 22,
           "baseline_mae": 2336.86,
-          "model_mae": 2198.58,
-          "mae_delta": -138.28,
-          "mae_delta_pct": -5.92
+          "model_mae": 2252.46,
+          "mae_delta": -84.4,
+          "mae_delta_pct": -3.61
         },
         {
           "horizon_h": 23,
           "baseline_mae": 2627.63,
-          "model_mae": 2282.84,
-          "mae_delta": -344.79,
-          "mae_delta_pct": -13.12
+          "model_mae": 2343.02,
+          "mae_delta": -284.62,
+          "mae_delta_pct": -10.83
         },
         {
           "horizon_h": 24,
           "baseline_mae": 2844.37,
-          "model_mae": 2601.88,
-          "mae_delta": -242.49,
-          "mae_delta_pct": -8.53
+          "model_mae": 2691.49,
+          "mae_delta": -152.88,
+          "mae_delta_pct": -5.37
         }
       ]
+    }
+  },
+  "ablation": {
+    "forecast_weather": {
+      "measured": true,
+      "removed": [
+        "fcst_temperature_c",
+        "fcst_humidity_pct",
+        "fcst_dewpoint_c",
+        "fcst_wind_kmh",
+        "fcst_cloud_pct",
+        "fcst_temperature_spread_c"
+      ],
+      "protocol": "identical folds, horizons and hyperparameters; only the columns differ",
+      "mae_without_forecast_weather": 2181.06,
+      "mae_with_forecast_weather": 2193.94,
+      "mae_delta": 12.88,
+      "mae_delta_pct": 0.59,
+      "helped": false,
+      "warning": "MEANINGLESS ON THE FIXTURE. The synthetic temperature is a smooth seasonal and diurnal curve plus a slow random walk, so its value at the target hour is almost perfectly implied by the calendar and the last observation. A forecast carrying realistic 1.5 C error is therefore *worse* than persistence here, and this ablation will say so. Real weather is nothing like that predictable; only a run on real demand answers this question."
     }
   },
   "feature_importance_gain_pct": [
     {
       "feature": "demand_lag_168h",
-      "gain_pct": 39.21
+      "gain_pct": 36.93
     },
     {
       "feature": "demand_same_hour_of_week_mean_4w",
-      "gain_pct": 19.95
+      "gain_pct": 13.89
     },
     {
       "feature": "demand_lag_48h",
-      "gain_pct": 6.81
+      "gain_pct": 5.38
     },
     {
       "feature": "demand_lag_336h",
-      "gain_pct": 6.52
+      "gain_pct": 4.29
     },
     {
       "feature": "demand_lag_24h",
-      "gain_pct": 6.32
+      "gain_pct": 3.97
     },
     {
-      "feature": "temp_lag_168h",
-      "gain_pct": 4.69
+      "feature": "temp_fcst_target_minus_lag_168h",
+      "gain_pct": 3.91
     },
     {
       "feature": "hour",
-      "gain_pct": 3.89
+      "gain_pct": 3.84
     },
     {
-      "feature": "demand_roll_mean_168h",
-      "gain_pct": 2.97
+      "feature": "wind_fcst_target",
+      "gain_pct": 3.61
     },
     {
-      "feature": "temp_roll_mean_24h",
-      "gain_pct": 2.36
+      "feature": "cloud_fcst_target",
+      "gain_pct": 3.25
     },
     {
-      "feature": "dayofweek",
-      "gain_pct": 1.57
+      "feature": "temp_fcst_spread_target",
+      "gain_pct": 3.18
     },
     {
-      "feature": "demand_roll_max_24h",
-      "gain_pct": 1.28
+      "feature": "dewpoint_fcst_target",
+      "gain_pct": 2.58
     },
     {
-      "feature": "demand_roll_min_24h",
-      "gain_pct": 1.21
+      "feature": "humidity_fcst_target",
+      "gain_pct": 2.47
     }
   ],
   "registry": {
     "backend": "sqlite:///mlflow.db (local, gitignored)",
     "experiment": "energy-demand-forecast",
-    "run_id": "080189369e3f451da51bd5884de2731b",
+    "run_id": "90f6150fdf4441d396897caef4e1ff90",
     "registered_model": "energy-demand-forecaster",
-    "version": "4",
+    "version": "1",
     "alias": "champion",
     "uri": "models:/energy-demand-forecaster@champion",
     "beats_baseline": true,

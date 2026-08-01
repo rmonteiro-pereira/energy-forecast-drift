@@ -68,6 +68,14 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         action="store_true",
         help="skip tracking and the registry; just score and write the artifact",
     )
+    p.add_argument(
+        "--skip-ablation",
+        action="store_true",
+        help=(
+            "do not re-score without the forecast-weather features. "
+            "Halves the runtime and gives up knowing what they are worth."
+        ),
+    )
     p.add_argument("--experiment", default=tracking.EXPERIMENT_NAME)
     p.add_argument("--verbose", "-v", action="store_true")
     return p.parse_args(argv)
@@ -107,6 +115,83 @@ def compare(
     }
 
 
+def ablate_forecast_weather(
+    panel: pd.DataFrame,
+    series: pd.Series,
+    run_kwargs: dict,
+    args: argparse.Namespace,
+) -> backtest.BacktestResult | None:
+    """Re-score the identical protocol with the forecast-weather columns removed.
+
+    Adding features and asserting they helped is not a measurement. This runs
+    the same walk-forward backtest, the same folds, the same horizons, on a
+    panel with the `fcst_` columns dropped — so the design matrix keeps its
+    shape and those features simply arrive as NaN, which LightGBM handles
+    natively. The difference between the two MAEs is what forward-looking
+    weather is actually worth on this data.
+
+    Returns `None` when there is nothing to ablate: on a lake whose forecast leg
+    has never run, the columns are absent and both halves would be the same
+    number, which would read as "the features are worthless" rather than "the
+    features were never there".
+    """
+    present = [c for c in panel_mod.FORECAST_PANEL_COLUMNS if c in panel.columns]
+    if not present:
+        return None
+
+    log.info("Ablation: re-scoring without the %d forecast-weather columns ...", len(present))
+    stripped = panel.drop(columns=present)
+    model = lgbm.WalkForwardLightGBM(
+        panel=stripped,
+        horizons=run_kwargs["horizons"],
+        num_boost_round=args.num_boost_round,
+        train_stride_hours=args.train_stride_hours,
+    )
+    return backtest.run(series, model, **run_kwargs)
+
+
+FIXTURE_ABLATION_WARNING = (
+    "MEANINGLESS ON THE FIXTURE. The synthetic temperature is a smooth seasonal "
+    "and diurnal curve plus a slow random walk, so its value at the target hour "
+    "is almost perfectly implied by the calendar and the last observation. A "
+    "forecast carrying realistic 1.5 C error is therefore *worse* than "
+    "persistence here, and this ablation will say so. Real weather is nothing "
+    "like that predictable; only a run on real demand answers this question."
+)
+
+
+def ablation_record(
+    with_forecast: backtest.BacktestResult,
+    without_forecast: backtest.BacktestResult | None,
+    is_real: bool = True,
+) -> dict:
+    """What the forward-looking weather bought, in MWh, or why it was not measured."""
+    if without_forecast is None:
+        return {
+            "measured": False,
+            "reason": (
+                "the archived-forecast leg has never run against this lake, so there "
+                "were no forecast columns to remove"
+            ),
+        }
+
+    with_mae = float(with_forecast.overall["mae"])
+    without_mae = float(without_forecast.overall["mae"])
+    return {
+        "measured": True,
+        "removed": list(panel_mod.FORECAST_PANEL_COLUMNS),
+        "protocol": "identical folds, horizons and hyperparameters; only the columns differ",
+        "mae_without_forecast_weather": round(without_mae, 2),
+        "mae_with_forecast_weather": round(with_mae, 2),
+        "mae_delta": round(with_mae - without_mae, 2),
+        "mae_delta_pct": round(100.0 * (with_mae - without_mae) / without_mae, 2),
+        # Stated rather than inferred by the reader: a positive delta means the
+        # features made the forecast worse, and that is a publishable outcome.
+        "helped": with_mae < without_mae,
+        "warning": None if is_real else FIXTURE_ABLATION_WARNING,
+    }
+
+
 def _by_horizon_records(result: backtest.BacktestResult) -> list[dict]:
     return [
         {
@@ -134,6 +219,7 @@ def build_artifact(
     model: lgbm.WalkForwardLightGBM,
     registry: dict,
     importances: list[dict],
+    ablation: dict | None = None,
 ) -> dict:
     comparison = compare(base, challenger)
     return {
@@ -190,6 +276,9 @@ def build_artifact(
             },
             "comparison": comparison,
         },
+        "ablation": {"forecast_weather": ablation}
+        if ablation is not None
+        else {"forecast_weather": {"measured": False, "reason": "--skip-ablation"}},
         "feature_importance_gain_pct": importances,
         "registry": registry,
     }
@@ -343,8 +432,16 @@ def main(argv: list[str] | None = None) -> int:
     else:
         registry, importances = _track(args, panel, provenance, base, challenger, model)
 
+    ablation = None
+    if not args.skip_ablation:
+        ablation = ablation_record(
+            challenger,
+            ablate_forecast_weather(panel, series, run_kwargs, args),
+            is_real=provenance["is_real"],
+        )
+
     artifact = build_artifact(
-        args, panel, provenance, base, challenger, model, registry, importances
+        args, panel, provenance, base, challenger, model, registry, importances, ablation
     )
 
     out_dir: Path = args.out_dir
@@ -379,6 +476,20 @@ def _report(artifact: dict, provenance: dict) -> None:
         f"({comparison['mae_delta_pct']:+.2f}%), "
         f"LightGBM wins {comparison['horizons_won']}/{comparison['horizons_total']} horizons"
     )
+
+    ablation = artifact["metrics"].get("ablation") or artifact.get("ablation", {})
+    record = ablation.get("forecast_weather", {}) if isinstance(ablation, dict) else {}
+    if record.get("measured"):
+        verdict = "helped" if record["helped"] else "HURT"
+        print(
+            f"forecast weather    {record['mae_delta']:>+10,.0f} MWh   "
+            f"({record['mae_delta_pct']:+.2f}%) — {verdict}; "
+            f"without it MAE {record['mae_without_forecast_weather']:,.0f}"
+        )
+        if record.get("warning"):
+            print(f"                    {record['warning']}")
+    elif record.get("reason"):
+        print(f"forecast weather    not measured: {record['reason']}")
     if not provenance["is_real"]:
         print()
         print("!!! THIS DELTA IS FIXTURE-DERIVED, NOT A RESULT.")

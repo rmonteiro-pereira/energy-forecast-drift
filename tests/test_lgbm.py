@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from types import SimpleNamespace
 
 import pandas as pd
 import pytest
@@ -171,3 +172,75 @@ def test_mlflow_run_state_is_gitignored():
     assert "mlruns/" in ignored
     assert "*.db" in ignored
     assert tracking.MLFLOW_DB.name.endswith(".db")
+
+
+# ---------------------------------------------------------------------------
+# ablation — what the forward-looking weather is actually worth
+# ---------------------------------------------------------------------------
+def _dummy_result(mae: float):
+    """`ablation_record` reads one number; a full backtest would only hide that."""
+    return SimpleNamespace(overall={"mae": mae})
+
+
+def test_an_absent_forecast_leg_is_reported_as_unmeasured_not_as_worthless():
+    """Zero delta and no data are different answers, and must not look alike.
+
+    On a lake whose archived-forecast leg has never run, there are no `fcst_`
+    columns to remove, so both halves of the ablation would score identically.
+    Publishing that as `mae_delta: 0` would read as "forward-looking weather
+    does nothing", which is a claim the run never tested.
+    """
+    record = train.ablation_record(_dummy_result(mae=100.0), None)
+
+    assert record["measured"] is False
+    assert "never run" in record["reason"]
+    assert "mae_delta" not in record
+
+
+def test_the_ablation_states_plainly_when_the_features_made_things_worse():
+    """A negative result is a result; it must not need arithmetic to notice."""
+    hurt = train.ablation_record(_dummy_result(mae=120.0), _dummy_result(mae=100.0))
+    assert hurt["measured"] is True
+    assert hurt["helped"] is False
+    assert hurt["mae_delta"] == pytest.approx(20.0)
+    assert hurt["mae_delta_pct"] == pytest.approx(20.0)
+
+    helped = train.ablation_record(_dummy_result(mae=80.0), _dummy_result(mae=100.0))
+    assert helped["helped"] is True
+    assert helped["mae_delta"] == pytest.approx(-20.0)
+
+
+def test_a_fixture_ablation_says_so_instead_of_passing_as_evidence():
+    """The fixture answers this question wrong, and has to admit it.
+
+    Synthetic temperature is nearly implied by the calendar, so a forecast with
+    realistic error loses to persistence and the ablation reports a *negative*
+    result. Published bare, that reads as "forward-looking weather is useless",
+    which the run never tested.
+    """
+    synthetic = train.ablation_record(
+        _dummy_result(mae=120.0), _dummy_result(mae=100.0), is_real=False
+    )
+    real = train.ablation_record(_dummy_result(mae=120.0), _dummy_result(mae=100.0), is_real=True)
+
+    assert synthetic["warning"] == train.FIXTURE_ABLATION_WARNING
+    assert "only a run on real demand" in synthetic["warning"]
+    assert real["warning"] is None
+
+
+def test_the_ablation_removes_every_forecast_column_and_nothing_else(panel):
+    """The measured delta is only honest if the two panels differ in one thing."""
+    forecast = fixtures.synthetic_forecast(
+        pd.DataFrame({"temperature_c": panel[panel_mod.TEMPERATURE_COLUMN]}, index=panel.index)
+    )
+    with_forecast = panel_mod.build_panel(
+        panel[panel_mod.DEMAND_COLUMN], panel[panel_mod.TEMPERATURE_COLUMN], forecast
+    )
+
+    removed = [c for c in panel_mod.FORECAST_PANEL_COLUMNS if c in with_forecast.columns]
+    stripped = with_forecast.drop(columns=removed)
+
+    assert set(removed) == set(panel_mod.FORECAST_PANEL_COLUMNS)
+    assert set(with_forecast.columns) - set(stripped.columns) == set(removed)
+    assert panel_mod.DEMAND_COLUMN in stripped.columns
+    assert panel_mod.TEMPERATURE_COLUMN in stripped.columns

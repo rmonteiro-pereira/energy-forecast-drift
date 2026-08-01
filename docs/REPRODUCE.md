@@ -222,6 +222,17 @@ These figures are identical, digit for digit, to the ones committed two days
 earlier — `2,559 / 2,181 / −378 / −14.78% / 23 of 24`. Re-running the whole chain
 produced this diff and nothing else:
 
+> **Superseded on 2026-08-01 — the transcript above is a dated record and stays
+> as it was, but re-running `models.train` today does not print those numbers.**
+> Seven forecast-weather features were added, so the LightGBM line moved to
+> `2,194 MWh / 2.40% / −365 / −14.27% / 24 of 24`. The baseline is untouched at
+> `2,559`, which is the expected signature of a change that only touches
+> features. The old number is not lost: `models.train` now re-scores without the
+> forecast columns and publishes it under `ablation` in `metrics/model.json`,
+> where it comes back as **2,181.06** — the previously committed value to the
+> cent. See the README's M2 section for why the fixture reports these features as
+> harmful and why that says nothing about real weather.
+
 ```console
 $ git diff --stat metrics/
  metrics/drift.json       | 10 +++++-----
