@@ -240,3 +240,27 @@ def test_with_no_champion_the_panel_decides_alone(tmp_path):
     pipeline.provenance = {"is_real": True, "kind": "eia_api_v2"}
     pipeline.champion = None
     assert pipeline.is_real is True
+
+
+# ---------------------------------------------------------------------------
+# the two CLIs that name ingestion legs
+# ---------------------------------------------------------------------------
+def test_the_daily_job_can_ask_for_every_leg_ingestion_offers():
+    """A leg the daily job cannot name is a leg the cron can never pull alone.
+
+    `pipeline.daily` forwards `--ingest-source` verbatim to `python -m ingest`.
+    When the archived-forecast leg was added, the two argument lists were
+    separate literals — so ingestion grew a leg and the daily job silently could
+    not select it. Both now read the same tuple; this asserts they still do.
+    """
+    from ingest.__main__ import _parse_args as ingest_parse
+    from ingest.config import INGEST_LEGS
+
+    assert "weather_forecast" in INGEST_LEGS
+
+    for leg in INGEST_LEGS:
+        assert ingest_parse(["--source", leg]).source == leg
+        assert daily._parse_args(["--ingest-source", leg]).ingest_source == leg
+
+    with pytest.raises(SystemExit):
+        daily._parse_args(["--ingest-source", "not_a_leg"])

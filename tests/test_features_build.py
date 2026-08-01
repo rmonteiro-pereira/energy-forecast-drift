@@ -164,6 +164,105 @@ def test_the_schema_is_stable_when_the_weather_leg_is_missing(panel, origin):
     assert design["demand_lag_168h"].notna().all()
 
 
+# --------------------------------------------------------------------------
+# Forecast weather at the target hour
+#
+# These features are the one exception to "read nothing at or after the
+# origin", and the exception is only sound because the value was *published*
+# before the origin. Everything below exists to keep that true.
+# --------------------------------------------------------------------------
+
+
+@pytest.fixture(scope="module")
+def forecast_panel() -> pd.DataFrame:
+    frame = fixtures.synthetic_series(days=60)
+    return panel_mod.build_panel(
+        frame["demand_mwh"], frame["temperature_c"], fixtures.synthetic_forecast(frame)
+    )
+
+
+def _origin_at_hour(panel: pd.DataFrame, hour: int) -> pd.Timestamp:
+    room = panel.index < panel.index.max() - pd.Timedelta(days=3)
+    return panel.index[(panel.index.hour == hour) & room][-1]
+
+
+def test_the_forecast_feature_reads_the_forecast_and_not_what_happened(forecast_panel):
+    """The leak test the observed features pass, applied to the forecast ones.
+
+    Poison every *observation* from the origin onwards. A feature that quietly
+    used the actual temperature at the target hour — a perfect forecast — would
+    have to move. None may. Then poison the forecast itself, which must move:
+    a column wired to nothing would pass the first half trivially.
+    """
+    origin = _origin_at_hour(forecast_panel, 18)
+    columns = list(build_mod.FEATURE_COLUMNS)
+    clean = build_mod.build_design_matrix(forecast_panel, pd.DatetimeIndex([origin]), HORIZONS)
+
+    observed = forecast_panel.copy()
+    observed.loc[observed.index >= origin, ["demand_mwh", "temperature_c"]] = 1e9
+    unmoved = build_mod.build_design_matrix(observed, pd.DatetimeIndex([origin]), HORIZONS)
+    pd.testing.assert_frame_equal(clean[columns], unmoved[columns])
+
+    predicted = forecast_panel.copy()
+    predicted.loc[predicted.index >= origin, panel_mod.FORECAST_TEMPERATURE_COLUMN] = 1e9
+    moved = build_mod.build_design_matrix(predicted, pd.DatetimeIndex([origin]), HORIZONS)
+    assert (moved["temp_fcst_target"] == 1e9).any(), "the forecast column is not wired to anything"
+
+
+def test_a_forecast_the_origin_could_not_have_seen_yet_is_blanked(forecast_panel):
+    """At 06:00 the run covering tomorrow does not exist yet; at 18:00 it does.
+
+    `FORECAST_PUBLISHED_HOUR_UTC` is midday, so an origin earlier than that
+    cannot have the next day's forecast — and every horizon that crosses
+    midnight has to come back empty.
+    """
+    early = _origin_at_hour(forecast_panel, 6)
+    design = build_mod.build_design_matrix(forecast_panel, pd.DatetimeIndex([early]), HORIZONS)
+    crosses_midnight = design["target_utc"].dt.date > early.date()
+
+    assert crosses_midnight.any() and (~crosses_midnight).any(), (
+        "the case under test is not covered"
+    )
+    assert design.loc[crosses_midnight, "temp_fcst_target"].isna().all()
+    assert design.loc[~crosses_midnight, "temp_fcst_target"].notna().all()
+
+    late = _origin_at_hour(forecast_panel, 18)
+    after_publication = build_mod.build_design_matrix(
+        forecast_panel, pd.DatetimeIndex([late]), HORIZONS
+    )
+    assert after_publication["temp_fcst_target"].notna().all()
+
+
+def test_every_forecast_feature_obeys_the_same_mask(forecast_panel):
+    """One mask, applied once — not six chances to get it individually wrong."""
+    early = _origin_at_hour(forecast_panel, 6)
+    design = build_mod.build_design_matrix(forecast_panel, pd.DatetimeIndex([early]), HORIZONS)
+
+    reference = design["temp_fcst_target"].isna()
+    for feature in build_mod.FORECAST_FEATURES:
+        assert design[feature].isna().equals(reference), f"{feature} is masked differently"
+
+
+def test_the_publication_instant_is_the_day_before_not_the_hour_before(forecast_panel):
+    """A run covers a whole day, so the gate is per target *day*, not per hour."""
+    targets = pd.DatetimeIndex(
+        ["2026-06-10T00:00", "2026-06-10T13:00", "2026-06-10T23:00"], tz="UTC"
+    )
+    published = build_mod.forecast_published_at(targets)
+
+    assert published.nunique() == 1
+    assert published[0] == pd.Timestamp("2026-06-09T12:00", tz="UTC")
+
+
+def test_the_schema_is_stable_when_the_forecast_leg_has_never_run(panel, origin):
+    """An older lake has no forecast dataset; the design matrix must not shrink."""
+    design = build_mod.build_design_matrix(panel, pd.DatetimeIndex([origin]), HORIZONS)
+
+    assert list(design.columns) == list(build_mod.DESIGN_COLUMNS)
+    for feature in build_mod.FORECAST_FEATURES:
+        assert design[feature].isna().all()
+
+
 def test_the_design_matrix_has_no_duplicated_columns(panel, origin):
     """`horizon_h` is both a key and a feature — it must appear exactly once."""
     design = build_mod.build_design_matrix(panel, pd.DatetimeIndex([origin]), HORIZONS)

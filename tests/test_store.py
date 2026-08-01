@@ -80,6 +80,25 @@ def test_last_timestamp_drives_the_delta_window(dataset):
     assert store.last_timestamp(dataset) == pd.Timestamp("2026-01-02 23:00", tz="UTC")
 
 
+def test_the_delta_window_is_per_site_not_per_dataset(dataset):
+    """Adding a tenth city must backfill it, not skip it.
+
+    `last_timestamp` without a filter reports the newest hour in the whole
+    dataset. On a multi-site table that is whichever city is furthest ahead —
+    so a site added later would be handed a delta window starting yesterday and
+    would never pull its own two years of history. The gap would be invisible:
+    ingestion reports success, and the blend just quietly renormalises the new
+    city out of every hour before it was added.
+    """
+    store.write_incremental(dataset, frame("2026-01-01", 48, site="philadelphia_pa"))
+
+    assert store.last_timestamp(dataset) == pd.Timestamp("2026-01-02 23:00", tz="UTC")
+    assert store.last_timestamp(dataset, ("site", "philadelphia_pa")) == pd.Timestamp(
+        "2026-01-02 23:00", tz="UTC"
+    )
+    assert store.last_timestamp(dataset, ("site", "chicago_il")) is None
+
+
 def test_empty_payload_leaves_the_lake_untouched(dataset):
     store.write_incremental(dataset, frame("2026-01-01", 24))
     report = store.write_incremental(dataset, pd.DataFrame())

@@ -102,3 +102,53 @@ def synthetic_series(
     """`days` of history ending at `end` (default: the fixed `ANCHOR_END`)."""
     end = (end or ANCHOR_END).floor("h")
     return synthetic_demand(end - pd.Timedelta(days=days), end, seed=seed)
+
+
+# A day-ahead forecast is wrong by about this much. Measured, not guessed:
+# Open-Meteo's day-before run differs from its own reanalysis by ~1.5 °C MAE
+# over Philadelphia and Chicago. The fixture reproduces that error so the
+# synthetic path exercises the same feature set as the real one — including the
+# fact that forecast temperature is *not* the temperature.
+FORECAST_ERROR_SD_C = 1.5
+
+
+def synthetic_forecast(frame: pd.DataFrame, seed: int = SEED) -> pd.DataFrame:
+    """A plausible archived day-ahead forecast for a synthetic history.
+
+    Same disclaimer as everything else in this module: not data. It exists so
+    `--source synthetic` produces the full design matrix instead of a truncated
+    one, which is what keeps the schema testable while the real lake fills.
+    """
+    if not isinstance(frame.index, pd.DatetimeIndex):
+        raise TypeError(
+            f"synthetic_forecast() needs the hourly frame from synthetic_series(), "
+            f"got an index of type {type(frame.index).__name__}."
+        )
+    index: pd.DatetimeIndex = frame.index
+    rng = np.random.default_rng(seed + 1)
+    truth = frame["temperature_c"].to_numpy(dtype="float64")
+
+    error = rng.normal(0.0, FORECAST_ERROR_SD_C, size=len(index))
+    forecast = truth + error
+
+    hour = index.hour.to_numpy()
+    return pd.DataFrame(
+        {
+            "fcst_temperature_c": forecast.round(2),
+            # Anti-correlated with temperature, as humidity broadly is.
+            "fcst_humidity_pct": np.clip(
+                80.0 - 1.2 * (forecast - COMFORT_C) + rng.normal(0.0, 6.0, len(index)), 5.0, 100.0
+            ).round(1),
+            "fcst_dewpoint_c": (
+                forecast - np.clip(rng.normal(6.0, 2.5, len(index)), 0.5, None)
+            ).round(2),
+            "fcst_wind_kmh": np.clip(rng.gamma(2.0, 6.0, len(index)), 0.0, None).round(1),
+            "fcst_cloud_pct": np.clip(rng.beta(1.4, 1.4, len(index)) * 100.0, 0.0, 100.0).round(1),
+            # Sites disagree more in winter and at night; the shape matters more
+            # than the magnitude for a smoke test.
+            "fcst_temperature_spread_c": np.abs(
+                6.0 + 2.0 * np.cos(2 * np.pi * (hour - 6) / 24) + rng.normal(0.0, 1.0, len(index))
+            ).round(2),
+        },
+        index=index,
+    ).rename_axis("timestamp_utc")

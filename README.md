@@ -48,7 +48,7 @@ accumulates in public week after week and can be pointed at.
 
 | | Status | Notes |
 |---|---|---|
-| **The code** | ✅ real, complete, tested | 344 Python tests + 4 dashboard tests, no network. Every path below runs today, and [`docs/REPRODUCE.md`](docs/REPRODUCE.md) has the transcripts. The tests are themselves measured — see [mutation testing](docs/MUTATION-TESTING.md). |
+| **The code** | ✅ real, complete, tested | 363 Python tests + 4 dashboard tests, no network. Every path below runs today, and [`docs/REPRODUCE.md`](docs/REPRODUCE.md) has the transcripts. The tests are themselves measured — see [mutation testing](docs/MUTATION-TESTING.md). |
 | **Open-Meteo temperature** | ⚠️ **real, and it reaches the drift evaluation — but never the model** | No key needed, and the client genuinely runs. The whole of [`docs/DRIFT-EVALUATION.md`](docs/DRIFT-EVALUATION.md) is real Philadelphia ERA5 observations, and **those derived results are committed**; only the raw series is not (it is cached under gitignored `reports/`). What the temperature never reaches is the **model**: `models/data.py::resolve_panel` falls back to the fixture *as a whole* when the lake has no EIA demand, which is the permanent state today, so `models/fixtures.py` synthesises the temperature too and every number below is fixture temperature, not Open-Meteo. |
 | **EIA hourly demand** | ❌ **absent** | The client is finished and not stubbed. It has never been given a key. |
 | **The demand series used everywhere** | ❌ **seeded synthetic fixture** | `models/fixtures.py`, seed `20260728`. A plausible curve, not a measurement. |
@@ -162,7 +162,7 @@ uv run python -m drift.run --out metrics/drift.json   # M4: 4 drift types + retr
 uv run python -m pipeline.daily  # M5: the whole loop -> metrics/*.json + PNGs
 uv run python -m serving         # M5: FastAPI on :8000, /forecast from @champion
 
-uv run pytest -v               # 344 tests, no network
+uv run pytest -v               # 363 tests, no network
 
 cd dashboard && npm ci && npm test && npm run build   # M6: static dist/ over metrics/*.json
 ```
@@ -220,7 +220,7 @@ left unbolded so that nothing here reads as a headline.
 | 12 | 2,681 | 2.53 | 3,322 | -500 | 56 |
 | 18 | 2,906 | 2.46 | 3,397 | -520 | 56 |
 | 24 | 2,844 | 3.46 | 3,623 | -178 | 56 |
-| overall | 2,559 | 2.77 | 3,173 | -487 | 1,344 |
+| overall | 2,559 | 2.77 | 3,173 | -487 | 1,363 |
 
 *(fixture-derived — `metrics/baseline.json` carries `"is_real": false`)*
 
@@ -242,13 +242,34 @@ compound its own error the way recursion does, and a global fit sees 24× more
 rows than a per-horizon fit — which matters when the history is months, not
 years.
 
-**Features (20)** — the horizon itself; calendar (hour / day-of-week / month /
+**Features (27)** — the horizon itself; calendar (hour / day-of-week / month /
 weekend / US federal holiday); demand lags at 24 h, 48 h, 168 h and 336 h; the
 same-hour-of-week mean over four weeks; the last observed demand; **five** demand
-rollings — mean, std, min and max over 24 h, and mean over 168 h; and temperature
-in three shapes — the 168 h lag, the last observation, and the 24 h rolling mean.
+rollings — mean, std, min and max over 24 h, and mean over 168 h; observed
+temperature in three shapes — the 168 h lag, the last observation, and the 24 h
+rolling mean; and **seven forecast-weather features at the target hour** —
+temperature, its spread across the footprint, humidity, dew point, wind, cloud
+cover, and forecast temperature minus what it actually was a week earlier.
 The list is `features/build.py::FEATURE_COLUMNS`, and the count in the heading
 above is checked against it by `tests/test_doc_claims.py`.
+
+**Why forecast weather is allowed at the target hour.** Everything else on a row
+is a function of data strictly before the origin `O`. The forecast features are
+indexed at the target `T`, which looks like a leak and is not: they hold what the
+*forecast* said about `T`, published before `O` — not what the weather did. They
+come from Open-Meteo's archived day-before model run, kept in a dataset the ERA5
+reanalysis can never overwrite, so they carry genuine forecast error of about
+**1.5 °C** against the eventual observation. A row whose forecast had not been
+published yet at `O` is blanked, on the same rule that blanks a lag reaching into
+the origin. Using the *observed* temperature at `T` would have been a perfect
+forecast, and a backtest built on one is worthless.
+
+**Weather coverage.** PJM spans ~13 states; one thermometer in Philadelphia
+cannot see a heat wave sitting over Chicago, which is the largest load zone in
+the footprint. Weather is sampled at **nine metros** and blended by metro
+population — a public, checkable proxy for load share, not a PJM zonal figure.
+`fcst_temperature_spread_c` carries what the blend throws away: 18 °C everywhere,
+against 8 °C in Chicago and 28 °C in Richmond, are not the same load.
 
 **Refit cadence:** the model is **retrained at every one of the 56 fold
 cutoffs**, on exactly the rows whose target hour had already happened at that
@@ -643,7 +664,7 @@ metrics/    committed artifacts: baseline.json, model.json, drift.json,
             forecast.json, monitor.json, pipeline.json + tables + 2 PNGs
 dashboard/  Vite + React + ECharts over metrics/*.json — no deploy step here
             components.test.tsx  the banner tests (vitest)
-tests/      344 Python tests: idempotency, leakage (backtest *and* features),
+tests/      363 Python tests: idempotency, leakage (backtest *and* features),
             retries, secret redaction, registry wiring, PSI/KS vs scipy, drift
             injection, threshold boundaries, the daily chain, the HTTP surface,
             both workflow YAMLs, and the artifacts' own honesty contract

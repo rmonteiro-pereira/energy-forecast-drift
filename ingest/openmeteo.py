@@ -13,6 +13,13 @@ Two endpoints are stitched together, because neither covers the full range:
 Overlap between the two is deliberate: the store de-duplicates on
 ``(site, timestamp_utc)`` keeping the newest pull, so the archive value wins
 whenever it eventually becomes available.
+
+A third endpoint, **historical forecast** (`historical-forecast-api`), serves
+what the model *predicted* for a past hour rather than what happened. It feeds
+a separate dataset — see `fetch_weather_forecast` — because a day-ahead
+forecaster knows tomorrow's forecast, never tomorrow's weather, and mixing the
+two in one table would let the reanalysis overwrite the forecast and turn an
+honest feature into a perfect one.
 """
 
 from __future__ import annotations
@@ -28,6 +35,7 @@ from ingest.config import (
     OPEN_METEO_ARCHIVE_LAG_DAYS,
     OPEN_METEO_ARCHIVE_URL,
     OPEN_METEO_FORECAST_URL,
+    OPEN_METEO_HISTORICAL_FORECAST_URL,
     OPEN_METEO_MAX_PAST_DAYS,
     SLEEP_BETWEEN_PAGES,
 )
@@ -43,6 +51,39 @@ COLUMNS = [
     "timestamp_utc",
     "temperature_c",
     "is_observed",
+    "source",
+    "ingested_at_utc",
+]
+
+# --------------------------------------------------------------------------
+# Archived forecasts
+# --------------------------------------------------------------------------
+# Weather drives load, but a day-ahead forecaster does not know tomorrow's
+# weather — it knows tomorrow's *forecast*. These are the variables of that
+# forecast, mapped from Open-Meteo's names to the lake's.
+FORECAST_VARIABLES: dict[str, str] = {
+    "temperature_2m": "temperature_c",
+    "relative_humidity_2m": "humidity_pct",
+    "dew_point_2m": "dewpoint_c",
+    "wind_speed_10m": "wind_kmh",
+    "cloud_cover": "cloud_pct",
+}
+
+# `_previous_day1` asks for the value as predicted by the model run of the day
+# before — a lead of 24-48 h depending on the hour. A day-ahead operator running
+# at 10:00 for tomorrow evening has a *fresher* run than this, so the feature
+# understates what production would know. Understating is the safe direction:
+# it can only make the measured skill pessimistic.
+PREVIOUS_DAY_SUFFIX = "_previous_day1"
+
+LEAD_PREVIOUS_DAY = "previous_day1"
+LEAD_CURRENT_RUN = "current_run"
+
+FORECAST_COLUMNS = [
+    "site",
+    "timestamp_utc",
+    *FORECAST_VARIABLES.values(),
+    "lead",
     "source",
     "ingested_at_utc",
 ]
@@ -170,6 +211,163 @@ def _to_frame(payload: dict, site: str, source: str) -> pd.DataFrame:
         }
     )
     return df.dropna(subset=["temperature_c"])[COLUMNS]
+
+
+def fetch_weather_forecast(
+    client: httpx.Client,
+    site: str,
+    latitude: float,
+    longitude: float,
+    start: datetime,
+    end: datetime,
+    now: datetime | None = None,
+) -> pd.DataFrame:
+    """Fetch what the forecast *said*, hour by hour, for one coordinate.
+
+    Two legs, mirroring `fetch_weather`, but neither of them ever returns an
+    observation:
+
+      * **archived forecast** — `_previous_day1` values from the historical
+        forecast API, i.e. the day-before model run, for every hour up to
+        yesterday. This is what training consumes;
+      * **current run** — the live forecast, restricted to hours that have not
+        happened yet. This is what serving consumes tomorrow morning.
+
+    The archived leg is appended last, so wherever both cover an hour the
+    day-ahead version wins and the stored history stays consistent with what
+    the model was trained on.
+    """
+    now_ts = pd.Timestamp(now or datetime.now(UTC))
+    if now_ts.tzinfo is None:
+        now_ts = now_ts.tz_localize("UTC")
+    today = now_ts.date()
+
+    start_d = start.astimezone(UTC).date()
+    end_d = end.astimezone(UTC).date()
+
+    frames: list[pd.DataFrame] = [_fetch_current_run(client, site, latitude, longitude, now_ts)]
+
+    archive_end = min(end_d, today - timedelta(days=1))
+    if start_d <= archive_end:
+        frames.extend(
+            _fetch_archived_forecast(client, site, latitude, longitude, start_d, archive_end)
+        )
+
+    present = [f for f in frames if not f.empty]
+    if not present:
+        return pd.DataFrame(columns=FORECAST_COLUMNS)
+
+    df = pd.concat(present, ignore_index=True)
+    lo = pd.Timestamp(start)
+    lo = lo.tz_localize("UTC") if lo.tzinfo is None else lo.tz_convert("UTC")
+    df = df[df["timestamp_utc"] >= lo]
+    return df.sort_values("timestamp_utc", kind="stable").reset_index(drop=True)
+
+
+def _fetch_archived_forecast(
+    client: httpx.Client,
+    site: str,
+    latitude: float,
+    longitude: float,
+    start_d: date,
+    end_d: date,
+) -> list[pd.DataFrame]:
+    hourly = ",".join(f"{name}{PREVIOUS_DAY_SUFFIX}" for name in FORECAST_VARIABLES)
+    frames: list[pd.DataFrame] = []
+    chunk_start = start_d
+    while chunk_start <= end_d:
+        chunk_end = min(chunk_start + timedelta(days=ARCHIVE_CHUNK_DAYS - 1), end_d)
+        log.info("Open-Meteo archived forecast %s: %s -> %s", site, chunk_start, chunk_end)
+        payload = get_json(
+            client,
+            OPEN_METEO_HISTORICAL_FORECAST_URL,
+            {
+                "latitude": latitude,
+                "longitude": longitude,
+                "start_date": chunk_start.isoformat(),
+                "end_date": chunk_end.isoformat(),
+                "hourly": hourly,
+                "timezone": "UTC",
+            },
+            context=f"archived forecast {chunk_start}..{chunk_end}",
+        )
+        frames.append(
+            _to_forecast_frame(
+                payload,
+                site,
+                source="open_meteo_historical_forecast",
+                lead=LEAD_PREVIOUS_DAY,
+                suffix=PREVIOUS_DAY_SUFFIX,
+            )
+        )
+        chunk_start = chunk_end + timedelta(days=1)
+        if chunk_start <= end_d:
+            time.sleep(SLEEP_BETWEEN_PAGES)
+    return frames
+
+
+def _fetch_current_run(
+    client: httpx.Client,
+    site: str,
+    latitude: float,
+    longitude: float,
+    now_ts: pd.Timestamp,
+) -> pd.DataFrame:
+    """The live run, future hours only.
+
+    Past hours are dropped deliberately. The current run's values for hours
+    that already happened are near-analysis, not a day-ahead call, and letting
+    them into the history would quietly make the training feature better than
+    anything production could reproduce.
+    """
+    log.info("Open-Meteo current run %s: forecast_days=2", site)
+    payload = get_json(
+        client,
+        OPEN_METEO_FORECAST_URL,
+        {
+            "latitude": latitude,
+            "longitude": longitude,
+            "hourly": ",".join(FORECAST_VARIABLES),
+            "forecast_days": 2,
+            "timezone": "UTC",
+        },
+        context="current run forecast_days=2",
+    )
+    df = _to_forecast_frame(
+        payload, site, source="open_meteo_forecast", lead=LEAD_CURRENT_RUN, suffix=""
+    )
+    return df[df["timestamp_utc"] > now_ts]
+
+
+def _to_forecast_frame(
+    payload: dict,
+    site: str,
+    source: str,
+    lead: str,
+    suffix: str,
+) -> pd.DataFrame:
+    hourly = payload.get("hourly") or {}
+    times = hourly.get("time") or []
+
+    if not times:
+        return pd.DataFrame(columns=FORECAST_COLUMNS)
+
+    df = pd.DataFrame(
+        {
+            "site": site,
+            "timestamp_utc": pd.to_datetime(pd.Series(times), utc=True),
+        }
+    )
+    for api_name, column in FORECAST_VARIABLES.items():
+        values = hourly.get(f"{api_name}{suffix}") or [None] * len(times)
+        df[column] = pd.to_numeric(pd.Series(values), errors="coerce")
+
+    df["lead"] = lead
+    df["source"] = source
+    df["ingested_at_utc"] = pd.Timestamp.now(tz="UTC")
+    # Temperature is the variable the features are built around; a row without
+    # it carries nothing the model can use.
+    return df.dropna(subset=["temperature_c"])[FORECAST_COLUMNS]
 
 
 def default_window(

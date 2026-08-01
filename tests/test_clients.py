@@ -139,6 +139,161 @@ def test_open_meteo_stitches_archive_and_recent_windows():
 
 
 # --------------------------------------------------------------------------
+# Archived forecasts — what was predicted, never what happened
+# --------------------------------------------------------------------------
+
+
+def forecast_payload(times: list[str], suffix: str = "") -> dict:
+    hourly: dict[str, list] = {"time": times}
+    for name in openmeteo.FORECAST_VARIABLES:
+        hourly[f"{name}{suffix}"] = [1.0] * len(times)
+    return {"hourly": hourly}
+
+
+def two_leg_handler(
+    archived: dict,
+    current: dict,
+    seen: dict | None = None,
+):
+    def handler(request: httpx.Request) -> httpx.Response:
+        if "historical-forecast" in request.url.host:
+            if seen is not None:
+                seen["hourly"] = request.url.params["hourly"]
+            return httpx.Response(200, json=archived)
+        if seen is not None:
+            seen["current_params"] = dict(request.url.params)
+        return httpx.Response(200, json=current)
+
+    return handler
+
+
+def test_the_archived_leg_asks_for_the_day_before_run_on_every_variable():
+    """Drop the suffix and the endpoint answers with its most recent run.
+
+    That run is initialised *after* the hour it describes, so it is very nearly
+    the observation — a near-perfect forecast that would inflate every score in
+    the repository while looking completely normal. Nothing else in the stack
+    can catch it, because the values arrive well-formed and plausible. So the
+    request itself is pinned here.
+    """
+    seen: dict = {}
+    handler = two_leg_handler(
+        archived=forecast_payload(["2026-06-01T00:00"], openmeteo.PREVIOUS_DAY_SUFFIX),
+        current=forecast_payload([]),
+        seen=seen,
+    )
+
+    with httpx.Client(transport=httpx.MockTransport(handler)) as client:
+        openmeteo.fetch_weather_forecast(
+            client,
+            "philadelphia_pa",
+            39.95,
+            -75.16,
+            datetime(2026, 6, 1, tzinfo=UTC),
+            datetime(2026, 6, 2, tzinfo=UTC),
+            now=datetime(2026, 6, 10, tzinfo=UTC),
+        )
+
+    requested = seen["hourly"].split(",")
+    assert requested, "the archived leg asked for no variables at all"
+    assert len(requested) == len(openmeteo.FORECAST_VARIABLES)
+    for name in requested:
+        assert name.endswith(openmeteo.PREVIOUS_DAY_SUFFIX), f"{name} is not the day-before run"
+
+
+def test_the_live_run_contributes_only_hours_that_have_not_happened_yet():
+    """A past hour must never be stored from the current run.
+
+    The live run's value for an hour that already passed is near-analysis, not
+    a day-ahead call. Letting it into the history would make the training
+    feature better than anything production could reproduce at serving time.
+    """
+    now = datetime(2026, 6, 5, 12, tzinfo=UTC)
+    handler = two_leg_handler(
+        archived=forecast_payload([], openmeteo.PREVIOUS_DAY_SUFFIX),
+        current=forecast_payload(["2026-06-05T06:00", "2026-06-05T18:00", "2026-06-06T06:00"]),
+    )
+
+    with httpx.Client(transport=httpx.MockTransport(handler)) as client:
+        df = openmeteo.fetch_weather_forecast(
+            client,
+            "philadelphia_pa",
+            39.95,
+            -75.16,
+            datetime(2026, 6, 5, tzinfo=UTC),
+            datetime(2026, 6, 6, tzinfo=UTC),
+            now=now,
+        )
+
+    assert len(df) == 2, "the hour before `now` should have been dropped"
+    assert (df["timestamp_utc"] > pd.Timestamp(now)).all()
+    assert set(df["lead"]) == {openmeteo.LEAD_CURRENT_RUN}
+
+
+def test_the_archived_day_before_value_wins_wherever_both_legs_reach():
+    """Order matters: `write_incremental` keeps the last row for a key.
+
+    The two legs are disjoint by construction today, but the ordering is what
+    keeps stored history consistent with what training consumes if that ever
+    changes.
+    """
+    hour = ["2026-06-01T00:00"]
+    handler = two_leg_handler(
+        archived=forecast_payload(hour, openmeteo.PREVIOUS_DAY_SUFFIX),
+        current=forecast_payload(hour),
+    )
+
+    with httpx.Client(transport=httpx.MockTransport(handler)) as client:
+        df = openmeteo.fetch_weather_forecast(
+            client,
+            "philadelphia_pa",
+            39.95,
+            -75.16,
+            datetime(2026, 6, 1, tzinfo=UTC),
+            datetime(2026, 6, 2, tzinfo=UTC),
+            now=datetime(2026, 6, 10, tzinfo=UTC),
+        )
+
+    duplicated = df[df["timestamp_utc"] == pd.Timestamp("2026-06-01T00:00", tz="UTC")]
+    assert duplicated["lead"].iloc[-1] == openmeteo.LEAD_PREVIOUS_DAY
+
+
+def test_a_forecast_row_is_labelled_with_the_lead_it_came_from():
+    """`lead` is what lets anyone reading the lake tell the two apart later."""
+    assert "lead" in openmeteo.FORECAST_COLUMNS
+    assert "is_observed" not in openmeteo.FORECAST_COLUMNS
+
+    frame = openmeteo._to_forecast_frame(
+        forecast_payload(["2026-06-01T00:00"], openmeteo.PREVIOUS_DAY_SUFFIX),
+        "philadelphia_pa",
+        source="open_meteo_historical_forecast",
+        lead=openmeteo.LEAD_PREVIOUS_DAY,
+        suffix=openmeteo.PREVIOUS_DAY_SUFFIX,
+    )
+
+    assert list(frame.columns) == openmeteo.FORECAST_COLUMNS
+    assert frame["lead"].iloc[0] == openmeteo.LEAD_PREVIOUS_DAY
+    assert frame["temperature_c"].notna().all()
+
+
+def test_a_variable_the_endpoint_did_not_return_becomes_nan_not_a_crash():
+    """Open-Meteo drops variables it has no data for; the schema must hold."""
+    payload = forecast_payload(["2026-06-01T00:00"], openmeteo.PREVIOUS_DAY_SUFFIX)
+    del payload["hourly"][f"cloud_cover{openmeteo.PREVIOUS_DAY_SUFFIX}"]
+
+    frame = openmeteo._to_forecast_frame(
+        payload,
+        "philadelphia_pa",
+        source="open_meteo_historical_forecast",
+        lead=openmeteo.LEAD_PREVIOUS_DAY,
+        suffix=openmeteo.PREVIOUS_DAY_SUFFIX,
+    )
+
+    assert list(frame.columns) == openmeteo.FORECAST_COLUMNS
+    assert frame["cloud_pct"].isna().all()
+
+
+# --------------------------------------------------------------------------
 # Shared HTTP policy
 # --------------------------------------------------------------------------
 

@@ -147,16 +147,29 @@ def count_rows(dataset: Dataset) -> int:
     return total
 
 
-def last_timestamp(dataset: Dataset) -> pd.Timestamp | None:
+def last_timestamp(
+    dataset: Dataset, where: tuple[str, object] | None = None
+) -> pd.Timestamp | None:
     """Newest stored timestamp, used to compute the incremental delta window.
 
     Only the most recent partition is opened, so this stays cheap as the lake
     grows.
+
+    `where` narrows to one value of one column — `("site", "chicago_il")`. It
+    exists because a multi-site dataset has one delta window *per site*: asking
+    the dataset as a whole would report Philadelphia's newest hour and a city
+    added later would never backfill. Absent from the newest partition means
+    `None`, which the callers read as "pull the whole history" — the right
+    answer for a site that is not there yet, and merely redundant for one that
+    is behind.
     """
     files = partition_files(dataset)
     if not files:
         return None
-    newest = pd.read_parquet(files[-1], columns=[dataset.time_column])
+    columns = [dataset.time_column] if where is None else [dataset.time_column, where[0]]
+    newest = pd.read_parquet(files[-1], columns=columns)
+    if where is not None:
+        newest = newest[newest[where[0]] == where[1]]
     if newest.empty:
         return None
     return pd.to_datetime(newest[dataset.time_column], utc=True).max()

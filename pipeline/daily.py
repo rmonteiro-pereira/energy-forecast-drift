@@ -59,7 +59,7 @@ from drift.run import render_summary
 from drift.windows import PREDICTION_COLUMN, NotEnoughHistoryError, build_windows
 from features import build as build_mod
 from features import panel as panel_mod
-from ingest.config import METRICS_DIR, eia_api_key
+from ingest.config import INGEST_LEGS, METRICS_DIR, eia_api_key
 from models import tracking
 from models.data import SYNTHETIC_WARNING, NoRealDataError, resolve_panel
 from pipeline import plots
@@ -127,7 +127,7 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     p.add_argument("--skip-ingest", action="store_true", help="score what is already in the lake")
     p.add_argument(
         "--ingest-source",
-        choices=["all", "eia", "weather"],
+        choices=list(INGEST_LEGS),
         default="all",
         help="which leg to pull",
     )

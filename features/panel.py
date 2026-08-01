@@ -16,13 +16,35 @@ than assumed downstream:
 
 from __future__ import annotations
 
+import numpy as np
 import pandas as pd
 
-from ingest.config import EIA_DEMAND, WEATHER_HOURLY
+from ingest.config import (
+    EIA_DEMAND,
+    SITE_WEIGHTS,
+    WEATHER_FORECAST_HOURLY,
+    WEATHER_HOURLY,
+)
 from ingest.store import read_dataset
 
 DEMAND_COLUMN = "demand_mwh"
 TEMPERATURE_COLUMN = "temperature_c"
+
+# Columns the archived day-ahead forecast contributes to the panel. The `fcst_`
+# prefix is load-bearing, not cosmetic: it is what separates "what the weather
+# did" from "what the forecast said it would do", and every feature built on a
+# `fcst_` column is allowed to be read at the *target* hour precisely because
+# the value was published before the origin.
+FORECAST_TEMPERATURE_COLUMN = "fcst_temperature_c"
+FORECAST_SPREAD_COLUMN = "fcst_temperature_spread_c"
+FORECAST_VALUE_COLUMNS = (
+    FORECAST_TEMPERATURE_COLUMN,
+    "fcst_humidity_pct",
+    "fcst_dewpoint_c",
+    "fcst_wind_kmh",
+    "fcst_cloud_pct",
+)
+FORECAST_PANEL_COLUMNS = (*FORECAST_VALUE_COLUMNS, FORECAST_SPREAD_COLUMN)
 
 
 def load_demand(respondent: str | None = None) -> pd.Series:
@@ -48,6 +70,96 @@ def load_temperature(site: str | None = None, observed_only: bool = True) -> pd.
         df = df[df["is_observed"].astype(bool)]
     series = df.set_index("timestamp_utc")[TEMPERATURE_COLUMN].sort_index()
     return series[~series.index.duplicated(keep="last")]
+
+
+def blend_by_site(
+    df: pd.DataFrame,
+    columns: tuple[str, ...],
+    weights: dict[str, float] | None = None,
+) -> pd.DataFrame:
+    """Population-weighted blend of per-site rows into one series per column.
+
+    The weights are renormalised **per timestamp over the sites that actually
+    reported**. Without that, an hour where Chicago is missing would come out
+    colder or warmer purely because a third of the weight vanished, and the
+    model would read a data gap as weather.
+    """
+    weights = SITE_WEIGHTS if weights is None else weights
+    if df.empty:
+        return pd.DataFrame(columns=list(columns))
+
+    df = df.drop_duplicates(subset=["site", "timestamp_utc"], keep="last")
+    ts = df["timestamp_utc"]
+    # An unrecognised site contributes nothing rather than silently weighting 1.
+    weight = df["site"].map(weights).astype("float64")
+
+    out: dict[str, pd.Series] = {}
+    for column in columns:
+        if column not in df.columns:
+            continue
+        value = pd.to_numeric(df[column], errors="coerce")
+        usable = value.notna() & weight.notna()
+        numerator = (value.where(usable, 0.0) * weight.where(usable, 0.0)).groupby(ts).sum()
+        denominator = weight.where(usable, 0.0).groupby(ts).sum()
+        out[column] = numerator / denominator.replace(0.0, np.nan)
+
+    if not out:
+        return pd.DataFrame(columns=list(columns))
+    blended = pd.DataFrame(out).sort_index()
+    blended.index.name = "timestamp_utc"
+    return blended
+
+
+def site_spread(df: pd.DataFrame, column: str) -> pd.Series:
+    """Max minus min across sites — how unevenly the weather sits on the footprint.
+
+    A blended 18 °C can be 18 everywhere or 8 in Chicago and 28 in Richmond,
+    and those two are not the same load. The blend alone cannot tell them apart.
+    """
+    if df.empty or column not in df.columns:
+        return pd.Series(dtype="float64")
+    value = pd.to_numeric(df[column], errors="coerce")
+    grouped = value.groupby(df["timestamp_utc"])
+    spread = grouped.max() - grouped.min()
+    spread.index.name = "timestamp_utc"
+    return spread.sort_index()
+
+
+def load_temperature_blend() -> pd.Series:
+    """Observed temperature, blended across every site in the lake."""
+    df = read_dataset(WEATHER_HOURLY)
+    if df.empty:
+        return pd.Series(dtype="float64", name=TEMPERATURE_COLUMN)
+    if "is_observed" in df.columns:
+        df = df[df["is_observed"].astype(bool)]
+    blended = blend_by_site(df, (TEMPERATURE_COLUMN,))
+    if TEMPERATURE_COLUMN not in blended.columns:
+        return pd.Series(dtype="float64", name=TEMPERATURE_COLUMN)
+    return blended[TEMPERATURE_COLUMN].rename(TEMPERATURE_COLUMN)
+
+
+def load_weather_forecast() -> pd.DataFrame:
+    """The archived day-ahead forecast, blended across sites, one row per hour.
+
+    Indexed by the hour the forecast is **valid for**, not the hour it was made.
+    Deciding whether a given row was already published at a given origin is the
+    feature builder's job — see `features.build.FORECAST_PUBLISHED_HOUR_UTC`.
+    """
+    df = read_dataset(WEATHER_FORECAST_HOURLY)
+    if df.empty:
+        return pd.DataFrame(columns=list(FORECAST_PANEL_COLUMNS))
+
+    raw = {
+        "temperature_c": FORECAST_TEMPERATURE_COLUMN,
+        "humidity_pct": "fcst_humidity_pct",
+        "dewpoint_c": "fcst_dewpoint_c",
+        "wind_kmh": "fcst_wind_kmh",
+        "cloud_pct": "fcst_cloud_pct",
+    }
+    present = {source: target for source, target in raw.items() if source in df.columns}
+    blended = blend_by_site(df, tuple(present)).rename(columns=present)
+    blended[FORECAST_SPREAD_COLUMN] = site_spread(df, "temperature_c")
+    return blended.reindex(columns=list(FORECAST_PANEL_COLUMNS))
 
 
 def to_hourly_grid(series: pd.Series) -> pd.Series:
@@ -81,15 +193,29 @@ def add_calendar(df: pd.DataFrame) -> pd.DataFrame:
 def build_panel(
     demand: pd.Series,
     temperature: pd.Series | None = None,
+    forecast: pd.DataFrame | None = None,
     with_calendar: bool = True,
 ) -> pd.DataFrame:
-    """Assemble the modelling panel from a demand series (+ optional weather)."""
+    """Assemble the modelling panel from a demand series (+ optional weather).
+
+    `forecast` carries the `fcst_` columns from `load_weather_forecast`. It is
+    optional for the same reason `temperature` is: the panel schema has to stay
+    stable when a leg of ingestion has not run, so downstream code sees NaN
+    rather than a missing column.
+    """
     demand = to_hourly_grid(demand.rename(DEMAND_COLUMN))
     panel = demand.to_frame()
 
     if temperature is not None and not temperature.empty:
         # Left join on the demand grid: weather never extends the panel.
         panel[TEMPERATURE_COLUMN] = temperature.rename(TEMPERATURE_COLUMN).reindex(panel.index)
+
+    if forecast is not None and not forecast.empty:
+        for column in FORECAST_PANEL_COLUMNS:
+            if column in forecast.columns:
+                panel[column] = pd.to_numeric(forecast[column], errors="coerce").reindex(
+                    panel.index
+                )
 
     panel.index.name = "timestamp_utc"
     return add_calendar(panel) if with_calendar else panel
@@ -104,4 +230,5 @@ def describe_panel(panel: pd.DataFrame) -> dict:
         "end_utc": panel.index.max().isoformat() if len(panel) else None,
         "missing_demand_hours": int(demand.isna().sum()),
         "has_temperature": TEMPERATURE_COLUMN in panel.columns,
+        "has_weather_forecast": FORECAST_TEMPERATURE_COLUMN in panel.columns,
     }

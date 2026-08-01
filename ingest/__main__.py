@@ -18,6 +18,7 @@ import sys
 from datetime import UTC, datetime
 
 import httpx
+import pandas as pd
 
 from ingest import eia, openmeteo
 from ingest.config import (
@@ -25,11 +26,11 @@ from ingest.config import (
     BALANCING_AUTHORITY,
     DATA_DIR,
     EIA_DEMAND,
+    INGEST_LEGS,
     REVISION_LOOKBACK,
+    WEATHER_FORECAST_HOURLY,
     WEATHER_HOURLY,
-    WEATHER_LAT,
-    WEATHER_LON,
-    WEATHER_SITE,
+    WEATHER_SITES,
     eia_api_key,
 )
 from ingest.http import ApiError
@@ -44,7 +45,7 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(prog="ingest", description=__doc__)
     parser.add_argument(
         "--source",
-        choices=["all", "eia", "weather"],
+        choices=list(INGEST_LEGS),
         default="all",
         help="which leg to run (default: all)",
     )
@@ -87,16 +88,50 @@ def ingest_eia(client: httpx.Client, args: argparse.Namespace) -> dict:
     }
 
 
-def ingest_weather(client: httpx.Client, args: argparse.Namespace) -> dict:
-    stored = None if args.full_refresh else last_timestamp(WEATHER_HOURLY)
-    start, end = openmeteo.default_window(stored, args.backfill_days, REVISION_LOOKBACK)
+def _weather_windows(args: argparse.Namespace, dataset) -> list[tuple]:
+    """One delta window per site — a city added later still backfills fully."""
+    windows = []
+    for site in WEATHER_SITES:
+        stored = None if args.full_refresh else last_timestamp(dataset, ("site", site.name))
+        start, end = openmeteo.default_window(stored, args.backfill_days, REVISION_LOOKBACK)
+        windows.append((site, start, end))
+    return windows
 
-    df = openmeteo.fetch_weather(client, WEATHER_SITE, WEATHER_LAT, WEATHER_LON, start, end)
-    report = write_incremental(WEATHER_HOURLY, df)
+
+def ingest_weather(client: httpx.Client, args: argparse.Namespace) -> dict:
+    windows = _weather_windows(args, WEATHER_HOURLY)
+    frames = [
+        openmeteo.fetch_weather(client, site.name, site.latitude, site.longitude, start, end)
+        for site, start, end in windows
+    ]
+    # One write for all sites rather than one per site: `write_incremental`
+    # rewrites every partition it touches, and nine sequential writes would
+    # rewrite the same two years of partitions nine times over.
+    df = pd.concat([f for f in frames if not f.empty], ignore_index=True) if frames else None
+    report = write_incremental(WEATHER_HOURLY, df if df is not None else pd.DataFrame())
     return {
         "status": "ok",
-        "site": WEATHER_SITE,
-        "window_utc": [start.isoformat(), end.isoformat()],
+        "sites": [site.name for site, _, _ in windows],
+        "window_utc": [windows[0][1].isoformat(), windows[0][2].isoformat()] if windows else None,
+        **report.__dict__,
+    }
+
+
+def ingest_weather_forecast(client: httpx.Client, args: argparse.Namespace) -> dict:
+    """The archived day-ahead forecast — what a forecaster knew, not what happened."""
+    windows = _weather_windows(args, WEATHER_FORECAST_HOURLY)
+    frames = [
+        openmeteo.fetch_weather_forecast(
+            client, site.name, site.latitude, site.longitude, start, end
+        )
+        for site, start, end in windows
+    ]
+    df = pd.concat([f for f in frames if not f.empty], ignore_index=True) if frames else None
+    report = write_incremental(WEATHER_FORECAST_HOURLY, df if df is not None else pd.DataFrame())
+    return {
+        "status": "ok",
+        "sites": [site.name for site, _, _ in windows],
+        "window_utc": [windows[0][1].isoformat(), windows[0][2].isoformat()] if windows else None,
         **report.__dict__,
     }
 
@@ -116,7 +151,12 @@ def main(argv: list[str] | None = None) -> int:
     failures = 0
 
     with httpx.Client(headers={"User-Agent": USER_AGENT}, follow_redirects=True) as client:
-        for name, fn in (("eia", ingest_eia), ("weather", ingest_weather)):
+        legs = (
+            ("eia", ingest_eia),
+            ("weather", ingest_weather),
+            ("weather_forecast", ingest_weather_forecast),
+        )
+        for name, fn in legs:
             if args.source not in ("all", name):
                 continue
             try:

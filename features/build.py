@@ -30,13 +30,27 @@ Feature groups
 * **origin-anchored rolling stats** — the last observed hour and the mean /
   std / min / max of demand over the 24 h and 168 h *ending at `O-1h`*.
 * **temperature** — the same two shapes, from the Open-Meteo leg.
+* **forecast weather at the target hour** — see below.
 
-Note on weather: only *past* temperature is used. Open-Meteo does publish a
-forecast (the lake even tags it `is_observed=False`), and a production forecaster
-would legitimately feed tomorrow's forecast temperature in. We deliberately do
-not, because it would make the "features at T use only data ≤ O" claim depend on
-a second, unmodelled forecast — and this repo's whole point is that the rigour
-claims are testable. Wiring the forecast leg in is a later, explicit step.
+Weather at the target hour, without cheating
+--------------------------------------------
+Load is dominated by temperature, and for most of this project's life the model
+could not see the target hour's weather at all: every weather feature looked
+backwards, so a 24 h-ahead forecast knew yesterday was warm and had no idea a
+heat wave was arriving. That was a deliberate placeholder, not an oversight —
+using the *observed* temperature at `T` would have been a perfect forecast, and
+a backtest built on one is a lie.
+
+The way out is not to use the weather at `T`, but the **forecast** of the
+weather at `T`, as it was published before `O`. Open-Meteo archives exactly
+that: `ingest.openmeteo.fetch_weather_forecast` stores what the day-before model
+run predicted, in a dataset the reanalysis can never overwrite. Those values
+carry genuine forecast error — around 1.5 °C against what actually happened —
+which is precisely the uncertainty a real day-ahead forecaster carries.
+
+So the rule at the top of this module is unchanged and still exact. A `fcst_`
+column is *indexed* at `T` but was *published* before `O`, and it is masked out
+on any row where that is not true — see `FORECAST_PUBLISHED_HOUR_UTC`.
 """
 
 from __future__ import annotations
@@ -46,7 +60,12 @@ import pandas as pd
 from pandas.api.typing import Rolling
 from pandas.tseries.holiday import USFederalHolidayCalendar
 
-from features.panel import DEMAND_COLUMN, TEMPERATURE_COLUMN
+from features.panel import (
+    DEMAND_COLUMN,
+    FORECAST_SPREAD_COLUMN,
+    FORECAST_TEMPERATURE_COLUMN,
+    TEMPERATURE_COLUMN,
+)
 
 # PJM's footprint is Eastern time; a holiday is a *local* calendar day, so the
 # UTC timestamp is converted before the flag is looked up.
@@ -64,6 +83,33 @@ SEASON_OF_WEEK_LAGS = (168, 336, 504, 672)
 CALENDAR_FEATURES = ("hour", "dayofweek", "month", "is_weekend", "is_holiday")
 CATEGORICAL_FEATURES = ("hour", "dayofweek", "month")
 
+# When the day-before model run is treated as published.
+#
+# Global NWP 00Z runs are on the wire by roughly 04:00-06:00 UTC. We hold the
+# value back until 12:00 UTC — about twice the real delay. The conservatism is
+# deliberate and one-directional: being late can only withhold information the
+# model would legitimately have had, never grant information it would not. A
+# leak here would be invisible in every metric and would inflate the headline
+# number, so the error budget is spent entirely on the safe side.
+FORECAST_PUBLISHED_HOUR_UTC = 12
+
+# panel column -> feature name. Read at the target hour, masked by publication.
+FORECAST_FEATURE_SOURCES: dict[str, str] = {
+    FORECAST_TEMPERATURE_COLUMN: "temp_fcst_target",
+    FORECAST_SPREAD_COLUMN: "temp_fcst_spread_target",
+    "fcst_humidity_pct": "humidity_fcst_target",
+    "fcst_dewpoint_c": "dewpoint_fcst_target",
+    "fcst_wind_kmh": "wind_fcst_target",
+    "fcst_cloud_pct": "cloud_fcst_target",
+}
+
+# Forecast temperature minus what it actually was at the same hour last week.
+# Trees split on levels; this hands them the *change* directly, which is what
+# separates "hot, as usual for August" from "a heat wave is arriving".
+FORECAST_ANOMALY_FEATURE = "temp_fcst_target_minus_lag_168h"
+
+FORECAST_FEATURES = (*FORECAST_FEATURE_SOURCES.values(), FORECAST_ANOMALY_FEATURE)
+
 FEATURE_COLUMNS = (
     "horizon_h",
     *CALENDAR_FEATURES,
@@ -78,6 +124,7 @@ FEATURE_COLUMNS = (
     *(f"temp_lag_{k}h" for k in TEMPERATURE_TARGET_LAGS),
     "temp_last_1h",
     "temp_roll_mean_24h",
+    *FORECAST_FEATURES,
 )
 
 # Longest reach into the past any feature needs; origins younger than this
@@ -100,6 +147,17 @@ def _holiday_flag(targets: pd.DatetimeIndex) -> np.ndarray:
         end=local_days.max() + pd.Timedelta(days=1),
     )
     return local_days.isin(holidays).astype("int8")
+
+
+def forecast_published_at(targets: pd.DatetimeIndex) -> pd.DatetimeIndex:
+    """When the day-before run covering each `target` is treated as available.
+
+    A single instant per target day, not per hour: the run is one object and it
+    covers the whole day at once.
+    """
+    return (
+        targets.floor("D") - pd.Timedelta(days=1) + pd.Timedelta(hours=FORECAST_PUBLISHED_HOUR_UTC)
+    )
 
 
 def _rolling_before(series: pd.Series, window: int) -> Rolling:
@@ -217,6 +275,24 @@ def build_design_matrix(
     }
     for name, series in at_origin.items():
         out[name] = series.reindex(origin_col).to_numpy(dtype="float64")
+
+    # --- forecast weather at the target, gated on publication ----------------
+    # These are the only features read at `T` rather than before `O`, and they
+    # are legitimate for one reason only: the value was published before `O`.
+    # Where that is not true the row is blanked, exactly like a lag that would
+    # reach into the origin.
+    available = np.asarray(forecast_published_at(target_col) <= origin_col)
+    for panel_column, feature in FORECAST_FEATURE_SOURCES.items():
+        if panel_column in panel.columns:
+            values = (
+                panel[panel_column].astype("float64").reindex(target_col).to_numpy(dtype="float64")
+            )
+        else:  # the forecast leg has not run — keep the schema stable, all-NaN
+            values = np.full(len(out), np.nan)
+        out[feature] = np.where(available, values, np.nan)
+
+    # Derived from two already-masked columns, so it inherits both masks.
+    out[FORECAST_ANOMALY_FEATURE] = out["temp_fcst_target"] - out["temp_lag_168h"]
 
     out[TARGET_COLUMN] = demand.reindex(target_col).to_numpy(dtype="float64")
     return out[list(DESIGN_COLUMNS)]

@@ -13,7 +13,7 @@ import logging
 import pandas as pd
 
 from features import panel as panel_mod
-from ingest.config import BALANCING_AUTHORITY, WEATHER_SITE
+from ingest.config import BALANCING_AUTHORITY, WEATHER_SITE, WEATHER_SITES
 from models import fixtures
 
 log = logging.getLogger(__name__)
@@ -42,13 +42,20 @@ def resolve_panel(source: str = "auto", fixture_days: int = 200) -> tuple[pd.Dat
     if source in ("auto", "real"):
         demand = panel_mod.load_demand(BALANCING_AUTHORITY)
         if not demand.empty:
-            temperature = panel_mod.load_temperature(WEATHER_SITE)
-            panel = panel_mod.build_panel(demand, temperature)
+            temperature = panel_mod.load_temperature_blend()
+            # Empty until the forecast leg has run at least once; `build_panel`
+            # keeps the schema stable either way, so an older lake still works.
+            forecast = panel_mod.load_weather_forecast()
+            panel = panel_mod.build_panel(demand, temperature, forecast)
             return panel, {
                 "kind": "eia_api_v2",
                 "is_real": True,
                 "respondent": BALANCING_AUTHORITY,
+                # Kept for continuity with artifacts written before the blend
+                # existed; `weather_sites` is what the panel actually used.
                 "weather_site": WEATHER_SITE,
+                "weather_sites": [site.name for site in WEATHER_SITES],
+                "has_weather_forecast": not forecast.empty,
                 "warning": None,
             }
 
@@ -61,7 +68,8 @@ def resolve_panel(source: str = "auto", fixture_days: int = 200) -> tuple[pd.Dat
         log.warning("No real demand in the lake -> falling back to the SYNTHETIC fixture.")
 
     frame = fixtures.synthetic_series(days=fixture_days)
-    panel = panel_mod.build_panel(frame["demand_mwh"], frame["temperature_c"])
+    forecast = fixtures.synthetic_forecast(frame)
+    panel = panel_mod.build_panel(frame["demand_mwh"], frame["temperature_c"], forecast)
     return panel, {
         "kind": "synthetic_fixture",
         "is_real": False,
