@@ -336,3 +336,128 @@ def test_every_rule_the_doc_tabulates_exists_in_the_adjudication_script():
             f"MUTATION-TESTING.md tabulates {rule!r} but scripts/mutation_survivors.py "
             "no longer declares it"
         )
+
+
+# ---------------------------------------------------------------------------
+# The floor must be enforced against the number the report prints.
+#
+# The bug this pins shipped and was never observed, because the workflow had
+# run exactly once in its history and that run used a different floor: the
+# published score is 308/474 = 64.9789%, which `scripts/mutation_score.py`
+# prints as "65.0%", and the floor read straight off that published figure was
+# 65. So the gate failed on the very measurement that produced it, and the job
+# summary would have shown "**65.0%**" in the table and "65.0% is below the
+# floor of 65.0%" underneath. Comparing the rounded value makes the two agree.
+# ---------------------------------------------------------------------------
+def _fake_cache(path: Path, statuses: dict[str, int]) -> None:
+    """Write the three tables `scripts/mutation_score.py` reads."""
+    import sqlite3
+
+    conn = sqlite3.connect(path)
+    conn.executescript(
+        """
+        create table SourceFile (id integer primary key, filename text);
+        create table Line (id integer primary key, line_number int, line text, sourcefile int);
+        create table Mutant (id integer primary key, line int, status text);
+        insert into SourceFile values (1, 'drift/detectors.py');
+        """
+    )
+    mutant_id = 0
+    for status, count in statuses.items():
+        for _ in range(count):
+            mutant_id += 1
+            conn.execute("insert into Line values (?, ?, ?, 1)", (mutant_id, mutant_id, "x = 1"))
+            conn.execute("insert into Mutant values (?, ?, ?)", (mutant_id, mutant_id, status))
+    conn.commit()
+    conn.close()
+
+
+def _score_module():
+    import importlib.util
+    import sys
+
+    spec = importlib.util.spec_from_file_location("mutation_score", SCORE_SCRIPT)
+    assert spec and spec.loader
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
+    try:
+        spec.loader.exec_module(module)
+    finally:
+        sys.modules.pop(spec.name, None)
+    return module
+
+
+# The exact published measurement: 308 killed of 474, with the 9 mutmut never
+# tested counted as not-killed, as the score does.
+PUBLISHED = {"ok_killed": 308, "bad_survived": 157, "untested": 9}
+
+
+@pytest.mark.parametrize(
+    ("floor", "expected_exit"),
+    [
+        (65.0, 0),  # the score prints as 65.0%; 65.0 is not below 65.0
+        (64.0, 0),
+        (65.1, 1),  # genuinely below — the gate must still bite
+        (70.0, 1),
+    ],
+)
+def test_the_floor_is_enforced_against_the_reported_score(
+    tmp_path, monkeypatch, capsys, floor: float, expected_exit: int
+):
+    cache = tmp_path / ".mutmut-cache"
+    _fake_cache(cache, PUBLISHED)
+
+    module = _score_module()
+    monkeypatch.setattr(module, "CACHE", cache)
+    monkeypatch.setattr(
+        "sys.argv", ["mutation_score.py", "--floor", str(floor), "--survivors", "0"]
+    )
+
+    exit_code = module.main()
+    printed = capsys.readouterr().out
+
+    assert "**65.0%**" in printed, f"the report no longer prints 65.0% for 308/474:\n{printed}"
+    assert exit_code == expected_exit, (
+        f"floor {floor} gave exit {exit_code}, expected {expected_exit}. Report was:\n{printed}"
+    )
+    # Whatever the verdict, it must quote the same number the table shows.
+    verdict = [ln for ln in printed.splitlines() if "floor of" in ln]
+    assert verdict, f"no verdict line in:\n{printed}"
+    assert "65.0%" in verdict[0], (
+        f"the verdict quotes a different number than the table: {verdict[0]!r}"
+    )
+
+
+def test_the_pull_request_paths_filter_covers_every_test_that_drives_mutmut():
+    """The `paths:` filter and `[tool.mutmut].runner` must name the same tests.
+
+    The PR trigger exists so the score is measured on the changes that can move
+    it (ADR 0007, amended). That only holds while the filter lists every test
+    file mutmut actually runs — add an eighth file to the runner, forget the
+    filter, and the job silently stops firing on the one change most likely to
+    weaken the suite. The failure mode is a workflow that looks configured and
+    no longer covers what it claims to.
+    """
+    triggers = workflow()[True]  # `on:` parses to the boolean True in YAML 1.1
+    assert "pull_request" in triggers, (
+        "mutation.yml no longer runs on pull requests, so a score regression "
+        "would not be attributed to the change that caused it"
+    )
+    filtered = set(triggers["pull_request"].get("paths", []))
+    assert filtered, "the pull_request trigger has no paths filter"
+
+    runner = MUTMUT.get("runner", "")
+    driving = set(re.findall(r"tests/\S+\.py", runner))
+    assert driving, "[tool.mutmut].runner names no test files"
+
+    missing = driving - filtered
+    assert not missing, (
+        f"{sorted(missing)} drive mutmut but are not in mutation.yml's paths "
+        "filter, so changing them would not trigger the job"
+    )
+
+    for target in targets():
+        assert target in filtered, (
+            f"{target} is mutated but is not in mutation.yml's paths filter, so "
+            "changing it would not trigger the job"
+        )

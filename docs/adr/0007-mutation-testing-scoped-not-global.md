@@ -59,6 +59,55 @@ so the verdict comes from `scripts/mutation_score.py`, not from mutmut's exit
 code. Weakening a test is otherwise invisible, because a weaker test still
 passes.
 
+**Amended 2026-08-01: the schedule was the wrong primary trigger, and the floor
+was set from a rounded number measured on the wrong platform.** Both were caught
+before the first scheduled run ever fired, on a public repository.
+
+*The trigger.* "Too slow for every push, so put it on a cron" does not follow.
+Mutation testing measures the strength of the **test suite**, and a test suite
+only ever changes in a commit — so a calendar trigger fires exactly when nothing
+changed and stays silent when something did. That costs the two things this job
+exists for:
+
+- **Attribution.** A red Monday 04:40 has no culprit commit; it has a week of
+  them. The floor's declared purpose is to catch *regression*, on the grounds
+  that weakening a test is invisible because a weaker test still passes. A
+  regression detector that detects without accusing is half a tool.
+- **Latency.** A test weakened on Tuesday surfaces six days and twenty commits
+  later, long after the change stopped being under review.
+
+The fix is the one this ADR's own "What would reverse this" section already
+named: **run it when the things it measures change.** The trigger is now
+`pull_request`, narrowed by a `paths` filter to `drift/detectors.py`,
+`models/backtest.py`, `tests/**` and the mutation tooling itself. Those PRs are a
+minority, so the ~25 minutes are paid only where they can buy something — and the
+"wrong cost on every push" objection above stops applying, because it is no
+longer every push.
+
+The cron stays, with the reason it actually has rather than the one it was given.
+It catches change that **does not arrive in a commit**: a new release of a
+dependency can alter behaviour under a suite nobody touched, and only elapsed
+time reveals that. It complements the PR trigger; it was never a substitute for
+it.
+
+*The floor.* The floor was set to `65` by reading `docs/MUTATION-TESTING.md`'s
+published **65.0%** — but that figure is `308/474 = 64.9789%` rounded for display,
+and `scripts/mutation_score.py` compared the **unrounded** value. The gate would
+therefore have failed on the very measurement that produced it, printing
+"**65.0%**" in its own summary table three lines above "Mutation score 65.0% is
+below the floor of 65.0%". It went unnoticed because the workflow had run exactly
+once in its history, at a different floor.
+
+Worse, the 65.0% was measured on Windows, where 9 mutants came back `untested`
+and the score counts those as not-killed. The one Ubuntu run on record
+(`3fc7274`) reported **no `untested` bucket at all** — 474 = 248 killed + 226
+survived — so the CI score was expected to be higher than the published one. **A
+floor derived from a rounded number measured on another platform is a coin
+flip.** So the floor is now set from a `workflow_dispatch` run at the same commit
+on the actual runner, with a deliberately low floor, and then fixed below what
+that run measured. `tests/test_mutation_config.py` pins the 308/474 rounding case
+so the report and the verdict can never disagree again.
+
 **Shipping a mutation config that cannot run.** Rejected explicitly, because it
 is a live failure mode: a sibling project was found shipping `paths_to_mutate`
 aimed at directories that did not exist, with the CI job set to `if: false`. That
@@ -83,9 +132,10 @@ refactor. The target is "every survivor is understood", not "the number is 100".
 ## Consequences
 
 - One more dev dependency, and a run that is slow enough to be deliberate.
-- A weekly job that takes ~25 minutes of (free, public-repo) Actions time, and a
-  floor that will need raising as the score improves — a ratchet nobody tightens
-  is just a number.
+- A ~25-minute job (free Actions time on a public repo) on the minority of PRs
+  that touch the mutated modules or the tests, plus one weekly run for dependency
+  drift — and a floor that will need raising as the score improves, because a
+  ratchet nobody tightens is just a number.
 - **`mutmut` 2.x rewrites the source file in place while it runs** and restores
   it afterwards. An interrupted run can leave `drift/detectors.py` mutated with a
   `.bak` beside it. Anyone running it must check `git status` before committing.
@@ -98,9 +148,11 @@ refactor. The target is "every survivor is understood", not "the number is 100".
 
 ## What would reverse this
 
-If the survivor list stabilises at a small, fully-explained set, the marginal
-value of re-running drops and the right move is to re-run it only when those two
-modules change, rather than on a schedule.
+*This one already happened* — see the 2026-08-01 amendment. The prediction was
+that once the survivor list stabilised, the right move would be to re-run only
+when those two modules change rather than on a schedule. The reason it moved was
+not the survivor list stabilising but attribution, and the schedule was kept for
+dependency drift rather than dropped; the direction was right.
 
 Conversely, if a real defect ever ships from a module *outside* this scope, that
 is evidence the scope is too narrow — and the fix is to widen it to that module
