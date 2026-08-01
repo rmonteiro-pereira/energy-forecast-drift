@@ -1,9 +1,30 @@
 # Mutation testing — this workflow genuinely runs.
 #
-# It is NOT part of `ci.yml`, and that is a deliberate trade recorded in
-# docs/adr/0007: a full pass takes ~25 minutes, which is the wrong cost on every
-# push and the kind of slow job people learn to skip. So it runs on a schedule
-# and on demand instead.
+# It is NOT part of `ci.yml`: a full pass takes ~25 minutes, which is the wrong
+# cost on every push and the kind of slow job people learn to skip. The original
+# conclusion drawn from that (docs/adr/0007) was "so run it on a schedule
+# instead", and that conclusion was wrong. Mutation testing measures the strength
+# of the test suite, and a test suite only changes in a commit. A calendar
+# trigger therefore fires precisely when nothing changed, and stays silent when
+# something did:
+#
+#   * it cannot attribute. A red Monday 04:40 has no culprit commit — it has a
+#     week of them — and this job exists declaredly to catch *regression*, on the
+#     grounds that weakening a test is invisible because a weaker test still
+#     passes. A regression detector that detects without accusing is half a tool.
+#   * it is late. A test weakened on Tuesday surfaces six days and twenty commits
+#     later, by which point the change is no longer under review.
+#
+# So the trigger is `pull_request`, narrowed by `paths` to the files that can
+# actually move the score: the two mutated modules, the tests that drive them,
+# and the mutation tooling itself. Those PRs are the minority, so the 25 minutes
+# are paid only where they can buy something — and the "wrong cost on every push"
+# objection stops applying, because it is no longer every push.
+#
+# The schedule stays, for the job it is genuinely the only trigger for: catching
+# change that does not arrive in a commit at all. A new release of a dependency
+# can alter behaviour under a suite nobody touched, and only elapsed time reveals
+# that. The cron complements the PR trigger; it never was a substitute for it.
 #
 # What it must never be is theatre. There is no `if: false` here, the paths it
 # mutates are asserted to exist by tests/test_mutation_config.py, and the score
@@ -19,32 +40,92 @@
 name: mutation testing
 
 on:
+  # The trigger that attributes: only on PRs that touch something able to change
+  # the score. Everything else in the repo can be reviewed without paying 25
+  # minutes, and a PR that does touch these gets its verdict while it is open.
+  pull_request:
+    paths:
+      # The two mutated modules...
+      - "drift/detectors.py"
+      - "models/backtest.py"
+      # ...and the seven test files named in `[tool.mutmut].runner`, which are
+      # the only tests that can kill or fail to kill a mutant. Not `tests/**`:
+      # most test files here cannot move this number, and making an unrelated
+      # docs PR wait 25 minutes is how a job gets routed around.
+      # `tests/test_mutation_config.py` asserts this list matches the runner, so
+      # the two cannot drift apart.
+      - "tests/test_drift_detectors.py"
+      - "tests/test_drift_boundaries.py"
+      - "tests/test_drift_timeline.py"
+      - "tests/test_drift_trigger.py"
+      - "tests/test_backtest.py"
+      - "tests/test_backtest_accounting.py"
+      - "tests/test_baseline.py"
+      # ...and the tooling that decides the verdict.
+      - "pyproject.toml"
+      - "scripts/mutation_score.py"
+      - "scripts/mutation_survivors.py"
+      - ".github/workflows/mutation.yml"
   schedule:
-    # 04:40 UTC on Mondays. Off the hour: GitHub throttles the top-of-hour
-    # stampede and delays those runs.
+    # 04:40 UTC on Mondays — for dependency drift, not for the suite. See the
+    # header. Off the hour: GitHub throttles the top-of-hour stampede and delays
+    # those runs.
     - cron: "40 4 * * 1"
   workflow_dispatch:
     inputs:
       floor:
         description: "Fail if the overall mutation score falls below this percentage"
         type: string
-        # 65, not a round number: the measured score is 65.0% and the runner
-        # reproduced 52.3% exactly before the gap-closing tests landed. A floor set
-        # at a real measurement is a ratchet; one picked in advance is not.
-        default: "65"
+        # 66, measured here, on this runner. See `env.FLOOR` below for why that
+        # sentence carries the whole weight. Keep the two equal.
+        default: "66"
 
 permissions:
   contents: read
 
+env:
+  # ---------------------------------------------------------------------------
+  # THE FLOOR — 66, and every word of the derivation matters.
+  #
+  # The previous value was 65, read off `docs/MUTATION-TESTING.md`'s published
+  # "65.0%". Two things were wrong with that, and together they made this gate
+  # fail on green code:
+  #
+  #   1. 65.0% is 308/474 = 64.9789% rounded for display, and the script compared
+  #      the *raw* value. The gate therefore rejected the exact measurement that
+  #      set it. scripts/mutation_score.py now compares the number it reports.
+  #   2. 308/474 was measured on Windows, where 9 mutants come back `untested`
+  #      and count as not-killed. This runner produces none.
+  #
+  # So the floor is set from a run on *this* runner, at the commit it gates:
+  #
+  #   run 30680545024, workflow_dispatch at 41e5d02, ubuntu-latest, floor 1
+  #   -> 316 killed / 474 = 66.7%, raw statuses {ok_killed: 316,
+  #      bad_survived: 158}, no `untested` bucket at all.
+  #
+  # Against the Windows figure that is +8 killed and +1 survivor — the 9
+  # `untested` resolving, 8 one way and 1 the other. The two platforms genuinely
+  # disagree by 1.7 points, and a floor picked from the wrong one is a coin flip.
+  #
+  # 66 leaves ~3 mutants of headroom under 66.7%. That is deliberately tight: a
+  # ratchet with ten points of slack does not ratchet. Raise it when the score
+  # rises; do not lower it without saying why in the same commit.
+  # ---------------------------------------------------------------------------
+  FLOOR: "66"
+
+# Per-ref, not global. A single `mutation-testing` group meant one PR's run
+# cancelled another's, and the cancelled one is indistinguishable from a run that
+# never happened.
 concurrency:
-  group: mutation-testing
+  group: mutation-testing-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
   mutate:
     runs-on: ubuntu-latest
-    # A full pass took ~25 min locally on 474 mutants; 60 leaves headroom for a
-    # slower runner without hanging forever if something goes wrong.
+    # A full pass took ~25 min locally and **36 min on this runner** (measured:
+    # run 30680545024, 02:42:42Z -> 03:19:07Z) over 474 mutants. 60 leaves
+    # headroom for a slower box without hanging forever if something goes wrong.
     timeout-minutes: 60
 
     steps:
@@ -71,9 +152,16 @@ jobs:
         run: uv run mutmut run || true
 
       - name: Report the score and enforce the floor
+        env:
+          # `inputs.floor` is set only by workflow_dispatch; on a pull request or
+          # the schedule it is empty, and the shell default supplies FLOOR from
+          # the workflow env above. Done in the shell rather than with
+          # `${{ inputs.floor || env.FLOOR }}` so an empty value can never reach
+          # argparse as `--floor ""`.
+          DISPATCH_FLOOR: ${{ inputs.floor }}
         run: |
           uv run python scripts/mutation_score.py \
-            --floor "${{ inputs.floor || '65' }}" \
+            --floor "${DISPATCH_FLOOR:-$FLOOR}" \
             --survivors 30 | tee "$GITHUB_STEP_SUMMARY"
           exit "${PIPESTATUS[0]}"
 

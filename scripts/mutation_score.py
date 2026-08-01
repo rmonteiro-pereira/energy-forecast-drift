@@ -92,7 +92,14 @@ def main() -> int:
     killed = sum(overall[s] for s in KILLED)
     total = sum(overall.values())
     score = 100.0 * killed / total
-    lines.append(f"| **Total** | **{killed}** | **{total}** | **{score:.1f}%** |")
+    # The floor is compared against the *reported* number, not the raw one.
+    # This is not cosmetic: 308/474 is 64.9789%, which prints as "65.0%" — so a
+    # floor of 65 read from the published figure failed on the very run that
+    # produced it, and the summary said "65.0%" three lines above the error
+    # saying 65.0% was below 65.0%. A gate whose verdict disagrees with its own
+    # report is a gate nobody can act on. One decimal, one number, both uses.
+    reported = round(score, 1)
+    lines.append(f"| **Total** | **{killed}** | **{total}** | **{reported:.1f}%** |")
 
     print("## Mutation score\n")
     print("\n".join(lines))
@@ -107,14 +114,14 @@ def main() -> int:
                 print(f"L{line_no:<5} {survivors[name][line_no][:96]}")
             print("```\n")
 
-    if score < args.floor:
+    if reported < args.floor:
         print(
-            f"\n::error::Mutation score {score:.1f}% is below the floor of {args.floor:.1f}%. "
+            f"\n::error::Mutation score {reported:.1f}% is below the floor of {args.floor:.1f}%. "
             "Some change made the tests weaker without making any of them fail."
         )
         return 1
 
-    print(f"\nScore {score:.1f}% meets the floor of {args.floor:.1f}%.")
+    print(f"\nScore {reported:.1f}% meets the floor of {args.floor:.1f}%.")
     return 0
 
 
