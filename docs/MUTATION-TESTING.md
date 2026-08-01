@@ -280,9 +280,12 @@ the row is dropped because a count of zero in a table of survivors is noise.
   repo-wide quality figure and is not presented as one.
 - 66.7% is still a **modest score**. Roughly a third of the small changes you
   could make to those two files would go unnoticed by the suite. The mitigating
-  detail is *which* third: 96 of the 158 surviving mutants are prose, and every
-  comparison that drives the alarm is now pinned. The mitigating detail is not an
-  excuse — 4 survivors are genuine gaps and they are listed above by name.
+  detail is *which* third: 96 of the 158 surviving mutants are filed as prose,
+  and every comparison that drives the alarm is now pinned. **That mitigation is
+  now known to be partly false** — see the section below; 47 of those 96 are not
+  prose at all. The 4-gap figure is an undercount for the same reason.
+- **The floor does not catch a deliberate weakening.** Demonstrated, not feared.
+  See below.
 - **It says nothing about whether the thresholds themselves are right.** Mutation
   testing checks that the code does what the tests say. Whether PSI > 0.2 is the
   right place to alert is a different question, and it now has its own answer:
@@ -291,6 +294,89 @@ the row is dropped because a count of zero in a table of survivors is noise.
   windows where nothing changed**. A 67% mutation score and a false-positive-prone
   threshold are entirely compatible — the code correctly implements a rule that is
   itself miscalibrated, which is exactly why both measurements exist.
+
+## The gate was attacked, and it did not hold
+
+A review did the thing this document had only asserted was covered: it deleted
+two assertions and measured what the gate said.
+
+The two lines were `tests/test_backtest_accounting.py:92-93` — **the only lines
+in the repository that read `overall["bias"]`**. The result, over two full mutmut
+passes:
+
+| | |
+|---|---|
+| the suite | **267 passed**, green |
+| mutants | exactly **one** kill lost — `models/backtest.py:173`, the bias formula |
+| `mutation_survivors.py --check` | exit 0, *"Every surviving mutant is adjudicated"* |
+| the floor | 315/474 = **66.5% ≥ 66** — **passes** |
+
+Two independent reasons it slipped through, both measured against the real cache:
+
+**1. Quantisation.** One mutant is 0.21 points. A floor with headroom has room
+for several deletions inside it; a floor with none fails on noise instead. There
+is no setting of a percentage floor that catches one deleted assertion without
+also failing green code.
+
+**2. Absorption.** The new survivor was filed `accepted:human-readable-text` —
+*"the prose is not load-bearing"* — because that rule's pattern is
+`^\s*(f?["\'])`, which matches **any line beginning with a quoted dict key**, and
+every metric in `overall` is such a line. The bias *formula* was classified as
+text a human reads. Re-running the adjudicator over the current results:
+
+- **195 of the 316 kills (62%)** would land on an existing ACCEPTED or GAP rule
+  if they regressed, including MAE, MAPE, RMSE and bias;
+- **`--check` fails only on UNADJUDICATED**, never on a GAP verdict;
+- **47 of the 96 survivors filed as prose sit on `"key": <expression>` lines** —
+  they are not prose either.
+
+One of those 47 was a real gap, live on `main` and shipped: `"rmse"` →
+`"XXrmseXX"` at `models/backtest.py:172` survived every run on record, because
+**no test in this repository mentioned rmse at all** (`grep -rn rmse tests/`
+returned nothing). It is killed now, by a test whose kill was verified by
+applying the mutant and watching `KeyError: 'rmse'`. This is the second real gap
+found inside the *accepted* pile — the lesson two sections above, that the
+dangerous half of a survivor list is the half already marked fine, had to be
+learned twice.
+
+### What replaces the percentage floor
+
+**A ratchet over the killed *set*, not the rate:** persist which mutants were
+killed, and fail on any `killed → survived` transition. It attributes per mutant,
+has no quantisation slack, and makes the adjudication rules irrelevant to the
+verdict — a regex cannot absorb a mutant that is compared against its own past.
+
+Two things the implementation must get right, both established by reading
+mutmut 2.5.1's `cache.py` and by diffing two real CI caches:
+
+**The integer primary key is not an identity.** `Mutant` uses Pony's implicit
+autoincrement `id` — the number `mutmut show <id>` takes. CI uploads
+`.mutmut-cache` and never restores it, so every run rebuilds from scratch and
+assigns ids in insertion order. Two runs here matched 474/474 on pk, but only
+because the mutated files were byte-identical between them; insert one line above
+and every id after it shifts. **Do not persist the pk.**
+
+**`(filename, line_text, index)` is not unique either.** Measured on the real
+cache: 474 mutants collapse to **446** keys — **21 keys collide, covering 49
+mutants**, and 2 of those collisions mix a kill with a survivor. `    )` alone
+appears at seven different lines of `drift/detectors.py`. Adding `line_number`
+makes it unique (474/474) but reintroduces exactly the fragility the key was
+meant to avoid.
+
+What does work, verified unique and stable across both real runs: **`(filename,
+line_text, index, nth_occurrence_of_that_line_in_that_file)`** — 474/474 distinct,
+474/474 matched across runs, zero status disagreements. The occurrence ordinal
+disambiguates the 21 collisions and, unlike a line number, does not move when
+lines are inserted elsewhere.
+
+**And the previous cache must not be restored into place.**
+`cache.py::cached_mutation_status` returns `OK_KILLED` **without re-running**
+whenever the mutant was previously killed, on the stated assumption that *"if a
+mutant was killed, a change to the test suite will mean it's still killed."*
+That assumption is precisely the attack above. Restoring the cache would make the
+regression invisible rather than visible. The previous run's statuses must be
+read from the artifact **as data, for comparison only**, while the run itself
+starts clean.
 
 ## The one thing worth taking away
 

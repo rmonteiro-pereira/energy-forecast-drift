@@ -40,6 +40,21 @@ def _biased(offset: float):
     return predict
 
 
+def _alternating(small: float, large: float):
+    """Wrong by `small` on even folds and by `large` on odd ones.
+
+    Needed to separate RMSE from MAE: with a *constant* error the two are equal,
+    so a spread of errors is the only input that can tell `sqrt(mean(e**2))`
+    apart from `mean(|e|)`.
+    """
+
+    def predict(history: pd.Series, targets: pd.DatetimeIndex, cutoff: pd.Timestamp) -> pd.Series:
+        offset = small if cutoff.dayofyear % 2 == 0 else large
+        return pd.Series(np.full(len(targets), history.iloc[-1] + offset), index=targets)
+
+    return predict
+
+
 # ---------------------------------------------------------------------------
 # the MAPE formula
 # ---------------------------------------------------------------------------
@@ -91,6 +106,45 @@ def test_a_negative_error_gives_the_same_mape_as_a_positive_one():
     assert over.overall["mae"] == pytest.approx(under.overall["mae"])
     assert over.overall["bias"] == pytest.approx(-under.overall["bias"])
     assert over.overall["bias"] != pytest.approx(0.0), "a biased predictor must show bias"
+
+
+def test_rmse_is_reported_and_is_the_root_mean_square_of_the_error():
+    """`overall["rmse"]` was published and asserted by nothing at all.
+
+    Found by adjudicating a survivor rather than by reading the code: the mutant
+    that renames the key — `"rmse"` -> `"XXrmseXX"` — survived every run on
+    record, while the identical mutants on `"mae"`, `"mape_pct"` and `"bias"`
+    were killed. The difference was simply that no test in the repository
+    mentioned rmse; `grep -rn rmse tests/` returned nothing.
+
+    It had been filed as `accepted:human-readable-text` — "the prose is not
+    load-bearing" — because that rule's pattern matches any line beginning with
+    a quoted dict key, and every metric in `overall` is such a line. A published
+    artifact field that no test reads is a gap, not prose. This is the second
+    time a real gap has been found inside the *accepted* pile, which is the
+    lesson `docs/MUTATION-TESTING.md` already draws and then had to draw again.
+
+    With a constant +10 bias every error is exactly 10, so RMSE, MAE and |bias|
+    all collapse to 10 — the one case where the three are analytically equal,
+    which pins the formula without re-deriving it in the test.
+    """
+    constant_bias = backtest.run(
+        _series(24 * 30), _biased(10.0), horizons=(1,), weeks=1, min_history_hours=24
+    )
+
+    assert constant_bias.overall["rmse"] == pytest.approx(10.0)
+    assert constant_bias.overall["rmse"] == pytest.approx(constant_bias.overall["mae"])
+
+    # ...and RMSE must *not* be MAE in general: it penalises the large error
+    # more, so a spread of errors has to separate them. Squaring is the whole
+    # point of the metric, and `mean(|e|)` would pass the assertions above.
+    spread = backtest.run(
+        _series(24 * 30), _alternating(5.0, 15.0), horizons=(1,), weeks=1, min_history_hours=24
+    )
+    assert spread.overall["rmse"] > spread.overall["mae"], (
+        "RMSE must exceed MAE whenever the errors are not all equal — otherwise "
+        "the square and the square root are not being applied"
+    )
 
 
 # ---------------------------------------------------------------------------
