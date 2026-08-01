@@ -5,8 +5,10 @@ remote. Every count and every "has never run" below is that snapshot, not the
 state today — this is a dated pre-flight record, not a live status page.*
 
 > **What has changed since.** The repository is published; `ci.yml` has run 28
-> times, 27 green; the suite is 269 collected, not 180; and there are 36 commits
-> on `main`, not 25. §2's "CI has never run" and §5's "no remote configured" are
+> times, 27 green; the suite is well past the 180 below (the current figure is in
+> the README, which is the one `tests/test_doc_claims.py` keeps honest — no second
+> live copy of it belongs here); and there are 36 commits on `main`, not 25.
+> §2's "CI has never run" and §5's "no remote configured" are
 > marked resolved in place. **The document's conclusion — reproducible by a
 > stranger, with the demand data as the one honest exception — is unchanged**,
 > and the exception is still open (`docs/BLOCKED.md`).
@@ -72,7 +74,7 @@ Windows 11.
 ## Verified at this commit
 
 *A transcript of what these commands printed at `a7e45a2`. It is a record, not a
-live count — the suite has grown to 269 collected since, and
+live count — the suite has grown a long way past 180 since, and
 `tests/test_doc_claims.py` deliberately exempts dated transcripts like this one
 from the check that keeps live prose honest.*
 
