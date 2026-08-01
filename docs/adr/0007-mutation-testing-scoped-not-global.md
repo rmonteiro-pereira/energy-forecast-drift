@@ -79,16 +79,31 @@ exists for:
 The fix is the one this ADR's own "What would reverse this" section already
 named: **run it when the things it measures change.** The trigger is now
 `pull_request`, narrowed by a `paths` filter to `drift/detectors.py`,
-`models/backtest.py`, `tests/**` and the mutation tooling itself. Those PRs are a
-minority, so the ~25 minutes are paid only where they can buy something — and the
-"wrong cost on every push" objection above stops applying, because it is no
-longer every push.
+`models/backtest.py`, the **seven test files named in `[tool.mutmut].runner`**,
+**every first-party module those nine import** (`drift/**`, `features/**`,
+`models/**`, `ingest/config.py`, `ingest/store.py`), `uv.lock`, and the mutation
+tooling. Those PRs are a minority, so the ~25 minutes are paid only where they
+can buy something — and the "wrong cost on every push" objection above stops
+applying, because it is no longer every push.
 
-The cron stays, with the reason it actually has rather than the one it was given.
-It catches change that **does not arrive in a commit**: a new release of a
-dependency can alter behaviour under a suite nobody touched, and only elapsed
-time reveals that. It complements the PR trigger; it was never a substitute for
-it.
+> **This paragraph said `tests/**` for a day while the workflow listed seven
+> files, and omitted the import closure and the lockfile entirely.** Both were
+> caught in review. The `tests/**` divergence is the ordinary kind of drift this
+> repository keeps writing tests against, so it got one:
+> `tests/test_mutation_config.py` now recomputes the import closure from the AST
+> and fails if the filter misses anything. The omission was not cosmetic —
+> `drift/config.py` holds the `DEFAULT_THRESHOLDS` that `test_drift_boundaries.py`
+> pins, so editing a threshold changes which mutants die while touching nothing
+> the first filter listed.
+
+The cron stays, but with a **narrower** remit than the first version of this
+amendment claimed. "Dependency change does not arrive in a commit" is false for
+this repository: Dependabot has opened four PRs against it, so most of it does —
+and `uv.lock` now sits in the `paths` filter, where the trigger that can name the
+commit catches it. What genuinely remains for the cron is the residue: a
+transitive bump no PR here ever names, a yanked release, a runner image that
+moves underneath us. Real, but smaller than the sentence it replaces. It
+complements the PR trigger; it was never a substitute for it.
 
 *The floor.* The floor was set to `65` by reading `docs/MUTATION-TESTING.md`'s
 published **65.0%** — but that figure is `308/474 = 64.9789%` rounded for display,
@@ -107,6 +122,64 @@ flip.** So the floor is now set from a `workflow_dispatch` run at the same commi
 on the actual runner, with a deliberately low floor, and then fixed below what
 that run measured. `tests/test_mutation_config.py` pins the 308/474 rounding case
 so the report and the verdict can never disagree again.
+
+**Amended again, same day: what counted as a kill was inverted, and the
+percentage is the wrong thing to ratchet.** Both found by an independent review
+that attacked the gate instead of reading it.
+
+*`KILLED` had both members wrong, in opposite directions.* It was
+`{"ok_killed", "bad_timeout"}`. Per mutmut's own `run_mutation`, `BAD_TIMEOUT` is
+returned from `except TimeoutError` — the run hit the clock, and whether a test
+would have failed is unknown — while `OK_SUSPICIOUS` is returned when
+`not survived`, i.e. **the tests did fail and the mutant is dead**, merely
+slowly. So the set credited a hang and discarded a genuine kill; mutmut's own
+`ok_`/`bad_` prefix says so. It is now `{"ok_killed", "ok_suspicious"}`, with
+`bad_timeout` counted against the score alongside `untested` and named explicitly
+in the report. The cost was measured, not guessed: the same code twice on one
+machine gave 69.7% and 74.2% — 4.5 points of clock noise against a floor with
+about three mutants of headroom. On the CI runner it happens to be worth nothing
+today (both recorded runs produced zero `ok_suspicious` and zero `bad_timeout`),
+which is exactly why no test could have caught it and why the fix is worth
+landing before a slower runner makes it matter.
+
+*The percentage is the wrong quantity.* The review deleted two assertions —
+`tests/test_backtest_accounting.py:92-93`, the only lines in the repository that
+read `overall["bias"]` — and ran two full mutmut passes. The suite stayed green
+(267 passed), exactly one kill was lost, `--check` still said *"Every surviving
+mutant is adjudicated"*, and 315/474 = 66.5% cleared the floor of 66. **The gate
+did not notice the attack it exists to catch.** Two independent reasons:
+
+- **Quantisation.** One mutant is 0.21 points. Any floor with headroom has room
+  for several deletions inside it, and a floor with no headroom fails on noise.
+- **Absorption.** The new survivor was filed `accepted:human-readable-text` —
+  "the prose is not load-bearing" — because that rule's pattern,
+  `^\s*(f?["\'])`, matches *any* line starting with a quoted dict key, and every
+  metric in `overall` is such a line. Measured against the real cache: **195 of
+  the 316 current kills (62%) would land on an existing ACCEPTED or GAP rule if
+  they regressed**, and `--check` only fails on UNADJUDICATED, never on GAP.
+
+This is not hypothetical, and it is not only the injected case. Re-running the
+adjudicator over the live survivor list found **47 survivors sitting on
+`"key": <expression>` lines filed as prose**, among them
+`models/backtest.py:172` — `"rmse"` → `"XXrmseXX"` survives every run on record
+because **no test in the repository mentions rmse at all**. A published artifact
+field that nothing asserts is a gap, and it had been sitting inside the accepted
+pile. That is the second time a real gap has been found there; the lesson this
+document already drew — *"the dangerous half of a survivor list is the half
+already marked fine"* — had to be drawn again. That one is now killed by a real
+test, proven by applying the mutant and watching `KeyError: 'rmse'`.
+
+**The direction agreed is a ratchet over the killed *set*, not the percentage:**
+persist the identities of killed mutants and fail on any `killed → survived`
+transition. It gives per-mutant attribution and removes the quantisation slack.
+It **supplements** `--check` rather than replacing it — a killed-set comparison
+is blind to a *new* or *unclassified* survivor, which is precisely what the
+adjudication gate is for. Design notes are in `docs/MUTATION-TESTING.md`,
+including why the cache's integer primary key must not be the identity, why an
+occurrence ordinal fails on duplicated lines (a counter-example that killed the
+first proposal), and why `difflib.SequenceMatcher` — the algorithm mutmut itself
+uses in `update_line_numbers` — is what the migration must be built on. Not
+implemented here.
 
 **Shipping a mutation config that cannot run.** Rejected explicitly, because it
 is a live failure mode: a sibling project was found shipping `paths_to_mutate`

@@ -1,9 +1,11 @@
 # Mutation testing
 
-> **The headline number is 66.7%**, measured on the CI runner
-> ([run 30680545024](https://github.com/rmonteiro-pereira/energy-forecast-drift/actions/runs/30680545024),
-> `ubuntu-latest`, commit `41e5d02`). The same commit scores **65.0%** on Windows,
-> and both numbers are below. It is published here because a measured mediocre
+> **The headline number is 66.9%**, measured on the CI runner
+> ([run 30684416557](https://github.com/rmonteiro-pereira/energy-forecast-drift/actions/runs/30684416557),
+> `ubuntu-latest`). **Windows scores lower on the same code, by about 1.7
+> points**, for a reason worth knowing — the exact figure below is measured at an
+> earlier commit, so treat it as the size of the effect and not as a subtraction
+> from 66.9%. It is published here because a measured mediocre
 > score with the survivors listed is worth more than a flattering one — and
 > because finding out *which* assertions were missing already produced a real fix.
 
@@ -54,7 +56,8 @@ uv run python scripts/mutation_score.py --floor 66       # the CI floor
 uv run python scripts/mutation_survivors.py --check      # every survivor judged
 ```
 
-> **On Windows, expect 65.0% and not 66.7%, and that is not a regression.** See
+> **On Windows, expect roughly 1.7 points lower, and that is not a regression.**
+> (Measured at `41e5d02`; no Windows run exists for the current commit.) See
 > [the platform note](#the-same-commit-scores-differently-on-windows) below before
 > concluding the score dropped.
 
@@ -69,29 +72,39 @@ this document is only worth something if someone else can regenerate it.
 
 ## The score
 
-**The measurement the floor is set from**, on the CI runner —
-[run 30680545024](https://github.com/rmonteiro-pereira/energy-forecast-drift/actions/runs/30680545024),
-`ubuntu-latest`, commit `41e5d02`, 2026-08-01:
+**The current measurement**, on the CI runner —
+[run 30684416557](https://github.com/rmonteiro-pereira/energy-forecast-drift/actions/runs/30684416557),
+`ubuntu-latest`, 2026-08-01:
 
 | File | Killed | Total | Score |
 |---|---:|---:|---:|
 | `drift/detectors.py` | 217 | 342 | **63.5%** |
-| `models/backtest.py` | 99 | 132 | **75.0%** |
-| **Total** | **316** | **474** | **66.7%** |
+| `models/backtest.py` | 100 | 132 | **75.8%** |
+| **Total** | **317** | **474** | **66.9%** |
 
-The floor is **66**.
+The floor is **66**, set from the run before this one
+([30680545024](https://github.com/rmonteiro-pereira/energy-forecast-drift/actions/runs/30680545024),
+316 / 474 = 66.7% at `41e5d02`). It is deliberately *not* raised in the same
+change that raised the score: a floor should follow a measurement it did not
+cause. See [the proposed killed-set ratchet](#proposed-a-ratchet-over-the-killed-set-alongside-the-floor)
+before tightening it — the percentage is not the quantity worth ratcheting.
 
 ### The same commit scores differently on Windows
 
 The local run of the same code, on Windows, 2026-07-31, gave `drift/detectors.py`
 **209 / 342** and `models/backtest.py` **99 / 132** — **308 / 474 = 65.0%**.
 
-**65.0% locally, 66.7% in CI, same code.** The difference is entirely the nine
-`untested` mutants described [below](#every-one-of-the-158-survivors-is-adjudicated):
-Windows leaves nine mutants untested and the score counts them as not-killed;
-this runner leaves **none** (`Raw statuses: {'ok_killed': 316, 'bad_survived':
-158}` — no `untested` key at all). Of the nine, eight resolve as killed and one
-as a survivor, which is exactly `308 + 8 = 316` and `157 + 1 = 158`.
+**65.0% locally, 66.7% in CI, both at commit `41e5d02`** — the last commit
+measured on both platforms, and therefore the only honest platform comparison
+available. The current 66.9% is a *later* commit, measured on CI only, so it is
+not the other end of this comparison. The difference is
+entirely the nine `untested` mutants described
+[below](#every-one-of-the-157-survivors-is-adjudicated): Windows leaves nine
+mutants untested and the score counts them as not-killed; this runner leaves
+**none** (`Raw statuses: {'ok_killed': 316, 'bad_survived': 158}` — no `untested`
+key at all). Of the nine, eight resolve as killed and one as a survivor, which is
+exactly `308 + 8 = 316` and `157 + 1 = 158`. The current 317 / 157 is that run
+plus the rmse gap killed.
 
 That gap of 1.7 points is why the floor is set from a CI run rather than a local
 one. The floor before this was `65`, taken from the rounded **65.0%** above —
@@ -112,6 +125,7 @@ verdict cannot disagree again.
 | 3 — after closing three named gaps | 290 / 474 | 61.2% | 18 tests over `drift_timeline`, the MAPE formula and fold accounting |
 | 4 — after killing 19 of the 21 named gaps | 308 / 474 | **65.0%** | 13 tests written against the *mutant diffs*, not the prose descriptions of them |
 | 5 — **the same code, on the CI runner** | 316 / 474 | **66.7%** | *no test changed.* Runs 1–4 were local, on Windows; this one is `ubuntu-latest`, and the nine `untested` mutants resolve there |
+| 6 — after killing the rmse gap | 317 / 474 | **66.9%** | one test, for the artifact field that no test in the repository mentioned — found by re-reading the *accepted* pile, not the gap pile |
 
 Runs 1–4 are local (Windows). Across them `drift/detectors.py` went
 **42.0% → 48.8% → 57.9% → 61.1%** and `models/backtest.py`
@@ -173,7 +187,7 @@ happened to be eligible, and "everything was excluded as deterministic" is
 precisely when a reader most wants to know which columns those were. Both
 branches now report it.
 
-## Every one of the 158 survivors is adjudicated
+## Every one of the 157 survivors is adjudicated
 
 Not summarised — **adjudicated**. Each surviving mutant matches exactly one rule
 in [`scripts/mutation_survivors.py`](../scripts/mutation_survivors.py), and each
@@ -186,10 +200,10 @@ uv run python scripts/mutation_survivors.py            # the full table
 uv run python scripts/mutation_survivors.py --check    # the CI gate
 ```
 
-**158 mutants across 124 source lines. 4 are real gaps (2.5%); 154 are
+**157 mutants across 123 source lines. 4 are real gaps (2.5%); 153 are
 accepted.**
 
-> **0 mutants mutmut never tested** on the CI runner: `316 + 158 = 474` exactly,
+> **0 mutants mutmut never tested** on the CI runner: `317 + 157 = 474` exactly,
 > and the raw statuses carry no `untested` key at all. **The local Windows run
 > leaves nine**, and the score counts those as not-killed — `308 + 157 = 465`,
 > not 474. Every one of the nine is on a syntax-continuation line (a bare `)` or
@@ -247,11 +261,11 @@ unexamined.
 | `accepted:equivalent-unreachable-get-default` | `rollup.get("columns_scored", 0)` → `…, 1)` | The default is dead code. `_section_from_columns` returns `columns_scored` on **both** branches — `0` on the nothing-eligible path, `len(scored)` on the other — so the key is always present and the fallback never evaluates. |
 | `accepted:equivalent-first-increment-from-zero` | `skipped += 1` → `skipped = 1` | They differ only if `skipped` is already non-zero, and it cannot be: cutoffs ascend and `start >= series.min()` always holds, so at most the *first* cutoff has empty history, reached on iteration one with `skipped == 0`. The sibling `-= 1` and `+= 2` mutants on that line **are** killed, by the exact-count assertion. |
 
-### The accepted survivors — 154 mutants, and why each is not a defect
+### The accepted survivors — 153 mutants, and why each is not a defect
 
 | Rule | Lines | Mutants | Reason |
 |---|---:|---:|---|
-| `accepted:human-readable-text` | 75 | 96 | Summaries, notes, log messages, f-strings. Asserting exact wording breaks on every copy edit and protects nothing; the artifact *schema* is asserted separately. **This is the only row that differs between platforms** — the one Windows-`untested` mutant that survives on Linux lands here. |
+| `accepted:human-readable-text` | 74 | 95 | Summaries, notes, log messages, f-strings. Asserting exact wording breaks on every copy edit and protects nothing; the artifact *schema* is asserted separately. **This is the only row that differs between platforms** — the one Windows-`untested` mutant that survives on Linux lands here. |
 | `accepted:sort-or-selection-order` | 2 | 3 | Sort keys and `idxmax` selection deciding presentation order. The *set* is asserted; the order in a report is not a correctness property. **Narrowed this round** — it used to cover 8 mutants, four of which were `make_cutoffs` arithmetic and are now `gap:fold-window-arithmetic`. |
 | `accepted:equivalent-unreachable-get-default` | 1 | 1 | **Provably equivalent** — argued in full above. The `.get` default is unreachable because both return paths always set the key. |
 | `accepted:equivalent-first-increment-from-zero` | 1 | 1 | **Provably equivalent** — argued in full above. `skipped` is provably 0 when that branch is reached, so `= 1` and `+= 1` cannot differ. |
@@ -278,11 +292,14 @@ the row is dropped because a count of zero in a table of survivors is noise.
 
 - It covers **two files**. The other ~4,500 lines are unmeasured. This is not a
   repo-wide quality figure and is not presented as one.
-- 66.7% is still a **modest score**. Roughly a third of the small changes you
+- 66.9% is still a **modest score**. Roughly a third of the small changes you
   could make to those two files would go unnoticed by the suite. The mitigating
-  detail is *which* third: 96 of the 158 surviving mutants are prose, and every
-  comparison that drives the alarm is now pinned. The mitigating detail is not an
-  excuse — 4 survivors are genuine gaps and they are listed above by name.
+  detail is *which* third: 95 of the 157 surviving mutants are filed as prose,
+  and every comparison that drives the alarm is now pinned. **That mitigation is
+  now known to be partly false** — see the section below; 46 of those 95 are not
+  prose at all. The 4-gap figure is an undercount for the same reason.
+- **The floor does not catch a deliberate weakening.** Demonstrated, not feared.
+  See below.
 - **It says nothing about whether the thresholds themselves are right.** Mutation
   testing checks that the code does what the tests say. Whether PSI > 0.2 is the
   right place to alert is a different question, and it now has its own answer:
@@ -291,6 +308,148 @@ the row is dropped because a count of zero in a table of survivors is noise.
   windows where nothing changed**. A 67% mutation score and a false-positive-prone
   threshold are entirely compatible — the code correctly implements a rule that is
   itself miscalibrated, which is exactly why both measurements exist.
+
+## The gate was attacked, and it did not hold
+
+A review did the thing this document had only asserted was covered: it deleted
+two assertions and measured what the gate said.
+
+The two lines were `tests/test_backtest_accounting.py:92-93` — **the only lines
+in the repository that read `overall["bias"]`**. The result, over two full mutmut
+passes:
+
+| | |
+|---|---|
+| the suite | **267 passed**, green |
+| mutants | exactly **one** kill lost — `models/backtest.py:173`, the bias formula |
+| `mutation_survivors.py --check` | exit 0, *"Every surviving mutant is adjudicated"* |
+| the floor | 315/474 = **66.5% ≥ 66** — **passes** |
+
+Two independent reasons it slipped through, both measured against the real cache:
+
+**1. Quantisation.** One mutant is 0.21 points. A floor with headroom has room
+for several deletions inside it; a floor with none fails on noise instead. There
+is no setting of a percentage floor that catches one deleted assertion without
+also failing green code.
+
+**2. Absorption.** The new survivor was filed `accepted:human-readable-text` —
+*"the prose is not load-bearing"* — because that rule's pattern is
+`^\s*(f?["\'])`, which matches **any line beginning with a quoted dict key**, and
+every metric in `overall` is such a line. The bias *formula* was classified as
+text a human reads. Re-running the adjudicator over the current results:
+
+- **195 of the 316 kills (62%)** would land on an existing ACCEPTED or GAP rule
+  if they regressed, including MAE, MAPE, RMSE and bias;
+- **`--check` fails only on UNADJUDICATED**, never on a GAP verdict;
+- **47 of the 96 survivors then filed as prose sat on `"key": <expression>`
+  lines** — they are not prose either. One of the 47 is killed by this change,
+  leaving **46 of 95** today.
+
+That one was a real gap, live on `main` and shipped: `"rmse"` →
+`"XXrmseXX"` at `models/backtest.py:172` survived every run on record, because
+**no test in this repository mentioned rmse at all** (`grep -rn rmse tests/`
+returned nothing). It is killed now, by a test whose kill was verified by
+applying the mutant and watching `KeyError: 'rmse'`. This is the second real gap
+found inside the *accepted* pile — the lesson two sections above, that the
+dangerous half of a survivor list is the half already marked fine, had to be
+learned twice.
+
+### Proposed: a ratchet over the killed set, alongside the floor
+
+**Not yet implemented.** These are the design notes, with the constraints
+established by reading mutmut 2.5.1's `cache.py` and diffing two real CI caches.
+
+**A ratchet over the killed *set*, not the rate:** persist which mutants were
+killed and fail on any `killed → survived` transition. It attributes per mutant
+and has no quantisation slack, so it catches the deleted-assertion attack the
+percentage floor missed.
+
+**It supplements the adjudication gate; it does not replace it.** A killed-set
+comparison only sees identities that *were* killed and now are not. It says
+nothing about a **new** survivor on a new line, or an **unclassified** one — that
+is still `scripts/mutation_survivors.py --check`'s job, and dropping it would
+open a hole exactly where the ratchet is blind. Three transitions need explicit
+rules before this ships: an identity that is new, one that has disappeared
+(legitimate when its line was edited — see below), and one that was never killed
+to begin with.
+
+**"Killed" must mean the same thing here as in the score:** `ok_killed` and
+`ok_suspicious`; `bad_timeout` is unresolved and must not count as either a kill
+or a regression, or a slow runner will read as a weakened suite — which is the
+mistake the `KILLED` set already made once.
+
+**The integer primary key is not an identity.** `Mutant` uses Pony's implicit
+autoincrement `id` — the number `mutmut show <id>` takes. CI uploads
+`.mutmut-cache` and never restores it, so every run rebuilds from scratch and
+assigns ids in insertion order. Two runs here matched 474/474 on pk, but only
+because the mutated files were byte-identical between them; insert one line above
+and every id after it shifts. **Do not persist the pk.**
+
+**`(filename, line_text, index)` is not unique either.** Measured on the real
+cache: 474 mutants collapse to **446** keys — **21 keys collide, covering 49
+mutants**, and 2 of those collisions mix a kill with a survivor. `    )` alone
+appears at seven different lines of `drift/detectors.py`. Adding `line_number`
+makes it unique (474/474) but reintroduces exactly the fragility the key was
+meant to avoid.
+
+**An occurrence ordinal looks like the fix and is not.** Keying on `(filename,
+line_text, index, nth_occurrence_of_that_line_in_the_file)` is unique — 474/474
+distinct, 474/474 matched across both real runs — and it was proposed here on
+that basis. It is still wrong, and a counter-example settles it: with lines
+`[a, ), b, ), c]`, a mutant on the **second** `)` has ordinal 1. Insert another
+`)` above it and the file becomes `[a, ), ), b, ), c]` — the original line is now
+the *third* `)`, ordinal 2, while ordinal 1 now names the **newly inserted** line.
+The key silently transfers the old kill onto a different mutant. Deleting an
+earlier duplicate loses it the same way. Duplicated lines are exactly the 21
+colliding keys the ordinal was introduced to disambiguate, so the failure lands
+precisely where the mechanism is needed.
+
+**Use mutmut's own algorithm instead.** `cache.py::update_line_numbers` already
+solves this: it runs `difflib.SequenceMatcher` over the cached line texts against
+the current ones and, on each `equal` run, migrates the line number while keeping
+the row — so identity follows the line through insertions and deletions
+elsewhere. On `replace`/`delete` it drops the row, which is the correct
+semantics: an edited line is a new mutant, and the old kill's disappearance is
+not a regression. The same counter-example, migrated with `SequenceMatcher`,
+gives index 3 → 4 on insertion and 3 → 2 on deletion — both right.
+
+So: read the previous run's `(filename, line_number, line_text, index, status)`
+from the artifact, `SequenceMatcher` the previous line texts of each file against
+the current ones to migrate the line numbers, then compare on
+`(filename, migrated_line_number, index)`. Aligning *sequences* rather than
+counting occurrences is what makes duplicate lines tractable.
+
+**It is not a total order, though — a run of identical adjacent lines stays
+ambiguous, and the implementation must refuse rather than guess.** Inserting a
+`)` next to an existing `)` gives opcodes
+`[equal 0-2→0-2, insert 2-2→2-3, equal 2-3→3-4]`: old index 1 migrates to new
+index 1, and the *inserted* line becomes index 2. Which of the two identical
+lines is "the original" is not a question the text can answer, and
+`SequenceMatcher` picks one arbitrarily (consistently, but arbitrarily).
+
+Usually that is harmless — textually identical lines produce identical mutations,
+so the statuses being swapped belong to indistinguishable mutants. It stops being
+harmless exactly when their statuses **differ**, which is not hypothetical here:
+of the 21 colliding keys measured above, **2 mix a kill with a survivor**. There
+the migration can invent a regression or conceal one.
+
+So the rule for the implementation: when a migrated identity lands inside a run
+of adjacent identical lines whose statuses are not uniform, **do not transfer the
+status** — mark those identities ambiguous and require them to be retired or
+adjudicated explicitly, the same way an unclassified survivor is. A ratchet that
+guesses in the one place its key is undecidable is a ratchet that will eventually
+accuse the wrong commit. Worth a test of its own: insert a line before a
+consecutive duplicate and assert the original mutant does **not** silently
+receive the other's status.
+
+**And the previous cache must not be restored into place.**
+`cache.py::cached_mutation_status` returns `OK_KILLED` **without re-running**
+whenever the mutant was previously killed, on the stated assumption that *"if a
+mutant was killed, a change to the test suite will mean it's still killed."*
+That assumption is precisely the attack above. Restoring the cache would make the
+regression invisible rather than visible. The previous run's statuses must be
+read from the artifact **as data, for comparison only**, while the run itself
+starts clean.
 
 ## The one thing worth taking away
 
