@@ -47,6 +47,14 @@ on:
   # The trigger that attributes: only on PRs that touch something able to change
   # the score. Everything else in the repo can be reviewed without paying 25
   # minutes, and a PR that does touch these gets its verdict while it is open.
+  #
+  # Note the granularity, which is easy to get wrong: on `pull_request`, `paths`
+  # is evaluated against the **whole PR diff versus the base**, not against the
+  # individual push. So once a PR touches one of these files, every later push to
+  # it re-runs this job — including a docs-only follow-up commit. Combined with
+  # `cancel-in-progress` below, that means the verdict always belongs to the
+  # current head and the intermediate 36-minute runs are cancelled, which is the
+  # trade we want: a stale verdict is worse than a missing one.
   pull_request:
     paths:
       # The two mutated modules...
