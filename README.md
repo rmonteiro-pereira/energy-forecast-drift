@@ -48,7 +48,7 @@ accumulates in public week after week and can be pointed at.
 
 | | Status | Notes |
 |---|---|---|
-| **The code** | ✅ real, complete, tested | 275 Python tests + 4 dashboard tests, no network. Every path below runs today, and [`docs/REPRODUCE.md`](docs/REPRODUCE.md) has the transcripts. The tests are themselves measured — see [mutation testing](docs/MUTATION-TESTING.md). |
+| **The code** | ✅ real, complete, tested | 280 Python tests + 4 dashboard tests, no network. Every path below runs today, and [`docs/REPRODUCE.md`](docs/REPRODUCE.md) has the transcripts. The tests are themselves measured — see [mutation testing](docs/MUTATION-TESTING.md). |
 | **Open-Meteo temperature** | ⚠️ **real client, real data — but not in any committed artifact** | No key needed, and the client genuinely runs: the whole of [`docs/DRIFT-EVALUATION.md`](docs/DRIFT-EVALUATION.md) is measured on real Philadelphia ERA5 observations. It does **not** reach the model. `models/data.py::resolve_panel` falls back to the fixture *as a whole* when the lake has no EIA demand, and that is the permanent state today — so `models/fixtures.py` synthesises the temperature too, and every number below is fixture temperature, not Open-Meteo. |
 | **EIA hourly demand** | ❌ **absent** | The client is finished and not stubbed. It has never been given a key. |
 | **The demand series used everywhere** | ❌ **seeded synthetic fixture** | `models/fixtures.py`, seed `20260728`. A plausible curve, not a measurement. |
@@ -76,7 +76,7 @@ The claims worth checking, and where to check them:
 | The banner follows the data, not the copy | `dashboard/src/components.tsx::ProvenanceBanner` | `dashboard/src/components.test.tsx` — same props, flag flipped, banner changes state |
 | No secret can reach a log | `ingest/http.py::redact` | `tests/test_clients.py::test_secrets_never_survive_redaction` |
 | No artifact can claim to be real while it isn't | the `is_real` flag, written by every entrypoint | `tests/test_artifacts.py` — fails the build if any published artifact pairs `is_real: true` with synthetic provenance, or drops its warning |
-| The tests would actually notice a defect | `.github/workflows/mutation.yml` — runs on every PR that can move the score, and fails below a floor of 66 | [`docs/MUTATION-TESTING.md`](docs/MUTATION-TESTING.md) — **66.7%**, measured on the CI runner over the detectors and the backtest split, with all 158 surviving mutants listed rather than summarised and the 4 remaining gaps named |
+| The tests would actually notice a defect | `.github/workflows/mutation.yml` — runs on every PR that can move the score, and fails below a floor of 66 | [`docs/MUTATION-TESTING.md`](docs/MUTATION-TESTING.md) — **66.9%**, measured on the CI runner over the detectors and the backtest split, with all 157 surviving mutants listed rather than summarised and the 4 remaining gaps named |
 | The detector was checked against drift nobody designed | `scripts/drift_eval_real_weather.py` — real Open-Meteo observations, keyless | [`docs/DRIFT-EVALUATION.md`](docs/DRIFT-EVALUATION.md) — **it found a false positive in the shipped thresholds**: a fortnight of ordinary autumn cooling scores PSI 0.525 against an alert threshold of 0.20. Published because a monitor measured only against shifts its author injected has not been measured |
 
 **Why the shape is what it is**, with the alternative rejected in each case and
@@ -162,7 +162,7 @@ uv run python -m drift.run --out metrics/drift.json   # M4: 4 drift types + retr
 uv run python -m pipeline.daily  # M5: the whole loop -> metrics/*.json + PNGs
 uv run python -m serving         # M5: FastAPI on :8000, /forecast from @champion
 
-uv run pytest -v               # 275 tests, no network
+uv run pytest -v               # 280 tests, no network
 
 cd dashboard && npm ci && npm test && npm run build   # M6: static dist/ over metrics/*.json
 ```
@@ -643,14 +643,14 @@ metrics/    committed artifacts: baseline.json, model.json, drift.json,
             forecast.json, monitor.json, pipeline.json + tables + 2 PNGs
 dashboard/  Vite + React + ECharts over metrics/*.json — no deploy step here
             components.test.tsx  the banner tests (vitest)
-tests/      275 Python tests: idempotency, leakage (backtest *and* features),
+tests/      280 Python tests: idempotency, leakage (backtest *and* features),
             retries, secret redaction, registry wiring, PSI/KS vs scipy, drift
             injection, threshold boundaries, the daily chain, the HTTP surface,
             both workflow YAMLs, and the artifacts' own honesty contract
 docs/       adr/      7 decision records, each with the rejected alternative
             writeup.md (real vs fixture, three bugs, what a real episode looks
             like) · REPRODUCE.md (real transcripts of every command)
-            MUTATION-TESTING.md (66.7% measured in CI, every survivor judged)
+            MUTATION-TESTING.md (66.9% measured in CI, every survivor judged)
             PUBLICATION-SCAN.md (pre-publication secret + size scan)
             PUBLICATION-READY.md (what a reviewer will trip on, and what is thin)
             DRIFT-EVALUATION.md (the detectors vs real weather) · BLOCKED.md

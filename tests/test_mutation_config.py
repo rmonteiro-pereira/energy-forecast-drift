@@ -461,3 +461,164 @@ def test_the_pull_request_paths_filter_covers_every_test_that_drives_mutmut():
             f"{target} is mutated but is not in mutation.yml's paths filter, so "
             "changing it would not trigger the job"
         )
+
+
+# ---------------------------------------------------------------------------
+# What counts as a kill. This was inverted on both members at once, and no test
+# could have caught it, because the two statuses it got wrong never appeared in
+# any run on record -- `ok_suspicious` and `bad_timeout` are clock-dependent, so
+# a fast runner never produces them and a slow one produces both.
+# ---------------------------------------------------------------------------
+def test_a_timeout_is_not_a_kill_and_a_slow_kill_is():
+    """mutmut's own `ok_`/`bad_` prefix is the specification.
+
+    From `mutmut/__init__.py::run_mutation`:
+
+      * `BAD_TIMEOUT` is returned from `except TimeoutError` — the run was
+        killed by the clock, and whether a test would have failed is unknown.
+        Counting it as a kill credits the suite for a hang.
+      * `OK_SUSPICIOUS` is returned when `not survived` — the tests *did* fail,
+        so the mutant *is* dead — and it merely took longer than
+        `test_time_base + baseline_time_elapsed * test_time_multiplier`.
+
+    `scripts/mutation_score.py` had `{"ok_killed", "bad_timeout"}`: it credited
+    the hang and discarded the genuine slow kill. On a shared runner that is
+    worth several points of score against a floor with ~3 mutants of headroom.
+    """
+    module = _score_module()
+
+    assert "ok_suspicious" in module.KILLED, (
+        "`ok_suspicious` means the tests failed — the mutant was caught. Excluding "
+        "it makes a slow runner look like a weakened suite."
+    )
+    assert "bad_timeout" not in module.KILLED, (
+        "`bad_timeout` means the run hit the clock, not that a test failed. "
+        "Counting it as a kill lets a hang inflate the score."
+    )
+    assert module.SURVIVED == "bad_survived"
+    assert not (module.KILLED & module.UNRESOLVED), "a status cannot be both a kill and unresolved"
+    assert module.SURVIVED not in module.KILLED
+
+
+def test_a_timeout_lowers_the_score_and_is_named_in_the_report(tmp_path, monkeypatch, capsys):
+    """The conservative direction, and visibly rather than silently."""
+    cache = tmp_path / ".mutmut-cache"
+    # 8 genuine kills, one of them slow; 1 survivor; 1 timeout.
+    _fake_cache(cache, {"ok_killed": 7, "ok_suspicious": 1, "bad_survived": 1, "bad_timeout": 1})
+
+    module = _score_module()
+    monkeypatch.setattr(module, "CACHE", cache)
+    monkeypatch.setattr("sys.argv", ["mutation_score.py", "--floor", "0", "--survivors", "0"])
+    module.main()
+    printed = capsys.readouterr().out
+
+    # 8 killed of 10 -- the slow kill counts, the timeout does not.
+    assert "**8** | **10** | **80.0%**" in printed, printed
+    assert "neither killed nor survived" in printed, (
+        "a timeout drags the score down; if the report does not say so, the drop "
+        f"is indistinguishable from a real regression:\n{printed}"
+    )
+
+
+# ---------------------------------------------------------------------------
+# The `paths:` filter must cover everything that can change the score, and
+# "everything" is bigger than the files mutmut mutates. A mutant's fate depends
+# on the whole import closure behind it: `drift/config.py` holds the
+# DEFAULT_THRESHOLDS that tests/test_drift_boundaries.py pins, so editing a
+# threshold there changes which mutants in drift/detectors.py die -- while
+# touching no path the first version of this filter listed.
+#
+# Recomputed from the import graph rather than listed here, so the guard cannot
+# be satisfied by editing the guard.
+# ---------------------------------------------------------------------------
+def _first_party_packages() -> set[str]:
+    return {p.name for p in REPO.iterdir() if p.is_dir() and (p / "__init__.py").exists()}
+
+
+def _resolve(dotted: str) -> str | None:
+    path = REPO.joinpath(*dotted.split("."))
+    if path.with_suffix(".py").exists():
+        return f"{'/'.join(dotted.split('.'))}.py"
+    if (path / "__init__.py").exists():
+        return f"{'/'.join(dotted.split('.'))}/__init__.py"
+    return None
+
+
+def _import_closure(entrypoints: list[str]) -> set[str]:
+    """Every first-party module reachable from `entrypoints` by import."""
+    import ast
+
+    packages = _first_party_packages()
+    seen: set[str] = set()
+    found: set[str] = set()
+
+    def walk(rel: str) -> None:
+        if rel in seen:
+            return
+        seen.add(rel)
+        source = REPO / rel
+        if not source.exists():
+            return
+        for node in ast.walk(ast.parse(source.read_text(encoding="utf-8"))):
+            candidates: list[str] = []
+            if isinstance(node, ast.Import):
+                candidates = [a.name for a in node.names]
+            elif isinstance(node, ast.ImportFrom) and node.module:
+                # `from models import backtest` -- the submodule is in `names`,
+                # not in `module`. Missing this hid five modules.
+                candidates = [node.module] + [f"{node.module}.{a.name}" for a in node.names]
+            for dotted in candidates:
+                if dotted.split(".")[0] not in packages:
+                    continue
+                resolved = _resolve(dotted)
+                if resolved:
+                    found.add(resolved)
+                    walk(resolved)
+
+    for entry in entrypoints:
+        walk(entry)
+    return found
+
+
+def _matches_filter(path: str, patterns: set[str]) -> bool:
+    from fnmatch import fnmatch
+
+    return any(
+        path == pattern or fnmatch(path, pattern) or fnmatch(path, pattern.replace("**", "*"))
+        for pattern in patterns
+    )
+
+
+def test_the_paths_filter_covers_everything_the_mutation_run_reads():
+    triggers = workflow()[True]
+    filtered = set(triggers["pull_request"].get("paths", []))
+    runner_tests = sorted(re.findall(r"tests/\S+\.py", MUTMUT.get("runner", "")))
+
+    closure = _import_closure([*targets(), *runner_tests])
+    assert closure, "the import walk found nothing, so this guard is asserting nothing"
+
+    missing = sorted(m for m in closure if not _matches_filter(m, filtered))
+    assert not missing, (
+        f"{missing} are imported by the mutated modules or by the tests that drive "
+        "them, so changing one can change the score — but mutation.yml's paths "
+        "filter does not match them, so the job would not run on that change."
+    )
+
+
+def test_the_paths_filter_covers_the_lockfile():
+    """`uv sync --frozen` installs exactly `uv.lock`.
+
+    A pandas/numpy/lightgbm bump changes behaviour under a suite nobody touched
+    and matches no source path. It was originally argued that this is what the
+    *cron* is for — "dependency change does not arrive in a commit" — but in
+    this repository it usually does: Dependabot has opened four PRs here. A
+    change that arrives in a commit should be caught by the trigger that can
+    name the commit.
+    """
+    triggers = workflow()[True]
+    filtered = set(triggers["pull_request"].get("paths", []))
+    assert (REPO / "uv.lock").exists()
+    assert _matches_filter("uv.lock", filtered), (
+        "uv.lock is not in mutation.yml's paths filter, so a dependency bump "
+        "would change what the tests do without re-measuring the score"
+    )

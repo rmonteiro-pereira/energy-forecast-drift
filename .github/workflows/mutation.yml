@@ -16,15 +16,19 @@
 #     later, by which point the change is no longer under review.
 #
 # So the trigger is `pull_request`, narrowed by `paths` to the files that can
-# actually move the score: the two mutated modules, the tests that drive them,
-# and the mutation tooling itself. Those PRs are the minority, so the 25 minutes
-# are paid only where they can buy something — and the "wrong cost on every push"
+# actually move the score: the two mutated modules, the seven test files that
+# drive them, **every first-party module those nine import**, the lockfile, and
+# the mutation tooling. Those PRs are the minority, so the 25 minutes are paid
+# only where they can buy something — and the "wrong cost on every push"
 # objection stops applying, because it is no longer every push.
 #
-# The schedule stays, for the job it is genuinely the only trigger for: catching
-# change that does not arrive in a commit at all. A new release of a dependency
-# can alter behaviour under a suite nobody touched, and only elapsed time reveals
-# that. The cron complements the PR trigger; it never was a substitute for it.
+# The schedule stays, but its remit is narrower than first claimed here.
+# "Dependency change does not arrive in a commit" is false for this repository:
+# Dependabot has opened four PRs against it, so most of it does — which is why
+# `uv.lock` is now in the filter, where the trigger that can name the commit
+# catches it. What is left for the cron is the residue: a transitive bump no PR
+# here ever names, a yanked release, a runner image that moves underneath us.
+# Real, but smaller than the sentence that used to stand here.
 #
 # What it must never be is theatre. There is no `if: false` here, the paths it
 # mutates are asserted to exist by tests/test_mutation_config.py, and the score
@@ -43,6 +47,14 @@ on:
   # The trigger that attributes: only on PRs that touch something able to change
   # the score. Everything else in the repo can be reviewed without paying 25
   # minutes, and a PR that does touch these gets its verdict while it is open.
+  #
+  # Note the granularity, which is easy to get wrong: on `pull_request`, `paths`
+  # is evaluated against the **whole PR diff versus the base**, not against the
+  # individual push. So once a PR touches one of these files, every later push to
+  # it re-runs this job — including a docs-only follow-up commit. Combined with
+  # `cancel-in-progress` below, that means the verdict always belongs to the
+  # current head and the intermediate 36-minute runs are cancelled, which is the
+  # trade we want: a stale verdict is worse than a missing one.
   pull_request:
     paths:
       # The two mutated modules...
@@ -61,6 +73,27 @@ on:
       - "tests/test_backtest.py"
       - "tests/test_backtest_accounting.py"
       - "tests/test_baseline.py"
+      # ...and every first-party module those nine files import, directly or
+      # transitively. The first version of this filter omitted all of them and
+      # was wrong: `drift/config.py` holds the `DEFAULT_THRESHOLDS` the boundary
+      # tests pin, so editing a threshold changes what `drift/detectors.py`'s
+      # mutants do while touching no filtered path.
+      # `tests/test_mutation_config.py` recomputes this closure from the import
+      # graph and fails if anything is missing, so the list cannot silently rot.
+      - "drift/**"
+      - "features/**"
+      - "models/**"
+      - "ingest/config.py"
+      - "ingest/store.py"
+      # The lockfile. `uv sync --frozen` installs exactly this, so a pandas,
+      # numpy or lightgbm bump changes behaviour under a suite nobody touched
+      # while matching none of the paths above. That was offered as the reason
+      # to keep the cron — wrongly, for this repo: Dependabot has already opened
+      # four PRs here, so most dependency change *does* arrive in a commit, and
+      # a commit should be caught by the trigger that can attribute it rather
+      # than left for Monday. The cron's real remit is narrower than the comment
+      # above it claimed: a transitive bump that no PR here ever names.
+      - "uv.lock"
       # ...and the tooling that decides the verdict.
       - "pyproject.toml"
       - "scripts/mutation_score.py"

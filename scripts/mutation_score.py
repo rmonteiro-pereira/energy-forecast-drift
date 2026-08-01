@@ -28,9 +28,33 @@ REPO = Path(__file__).resolve().parents[1]
 CACHE = REPO / ".mutmut-cache"
 
 #: mutmut 2.x statuses that mean "the tests caught it".
-KILLED = {"ok_killed", "bad_timeout"}
-#: ...and the one that means they did not.
+#:
+#: Read mutmut's own `ok_`/`bad_` prefix: `ok_` means the mutant was caught,
+#: `bad_` means it was not — or that nobody can tell. This set had both members
+#: wrong, in opposite directions. The evidence is in mutmut's own source,
+#: `mutmut/__init__.py::run_mutation`:
+#:
+#:     except TimeoutError:
+#:         return BAD_TIMEOUT      # the run was killed by the clock. Whether a
+#:                                 # test would have failed is unknown. Counting
+#:                                 # it as a kill credits the suite for a hang.
+#:
+#:     if not survived and time_elapsed > test_time_base + baseline * multiplier:
+#:         return OK_SUSPICIOUS    # `not survived` — the tests DID fail, so the
+#:                                 # mutant IS dead. It was merely slow.
+#:
+#: So the old set credited a hang and threw away a genuine, slow kill. On a
+#: shared runner that is not a rounding error: the same code measured twice on
+#: one machine gave 69.7% and 74.2% — 4.5 points of clock noise — against a
+#: floor with about three mutants of headroom.
+KILLED = {"ok_killed", "ok_suspicious"}
+#: The one status that means the mutant lived: no test failed.
 SURVIVED = "bad_survived"
+#: Neither caught nor survived. `bad_timeout` belongs here and not in KILLED: it
+#: is an absence of evidence, so it counts against the score exactly as
+#: `untested` does — the conservative direction, and the same one the untested
+#: disclosure in docs/MUTATION-TESTING.md resolves in.
+UNRESOLVED = {"bad_timeout", "untested", "skipped"}
 
 
 def rows() -> list[sqlite3.Row]:
@@ -104,6 +128,18 @@ def main() -> int:
     print("## Mutation score\n")
     print("\n".join(lines))
     print(f"\nRaw statuses: {dict(overall)}")
+
+    # A timeout is not a result, and it moves the score downward silently. Name
+    # it, because "the score dropped" and "the runner was slow" need different
+    # responses and the number alone cannot tell them apart.
+    unresolved = {s: overall[s] for s in UNRESOLVED if overall[s]}
+    if unresolved:
+        print(
+            f"\n> **{sum(unresolved.values())} mutants were neither killed nor survived** "
+            f"({unresolved}). They count against the score, which is the conservative "
+            "direction — but a run with timeouts in it is measuring the runner as much "
+            "as the suite. Re-run before treating a drop as a regression."
+        )
 
     if args.survivors:
         print(f"\n## Surviving mutants (first {args.survivors} lines per file)\n")
