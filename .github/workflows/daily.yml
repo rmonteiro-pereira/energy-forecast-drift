@@ -1,6 +1,6 @@
 # ============================================================================
-# DORMANT, NOT BROKEN — this is the M5 "live" cron. The repo is published, so
-# step 1 below is done; what is still missing is the key.
+# LIVE since 2026-08-01. The key was registered that day and the first real run
+# pulled 17,520 hourly PJM demand rows from the EIA API.
 #
 # Behaviour without EIA_API_KEY: the preflight step below detects the missing
 # secret, emits a warning annotation, and the job ends GREEN having written and
@@ -10,14 +10,13 @@
 # the thing that actually must never happen (publishing fixture numbers as if
 # they were data) is prevented either way.
 #
-# TO ACTIVATE (in order):
+# ACTIVATION LOG:
 #   [x] push the repo to GitHub (public => Actions minutes are free)
-#   [ ] Settings > Secrets and variables > Actions > New repository secret:
-#         EIA_API_KEY = <your key from eia.gov/opendata/register.php>
-#   [ ] Settings > Actions > General > Workflow permissions:
-#         "Read and write permissions"  (needed to commit metrics/)
-#   [ ] uncomment the `schedule:` block below
-#   [ ] run it once manually via the Actions tab to confirm it is green
+#   [x] EIA_API_KEY registered as a repository secret (2026-08-01 21:06 UTC)
+#   [x] workflow permissions confirmed writable
+#   [x] schedule enabled
+#   [ ] Settings > General > "Allow auto-merge" — without it the daily PR waits
+#       for a human instead of landing on its own. Degrades, does not break.
 #
 # Note on scheduling: the EIA publishes ~2x/day, so a single daily run is the
 # right cadence to start. 06:20 UTC is deliberately off the hour — GitHub
@@ -32,8 +31,8 @@
 name: daily (ingest -> score -> drift -> commit metrics)
 
 on:
-  # schedule:
-  #   - cron: "20 6 * * *"
+  schedule:
+    - cron: "20 6 * * *"
   workflow_dispatch:
     inputs:
       full_refresh:
@@ -42,7 +41,8 @@ on:
         default: false
 
 permissions:
-  contents: write # to commit metrics/ back to the repo
+  contents: write # to push the bot branch carrying refreshed metrics/
+  pull-requests: write # to open and auto-merge that branch's PR
 
 concurrency:
   # Never let two runs write metrics/ at the same time.
@@ -177,8 +177,16 @@ jobs:
           path: metrics/pipeline.json
           if-no-files-found: warn
 
-      - name: Commit refreshed metrics
+      # The bot does NOT push to main. `main` requires the `test` check, and a
+      # direct push carrying [skip ci] can never satisfy it — that combination
+      # rejected run 30718525099 after a fully successful pipeline. The bot goes
+      # through the same gate as a human: it opens a PR, CI validates the
+      # refreshed metrics, and only then do they land.
+      - name: Open PR with refreshed metrics
         if: steps.preflight.outputs.has_key == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          BRANCH: bot/daily-metrics
         run: |
           git config user.name  "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
@@ -194,7 +202,19 @@ jobs:
                   metrics/rolling_mae.png
           if git diff --staged --quiet; then
             echo "metrics unchanged — nothing to commit"
-          else
-            git commit -m "chore(metrics): daily refresh [skip ci]"
-            git push
+            exit 0
           fi
+          git commit -m "chore(metrics): daily refresh"
+          # Single long-lived bot branch, force-pushed: yesterday's unmerged
+          # refresh is superseded by today's, not stacked on top of it.
+          git push --force origin "HEAD:refs/heads/$BRANCH"
+          if [ -z "$(gh pr list --head "$BRANCH" --state open --json number --jq '.[].number')" ]; then
+            gh pr create --head "$BRANCH" --base main \
+              --title "chore(metrics): daily refresh" \
+              --body "Automated refresh from \`daily.yml\`. Merges once \`test\` is green."
+          fi
+          # Auto-merge needs Settings > General > "Allow auto-merge". Without it
+          # the PR simply waits for a human, which is a degradation, not a break
+          # — so this must not fail the run.
+          gh pr merge --squash --auto "$BRANCH" \
+            || echo "auto-merge unavailable; PR left open for manual merge"
