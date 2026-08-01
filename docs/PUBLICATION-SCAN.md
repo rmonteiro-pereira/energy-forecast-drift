@@ -4,12 +4,25 @@
 **Scanned:** at commit `5a9c5f6`, branch `main`, **no git remote configured**
 **Re-scanned:** at the tip after the publication work landed — see [§7](#7-the-scan-run-against-its-own-report),
 which is where the re-scan caught a leak in *this file*
-**Scope:** the entire worktree (tracked *and* untracked) plus **every blob on every ref in
-the full history** — 125 distinct blobs across 21 commits.
+**Scope, as scanned:** the entire worktree (tracked *and* untracked) plus **every blob on
+every ref in the full history** — 125 distinct blobs across 21 commits.
 
-Run before the repository is made public. Everything below is the real output of the
+Run before the repository was made public. Everything below is the real output of the
 commands shown; nothing is summarised from memory. **Every candidate secret is masked** —
 this document itself is going public, so it must not become the leak it is looking for.
+
+> **This is a pre-flight record with a date on it, not a standing guarantee.** The
+> repository has moved since: as of 2026-08-01 the history is **271 distinct blobs across
+> 57 commits** (`git rev-list --objects --all`), against the 125 across 21 stated above.
+> The scan has **not** been re-run over the difference, and this document does not claim it
+> has. What the difference consists of is documentation edits, the dashboard dependency
+> bumps Dependabot opened, and the mutation-testing work — no data files and no new
+> credentials-shaped surface — but "I know what those commits are" is a weaker claim than
+> "I scanned them", and it is stated as the weaker one.
+>
+> Its verdict for the history it covers stands, and that history is an ancestor of today's:
+> nothing below has been invalidated, only outrun. **Re-run the commands in §1–§6 before
+> treating the verdict as current.**
 
 ---
 
