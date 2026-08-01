@@ -257,6 +257,106 @@ def test_the_committed_paths_are_exactly_what_the_pipeline_writes():
         assert f"metrics/{name}" in commands, f"{name} is written but never committed"
 
 
+def test_the_publish_step_never_pushes_at_protected_main():
+    """A bot pushing at a protected branch can only ever be rejected.
+
+    Not a hypothetical. Run 30718525099 ingested two years of real EIA demand,
+    scored it, ran the drift check — and the last line died with
+    `GH006: Protected branch update failed for refs/heads/main.` /
+    `Required status check "test" is expected.` The whole pipeline was green
+    and it published nothing, because `github-actions[bot]` is not an admin and
+    so does not inherit the `enforce_admins: false` bypass.
+
+    Comments are stripped: the step explains that failure inline, so a test
+    matching against the raw block would be satisfied by the prose describing
+    the bug rather than by the code avoiding it.
+    """
+    commands = run_commands(load(DAILY), "pipeline", strip_comments=True)
+    pushes = [line.strip() for line in commands.splitlines() if line.strip().startswith("git push")]
+    assert pushes, "the daily job no longer pushes anything — nothing can reach the repo"
+    for push in pushes:
+        assert "refs/heads/" in push, (
+            f"`{push}` pushes at whatever the checkout is on, which is `main`. "
+            "`main` is protected and requires the `test` check, so this is "
+            "rejected with GH006 after the pipeline has already done all its work"
+        )
+        assert "refs/heads/main" not in push, (
+            f"`{push}` targets the protected branch explicitly; it will be declined"
+        )
+        assert "--force" not in push and " -f " not in f" {push} ", (
+            f"`{push}` forces. An unattended job must not force: it is "
+            "unreviewable, and it lets a later run rewrite a PR while somebody "
+            "is reading it. The per-run branch name exists so no force is needed"
+        )
+
+
+def test_the_metrics_commit_never_skips_ci():
+    """`[skip ci]` and a required check are mutually exclusive.
+
+    `test` is required on `main`. A commit carrying `[skip ci]` never runs it,
+    so the check never reports, so the PR sits on "Expected — Waiting for
+    status to be reported" forever and can never be merged. The old push-to-main
+    step had `[skip ci]` and it was harmless there only because that push was
+    rejected anyway; carried into a PR flow it becomes a deadlock.
+
+    Exactly the defect issue #19 documents for the `mutate` check, one branch
+    over — see `tests/test_mutation_config.py`.
+    """
+    commands = run_commands(load(DAILY), "pipeline", strip_comments=True)
+    for marker in ("[skip ci]", "[ci skip]", "[no ci]", "skip-checks"):
+        assert marker not in commands, (
+            f"the metrics commit carries `{marker}`, so the required `test` check "
+            "never reports and the PR can never be merged"
+        )
+
+
+def test_the_job_holds_the_permissions_its_publish_step_needs():
+    """Measured, not assumed: `contents: write` here is what actually escalates.
+
+    The repo sits on `default_workflow_permissions: "read"`, and the header of
+    `daily.yml` used to say that had to be switched to "Read and write". It does
+    not: run 30718525099 reached the *branch protection* hook, which a read-only
+    token never does — it would have been a 403, not GH006. So this block is
+    load-bearing on its own, and `pull-requests: write` is what the PR step adds.
+    """
+    permissions = load(DAILY)["permissions"]
+    assert permissions.get("contents") == "write", (
+        "without `contents: write` the token cannot push the metrics branch"
+    )
+    assert permissions.get("pull-requests") == "write", (
+        "the publish step opens a PR; without `pull-requests: write` it 403s"
+    )
+
+
+def test_the_publish_step_tolerates_one_named_failure_and_no_others():
+    """The degradation must stay narrow, or it becomes a silent-green switch.
+
+    One failure is legitimately not a bug: `gh pr create` refuses when "Allow
+    GitHub Actions to create and approve pull requests" is off. The branch is
+    already pushed by then and only a click is missing, so that case warns.
+    Every other failure — auth, network, a wrong base, a rejected push — must
+    still go red. A blanket `|| true` or `continue-on-error` here is precisely
+    how a publish step reports success having published nothing.
+    """
+    steps = steps_of(load(DAILY), "pipeline")
+    publish = [s for s in steps if "PR" in s.get("name", "")]
+    assert len(publish) == 1, "expected exactly one step that opens the metrics PR"
+    assert not publish[0].get("continue-on-error"), (
+        "continue-on-error on the publish step makes every failure invisible"
+    )
+
+    body = str(publish[0].get("run", ""))
+    stripped = "\n".join(line for line in body.splitlines() if not line.lstrip().startswith("#"))
+    assert "set -euo pipefail" in stripped, (
+        "without `set -e` a failing command mid-step leaves the step green"
+    )
+    assert "|| true" not in stripped, "a blanket `|| true` swallows every failure"
+    assert stripped.rstrip().endswith("exit 1"), (
+        "the fall-through of the error branch must fail; if it ends any other "
+        "way, an unrecognised `gh pr create` failure exits 0"
+    )
+
+
 def test_concurrency_stops_two_runs_writing_metrics_at_once():
     assert load(DAILY)["concurrency"]["group"]
     assert load(DAILY)["concurrency"]["cancel-in-progress"] is False

@@ -12,12 +12,24 @@
 #
 # TO ACTIVATE (in order):
 #   [x] push the repo to GitHub (public => Actions minutes are free)
-#   [ ] Settings > Secrets and variables > Actions > New repository secret:
+#   [x] Settings > Secrets and variables > Actions > New repository secret:
 #         EIA_API_KEY = <your key from eia.gov/opendata/register.php>
-#   [ ] Settings > Actions > General > Workflow permissions:
-#         "Read and write permissions"  (needed to commit metrics/)
+#         Done 2026-08-01T21:06Z.
+#   [~] Settings > Actions > General > Workflow permissions: NOT needed after all.
+#         The repo sits on "read" and run 30718525099 still reached the branch
+#         protection hook, which only happens with a write token — the
+#         `permissions:` block below escalates on its own. A read-only token
+#         would have given 403, not GH006. Left here because this line used to
+#         claim the opposite.
+#   [ ] Settings > Actions > General: "Allow GitHub Actions to create and
+#         approve pull requests" — needed by the last step, which opens a PR
+#         rather than pushing at protected `main`. Without it the branch is
+#         still pushed and the step degrades to a warning with a link.
 #   [ ] uncomment the `schedule:` block below
-#   [ ] run it once manually via the Actions tab to confirm it is green
+#   [x] run it once manually via the Actions tab to confirm it is green
+#         Run 30718525099, 2026-08-01: the pipeline itself went green against
+#         real EIA data; only the publish step failed, which is what the PR
+#         flow below fixes.
 #
 # Note on scheduling: the EIA publishes ~2x/day, so a single daily run is the
 # right cadence to start. 06:20 UTC is deliberately off the hour — GitHub
@@ -42,7 +54,8 @@ on:
         default: false
 
 permissions:
-  contents: write # to commit metrics/ back to the repo
+  contents: write # to push the metrics branch
+  pull-requests: write # to open the PR that carries it to main
 
 concurrency:
   # Never let two runs write metrics/ at the same time.
@@ -177,9 +190,36 @@ jobs:
           path: metrics/pipeline.json
           if-no-files-found: warn
 
-      - name: Commit refreshed metrics
+      # ------------------------------------------------------------------
+      # A PR, not a push at `main` — and this is measured, not preferred.
+      #
+      # Run 30718525099 ingested two years of real EIA demand, scored, ran the
+      # drift check, and then died on the last line of the old version of this
+      # step:
+      #
+      #   remote: error: GH006: Protected branch update failed for refs/heads/main.
+      #   remote: - Required status check "test" is expected.
+      #   ! [remote rejected] main -> main (protected branch hook declined)
+      #
+      # `main` requires the `test` check, and `github-actions[bot]` is not an
+      # admin, so it does not inherit the `enforce_admins: false` bypass. A bot
+      # pushing straight at a protected branch can only ever be rejected — the
+      # whole pipeline was green and published nothing.
+      #
+      # There is deliberately NO `[skip ci]` in the commit message any more.
+      # `test` is a *required* check: a commit that skips CI can never be
+      # merged, because the check it is waiting on never reports. The PR would
+      # sit on "Expected — Waiting for status to be reported" forever. That is
+      # the same defect the mutation check had (#19), one branch over, and
+      # carrying `[skip ci]` into a PR flow would have rebuilt it here.
+      # ------------------------------------------------------------------
+      - name: Open a PR with the refreshed metrics
         if: steps.preflight.outputs.has_key == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
+          set -euo pipefail
+
           git config user.name  "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           # Explicit paths only: raw parquet and MLflow state must never reach
@@ -192,9 +232,58 @@ jobs:
                   metrics/pipeline.json \
                   metrics/forecast_vs_actual.png \
                   metrics/rolling_mae.png
+
           if git diff --staged --quiet; then
             echo "metrics unchanged — nothing to commit"
-          else
-            git commit -m "chore(metrics): daily refresh [skip ci]"
-            git push
+            exit 0
           fi
+
+          git commit -m "chore(metrics): daily refresh"
+
+          # A fresh branch per run, never reused and so never force-pushed.
+          # Reusing one branch would require a force after every merge — once
+          # the PR lands, the old tip stops being an ancestor and a
+          # fast-forward becomes impossible. Forcing is the wrong tool for an
+          # unattended job: it is unreviewable, and it would let a later run
+          # rewrite a PR while somebody is reading it. Per-run branches cost a
+          # ref that the close loop below deletes.
+          branch="metrics/daily-${GITHUB_RUN_ID}"
+
+          # Collected BEFORE the new PR exists, so the new one can never appear
+          # in its own supersede list and close itself.
+          superseded=$(gh pr list --base main --state open \
+                         --json number,headRefName \
+                         --jq '[.[] | select(.headRefName | startswith("metrics/daily-")) | .number] | join(" ")')
+
+          git push origin "HEAD:refs/heads/${branch}"
+
+          # `gh pr create` fails hard when "Allow GitHub Actions to create and
+          # approve pull requests" is off. That is a settings decision, not a
+          # broken run: the commit is already pushed and all that is missing is
+          # one click. So that ONE error degrades to a warning carrying the
+          # link — and every other error still fails the step, because a
+          # blanket `|| true` here is exactly how a publish step goes green
+          # having published nothing.
+          err="${RUNNER_TEMP}/pr-create.err"
+          if gh pr create --base main --head "$branch" \
+               --title "chore(metrics): daily refresh" \
+               --body "Automated refresh from run ${GITHUB_RUN_ID}. Merging publishes the numbers in \`metrics/\`." 2> "$err"; then
+            # Only once the replacement exists. Closing first would leave a
+            # window where a failure here means no open metrics PR at all.
+            for stale in ${superseded}; do
+              gh pr close "${stale}" --delete-branch \
+                --comment "Superseded by a fresher refresh (run ${GITHUB_RUN_ID})."
+            done
+            exit 0
+          fi
+
+          cat "$err"
+          if grep -qi "not permitted to create or approve pull requests" "$err"; then
+            echo "::warning title=PR not created::Actions may not open PRs in this repo. The metrics branch was pushed - open the PR manually from the link in the summary."
+            {
+              echo "Metrics pushed to \`${branch}\`, but Actions is not permitted to open"
+              echo "PRs here. [Open it manually](${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/compare/main...${branch}?expand=1)."
+            } >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          exit 1
