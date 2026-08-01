@@ -118,11 +118,22 @@ demand series, which needs the EIA key ([`docs/BLOCKED.md`](BLOCKED.md)).
 
 ## What this does and does not license
 
-**It does not mean the code is wrong.** The PSI implementation is tested to a
-61% mutation score and its arithmetic reproduces on demand. The defect is in
-**calibration**, not computation — the thresholds were taken from the common
-industry rule of thumb (0.1 / 0.2) and never checked against a real seasonal
-series.
+**It does not mean the code is wrong.** The PSI arithmetic reproduces on demand
+(`tests/test_drift_stats.py::test_psi_two_bin_case_matches_the_formula_by_hand`,
+plus a cross-check of the KS statistic against SciPy). The defect
+is in **calibration**, not computation — the thresholds were taken from the
+common industry rule of thumb (0.1 / 0.2) and never checked against a real
+seasonal series.
+
+> An earlier version of this paragraph said "the PSI implementation is tested to
+> a 61% mutation score". That was wrong, and wrong in the way this document
+> exists to complain about. `population_stability_index` lives in
+> `drift/stats.py`, and `[tool.mutmut]` mutates `drift/detectors.py` and
+> `models/backtest.py` only — so PSI has **no** mutation score. 61.1% is
+> `drift/detectors.py`'s, which *calls* PSI and applies the thresholds. The
+> number was real; the file it was attached to was not. Corrected rather than
+> deleted, because a document arguing that a number without a provenance is
+> worthless should show its own.
 
 **It does not mean seasonal drift should be ignored.** A model whose input
 distribution moves 17 °C between October and January genuinely may degrade. The

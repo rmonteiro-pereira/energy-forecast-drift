@@ -1,6 +1,22 @@
 # Publication readiness
 
-*Assessed at commit `a7e45a2`, branch `main`, no remote configured.*
+*Assessed at commit `a7e45a2`, branch `main`, **before** the repository had a
+remote. Every count and every "has never run" below is that snapshot, not the
+state today — this is a dated pre-flight record, not a live status page.*
+
+> **What has changed since.** The repository is published; `ci.yml` has run 28
+> times, 27 green; the suite is well past the 180 below (the current figure is in
+> the README, which is the one `tests/test_doc_claims.py` keeps honest — no second
+> live copy of it belongs here); and there are 36 commits on `main`, not 25.
+> §2's "CI has never run" and §5's "no remote configured" are
+> marked resolved in place. **The document's conclusion — reproducible by a
+> stranger, with the demand data as the one honest exception — is unchanged**,
+> and the exception is still open (`docs/BLOCKED.md`).
+>
+> The alternative was to re-run the whole assessment and restate it. That would
+> have produced a document that is current and unfalsifiable; this one is dated
+> and can be checked against what it predicted. The predictions are left visible
+> for exactly that reason.
 
 This document answers one question — **could a stranger clone this and reproduce
 it?** — and then lists everything a reviewer is likely to trip on, including the
@@ -57,6 +73,11 @@ Windows 11.
 
 ## Verified at this commit
 
+*A transcript of what these commands printed at `a7e45a2`. It is a record, not a
+live count — the suite has grown a long way past 180 since, and
+`tests/test_doc_claims.py` deliberately exempts dated transcripts like this one
+from the check that keeps live prose honest.*
+
 | Check | Result |
 |---|---|
 | Python suite | **180 collected · 178 passed · 2 skipped · 0 failures · 0 errors** (16.4 s) |
@@ -94,7 +115,15 @@ is. What is on offer is the engineering, and the README's "if you are reviewing
 this in five minutes" table points each claim at both the code that enforces it
 and the test that proves it.
 
-### 2. CI has never actually run
+### 2. ~~CI has never actually run~~ — resolved on publication
+
+> **Resolved.** The repository was published, and `ci.yml` has run 28 times with
+> 27 green (`gh run list --workflow=ci.yml`). The prediction below was correct in
+> both halves: the plumbing *was* the unexercised part, and the first pushes *did*
+> need small fixups. Kept rather than deleted, because a readiness note whose
+> predictions are quietly removed once they resolve cannot be scored.
+
+*As assessed, before there was a remote:*
 
 There is no remote, so **GitHub Actions has never executed a single workflow**.
 The badge-shaped confidence a green check normally provides does not exist here.
@@ -122,7 +151,26 @@ to find. The worktree was fixed; the blob cannot be, without a history rewrite.
 **no rewrite was performed** — that is Rodrigo's call. Full reasoning in
 `PUBLICATION-SCAN.md` §A1 and §7/R4.
 
-### 4. `docs/spec.md` is in Portuguese
+### 4. ~~`docs/spec.md` is in Portuguese~~ — resolved by removing the file
+
+> **Resolved, and the assessment below understated the problem.** The language was
+> the least of it. The committed file had been hard-wrapped at 45 **bytes**, which
+> split words mid-token (`**Objetiv` / `o:**`) and cut three multi-byte characters
+> in half — those three are destroyed, not merely mangled, and sit in the file as
+> seven baked-in U+FFFD replacement bytes. The README called it "left as written";
+> it was not as written.
+>
+> It also carried private career positioning into a public repository — an
+> interview script, and a line grading the work as "the depth that separates a
+> junior from a senior" — and cited `referencias-treino-e-portfolio.md`, a file
+> that has never existed here. None of that is project documentation.
+>
+> So it was **removed** rather than re-exported. Nothing in this repository
+> depended on it: the README already carries the brief, the milestones and the
+> blocked data leg in English, at more depth. The removal is reversible —
+> `git show 41e5d02:docs/spec.md` still resolves.
+
+*As assessed:*
 
 Every other document is in English. A reviewer clicking through from the README's
 "Full brief" link lands on Portuguese without warning. It is the original brief
@@ -218,3 +266,10 @@ Two decisions remain, both Rodrigo's, neither blocking:
 
 **No remote was created and nothing was pushed.** Creating the public repository
 is a human action, by design.
+
+> **Since resolved:** decision 2 was taken — the repository is public at
+> `rmonteiro-pereira/energy-forecast-drift`, and the remote was created by hand,
+> as required. On decision 1, the observable outcome is that the history was
+> **not** rewritten: every SHA quoted in these documents still resolves, and the
+> address is public. Recorded here rather than deleted, so the file still shows
+> what happened and not merely what was recommended.

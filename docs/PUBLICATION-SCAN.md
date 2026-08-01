@@ -4,12 +4,33 @@
 **Scanned:** at commit `5a9c5f6`, branch `main`, **no git remote configured**
 **Re-scanned:** at the tip after the publication work landed — see [§7](#7-the-scan-run-against-its-own-report),
 which is where the re-scan caught a leak in *this file*
-**Scope:** the entire worktree (tracked *and* untracked) plus **every blob on every ref in
-the full history** — 125 distinct blobs across 21 commits.
+**Scope, as scanned:** the entire worktree (tracked *and* untracked) plus **every blob on
+every ref in the full history** — 125 distinct blobs across 21 commits.
 
-Run before the repository is made public. Everything below is the real output of the
+Run before the repository was made public. Everything below is the real output of the
 commands shown; nothing is summarised from memory. **Every candidate secret is masked** —
 this document itself is going public, so it must not become the leak it is looking for.
+
+> **This is a pre-flight record with a date on it, not a standing guarantee.** The
+> repository has moved since. As of 2026-08-01, what a plain `git clone` gets — `main` —
+> is **236 distinct blobs across 36 commits**:
+>
+> ```bash
+> git rev-list --objects main | cut -d' ' -f1 | sort -u \
+>   | git cat-file --batch-check='%(objecttype)' | sort | uniq -c
+> #   236 blob   126 tree    36 commit
+> ```
+>
+> The scan above covered 125 blobs across 21 commits, on every ref rather than on `main`
+> alone. It has **not** been re-run over the difference, and this document does not claim
+> it has. What the difference consists of is documentation edits, the dashboard dependency
+> bumps Dependabot opened, and the mutation-testing work — no data files and no new
+> credentials-shaped surface — but "I know what those commits are" is a weaker claim than
+> "I scanned them", and it is stated as the weaker one.
+>
+> Its verdict for the history it covers stands, and that history is an ancestor of today's:
+> nothing below has been invalidated, only outrun. **Re-run the commands in §1–§6 before
+> treating the verdict as current.**
 
 ---
 

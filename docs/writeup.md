@@ -299,7 +299,7 @@ Then the numbers in this document become results, and this section gets deleted.
 |---|---|
 | `README.md` | the design decisions, milestone by milestone |
 | `docs/BLOCKED.md` | the EIA key, and the four steps to unblock it |
-| `docs/spec.md` | the original brief |
+| `docs/adr/` | seven decision records, each with the alternative it rejected |
 | `metrics/drift_summary.md` | the current drift report, human-readable |
 | `metrics/*.json` | the machine-readable artifacts the dashboard reads |
 | `drift/stats.py` | PSI and KS, written out with every edge case named |

@@ -20,6 +20,8 @@ import subprocess
 import sys
 from pathlib import Path
 
+from features import build
+
 REPO = Path(__file__).resolve().parents[1]
 
 
@@ -45,3 +47,22 @@ def test_the_documented_python_test_count_is_the_collected_one():
             assert int(claim) == collected, (
                 f"{name} claims {claim} tests; pytest collects {collected}"
             )
+
+
+def test_the_documented_feature_count_is_the_real_one():
+    """`**Features (20)**` in the README, against `FEATURE_COLUMNS`.
+
+    Added after the prose beside it was found describing eight rolling features
+    where the code has five: "rolling mean/std/min/max of the last 24 h and
+    168 h" reads as four windows twice over, but only the 24 h window has all
+    four — 168 h has the mean alone. The total, 20, happened to be right, which
+    is what let the breakdown drift unnoticed. This pins the total; the
+    breakdown is prose and stays a human's job.
+    """
+    readme = (REPO / "README.md").read_text(encoding="utf-8")
+    match = re.search(r"\*\*Features \((\d+)\)\*\*", readme)
+    assert match, "README.md no longer states the feature count as `**Features (N)**`"
+    assert int(match.group(1)) == len(build.FEATURE_COLUMNS), (
+        f"README claims {match.group(1)} features; "
+        f"features.build.FEATURE_COLUMNS has {len(build.FEATURE_COLUMNS)}"
+    )
