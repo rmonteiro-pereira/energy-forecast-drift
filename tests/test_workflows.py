@@ -19,6 +19,7 @@ yaml = pytest.importorskip("yaml")
 WORKFLOWS = Path(__file__).resolve().parent.parent / ".github" / "workflows"
 CI = WORKFLOWS / "ci.yml"
 DAILY = WORKFLOWS / "daily.yml"
+TRAIN = WORKFLOWS / "train.yml"
 
 
 def load(path: Path) -> dict:
@@ -42,7 +43,7 @@ def run_commands(workflow: dict, job: str, strip_comments: bool = False) -> str:
     return "\n".join(line for line in text.splitlines() if not line.strip().startswith("#"))
 
 
-@pytest.mark.parametrize("path", [CI, DAILY], ids=["ci", "daily"])
+@pytest.mark.parametrize("path", [CI, DAILY, TRAIN], ids=["ci", "daily", "train"])
 def test_the_workflow_parses(path):
     workflow = load(path)
     assert workflow["name"]
@@ -445,6 +446,109 @@ def test_every_swallowed_failure_announces_itself():
             f"`{line.strip()}` swallows a failure without announcing it"
         )
         assert "|| true" not in line, f"`{line.strip()}` is a blanket tolerance"
+
+
+# ---------------------------------------------------------------------------
+# train.yml — the workflow that makes a champion exist at all
+# ---------------------------------------------------------------------------
+def test_training_never_promotes_a_model_fitted_on_the_fixture():
+    """A champion promoted off fixture data would then be *served* as real.
+
+    `models.train --source real` raises rather than falling back, so a green run
+    proves the numbers came from the API. `--source synthetic` stays reachable
+    for a dry run, but it has to be asked for by name at dispatch time — the
+    default is `real`, and nothing hardcodes the fixture.
+    """
+    train = load(TRAIN)
+    commands = run_commands(train, "train", strip_comments=True)
+
+    assert "python -m models.train" in commands, "the training workflow does not train"
+    assert "--source synthetic" not in commands, (
+        "the workflow pins the fixture as its source; a model promoted off "
+        "fixture data would be served as though it were real"
+    )
+
+    choice = train[True]["workflow_dispatch"]["inputs"]["source"]
+    assert choice["default"] == "real", (
+        f"the dispatch default is {choice['default']!r}; the safe path must be the "
+        "one you get by pressing the button without thinking"
+    )
+
+
+def test_training_goes_red_without_a_key_rather_than_quietly_doing_nothing():
+    """The opposite choice from daily.yml, and deliberately so.
+
+    `daily.yml` goes dormant-green without a key because it is scheduled and a
+    red X on a public repo's only cron reads as "this project is broken". A
+    training run is dispatched by hand: nobody triggers one by accident, so a
+    silent green would just hide that nothing was trained.
+    """
+    steps = steps_of(load(TRAIN), "train")
+    preflight = [s for s in steps if s.get("id") == "preflight"]
+    assert len(preflight) == 1, "the training job has no preflight step"
+
+    body = str(preflight[0].get("run", ""))
+    assert preflight[0].get("env", {}).get("EIA_API_KEY") == "${{ secrets.EIA_API_KEY }}", (
+        "the preflight step cannot see the secret it is meant to test for"
+    )
+    assert "exit 1" in body, "a missing key leaves the training run green"
+
+
+def test_the_registry_is_persisted_somewhere_that_does_not_evict():
+    """A cache is an accelerator with an eviction policy, not a store.
+
+    `data/` surviving on a cache is fine — a full refresh re-pulled two years in
+    43 seconds. The registry is not like that: promotion decisions and lineage
+    cannot be re-derived from anywhere, so the only copy must not live behind an
+    eviction policy. One release per run, never clobbered, so the previous
+    champion stays retrievable.
+    """
+    commands = run_commands(load(TRAIN), "train", strip_comments=True)
+    assert "gh release create" in commands, (
+        "the registry is never published anywhere durable, so the only copy is "
+        "the Actions cache — and an evicted cache takes the lineage with it"
+    )
+    assert "--clobber" not in commands, (
+        "clobbering a single release asset overwrites the previous registry, "
+        "which is the durability this step exists to provide"
+    )
+    assert "mlflow.db" in commands and "mlruns" in commands, (
+        "the published archive does not contain the registry state"
+    )
+
+
+def test_training_hands_the_champion_to_the_daily_job():
+    """Published durably AND cached, or the next daily run still finds nothing.
+
+    `daily.yml` restores by the `lake-` prefix. Saving under the same prefix is
+    what makes the champion reachable without any further wiring; the release
+    asset is the copy that outlives the cache.
+    """
+    steps = steps_of(load(TRAIN), "train")
+    save = [s for s in steps if s.get("uses", "").startswith("actions/cache/save")]
+    assert len(save) == 1, "expected exactly one cache/save step"
+    assert str(save[0]["with"]["key"]).startswith("lake-"), (
+        "the training run saves under a key daily.yml will never restore from"
+    )
+    assert "success()" in str(save[0].get("if", "")), (
+        "caching after a failed training run persists a half-written registry, "
+        "and every later run restores it"
+    )
+
+
+def test_training_never_writes_to_the_repository():
+    """It publishes an artifact; it must not touch `main` or open PRs.
+
+    Two producers writing `metrics/` is the concurrency hazard that makes a
+    split-role setup go wrong. This job's output is a release asset and a cache
+    entry, nothing else.
+    """
+    commands = run_commands(load(TRAIN), "train", strip_comments=True)
+    for forbidden in ("git push", "git commit", "gh pr create", "gh pr merge"):
+        assert forbidden not in commands, (
+            f"the training workflow runs `{forbidden}`; it must not be a second "
+            "writer of the repository"
+        )
 
 
 def test_concurrency_stops_two_runs_writing_metrics_at_once():

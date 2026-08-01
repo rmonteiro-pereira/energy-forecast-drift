@@ -25,7 +25,11 @@ Two things therefore remain true even though the key works:
 - every `metrics/*.json` in this repository still carries `"is_real": false`;
 - the run logged `No registry champion` — `mlflow.db` is restored from cache and
   never seeded, so nothing has trained on real data yet. Step 4 below is what
-  fixes that, and it has not been run.
+  fixes that, and it has not been run. There is now a workflow that does it on a
+  runner instead — `.github/workflows/train.yml`, dispatched by hand — which
+  also publishes the registry as a release asset so it stops living only in an
+  evictable cache. Unlike `data/`, which a full refresh re-pulled in 43 seconds,
+  promotion decisions and lineage cannot be re-derived from anywhere.
 
 ---
 

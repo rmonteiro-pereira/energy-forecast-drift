@@ -1,0 +1,170 @@
+# ============================================================================
+# The champion has to come from somewhere, and nothing was creating it.
+#
+# The first real-data run (30718525099) logged `No registry champion (No MLflow
+# database ...)`. That is not a glitch: `daily.yml` *restores* `mlflow.db` and
+# `mlruns/` from a cache and never seeds them, and nothing in it calls
+# `models.train`. So the registry could only ever be empty on a runner.
+#
+# The pipeline is honest about it — `pipeline/daily.py` falls back to
+# `fitted_on_train_window` and the drift monitor stays valid, which is why the
+# metrics published on 01/08 are sound. What is missing is not correctness, it
+# is the champion itself: no served model, no promotion decision, no lineage.
+#
+# Two things this file does that `actions/cache` cannot:
+#
+#   1. It TRAINS. `models.train --source real` refits, registers, and promotes
+#      to `@champion` only if the model actually beat the seasonal-naive
+#      baseline. A challenger that loses stays a challenger.
+#
+#   2. It PERSISTS DURABLY. `mlflow.db` and `mlruns/` go to a release asset, one
+#      release per training run. A cache is an accelerator with an eviction
+#      policy, not a store: seven days without a successful run and the only
+#      copy of the registry is gone, and unlike `data/` — which a full refresh
+#      re-pulled in 43 seconds — lineage cannot be re-derived from anywhere.
+#      The cache is still written, with the `lake-` prefix `daily.yml` restores
+#      from, so the next daily run finds the champion immediately.
+#
+# Manual only, deliberately. Promotion changes which model serves; that is a
+# decision, and a decision on a cron is a decision nobody makes.
+# ============================================================================
+
+name: train (register a champion on real data)
+
+on:
+  workflow_dispatch:
+    inputs:
+      source:
+        description: "`real` refuses to fall back to the fixture and fails loudly instead"
+        type: choice
+        options:
+          - real
+          - synthetic
+        default: real
+
+permissions:
+  contents: write # to publish the registry as a release asset
+
+concurrency:
+  # Never let two trainings race for the `@champion` alias.
+  group: model-registry
+  cancel-in-progress: false
+
+jobs:
+  train:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+
+    steps:
+      - uses: actions/checkout@v7
+
+      # Same shape as daily.yml: decide before spending anything. Unlike the
+      # daily job this one goes RED without a key rather than dormant-green —
+      # nobody dispatches a training run by accident, so a silent no-op here
+      # would just be a confusing green tick.
+      - name: Preflight — is EIA_API_KEY configured?
+        id: preflight
+        env:
+          EIA_API_KEY: ${{ secrets.EIA_API_KEY }}
+        run: |
+          set -euo pipefail
+          if [ "${{ inputs.source }}" = "real" ] && [ -z "${EIA_API_KEY:-}" ]; then
+            echo "::error title=No EIA_API_KEY::--source real cannot be satisfied without the secret. See docs/BLOCKED.md."
+            exit 1
+          fi
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v7
+        with:
+          enable-cache: true
+
+      - name: Install dependencies
+        run: uv sync --extra dev --frozen
+
+      # The lake, so training does not re-backfill two years it already has.
+      # Restored by prefix, exactly as daily.yml does.
+      - name: Restore data lake and MLflow state
+        uses: actions/cache/restore@v6
+        with:
+          path: |
+            data
+            mlflow.db
+            mlruns
+          key: lake-${{ github.run_id }}
+          restore-keys: lake-
+
+      - name: Ingest
+        env:
+          EIA_API_KEY: ${{ secrets.EIA_API_KEY }}
+        run: uv run python -m ingest
+
+      # `--source real` raises rather than quietly training on the fixture, so
+      # a green run here means the champion was fitted on real demand. That is
+      # the whole safety property: a model promoted off fixture data would be
+      # served as if it were real.
+      - name: Train, register, and promote only a genuine winner
+        env:
+          EIA_API_KEY: ${{ secrets.EIA_API_KEY }}
+        run: uv run python -m models.train --source ${{ inputs.source }}
+
+      - name: Package the registry
+        id: package
+        run: |
+          set -euo pipefail
+
+          if [ ! -f mlflow.db ]; then
+            echo "::error title=No registry produced::models.train finished but wrote no mlflow.db."
+            exit 1
+          fi
+
+          # The manifest exists so a downloaded tarball can be identified
+          # without opening it: which commit trained it, from which run, and
+          # when. `metrics/model.json` carries the alias and the promotion
+          # decision, so it travels with the registry rather than being
+          # reconstructed from memory later.
+          python3 - <<'PY' > registry-manifest.json
+          import json, os, pathlib
+          model = pathlib.Path("metrics/model.json")
+          json.dump(
+              {
+                  "commit": os.environ["GITHUB_SHA"],
+                  "run_id": os.environ["GITHUB_RUN_ID"],
+                  "source": os.environ["SOURCE"],
+                  "model": json.loads(model.read_text(encoding="utf-8")) if model.exists() else None,
+              },
+              indent=2,
+              fp=__import__("sys").stdout,
+          )
+          PY
+
+          tar -czf registry.tar.gz mlflow.db mlruns registry-manifest.json
+          echo "tag=registry-${GITHUB_RUN_ID}" >> "$GITHUB_OUTPUT"
+        env:
+          SOURCE: ${{ inputs.source }}
+
+      # One release per training run, never clobbered: the point of moving off
+      # the cache is that the previous champion stays retrievable. `--notes`
+      # rather than a generated changelog, because this is an artifact drop and
+      # a diff of commits would be misleading.
+      - name: Publish the registry as a release asset
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          gh release create "${{ steps.package.outputs.tag }}" \
+            registry.tar.gz registry-manifest.json \
+            --title "MLflow registry — run ${GITHUB_RUN_ID}" \
+            --notes "Trained from ${GITHUB_SHA} on \`${{ inputs.source }}\` data. Contains \`mlflow.db\` and \`mlruns/\`."
+
+      # Same key prefix daily.yml restores from, so the next daily run picks the
+      # champion up without any wiring. Success-gated for the reason daily.yml
+      # documents: caching after a failure poisons every later run.
+      - name: Save data lake and MLflow state
+        uses: actions/cache/save@v6
+        if: success()
+        with:
+          path: |
+            data
+            mlflow.db
+            mlruns
+          key: lake-${{ github.run_id }}
