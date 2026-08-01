@@ -165,8 +165,21 @@ jobs:
             exit 0
           fi
 
+          # Two flags, both load-bearing, both fixing a silent skip:
+          #
+          #   `core.quotepath=off` — git otherwise renders a non-ASCII path as
+          #   `"drift/caf\303\251.py"`, quotes and octal escapes included, which
+          #   matches no pattern. The repository is all-ASCII today, so this is
+          #   latent rather than live; it is set anyway because the failure is
+          #   invisible, and a skipped run reports green.
+          #
+          #   `--no-renames` — rename detection is on by default in porcelain
+          #   `git diff`, and it reports only the *new* name. Renaming a mutated
+          #   module out to an unlisted path would therefore look irrelevant.
+          #   With this, both names are listed and the old one still matches.
           changed="${RUNNER_TEMP}/changed-paths.txt"
-          if ! git diff --name-only "origin/${BASE_REF}...HEAD" > "$changed"; then
+          if ! git -c core.quotepath=off diff --name-only --no-renames \
+               "origin/${BASE_REF}...HEAD" > "$changed"; then
             echo "::warning::Could not diff against origin/${BASE_REF}; running the full pass."
             echo "relevant=true" >> "$GITHUB_OUTPUT"
             exit 0

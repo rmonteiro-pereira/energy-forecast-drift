@@ -70,8 +70,19 @@ def matches(path: str, patterns: list[str]) -> bool:
     both forms are accepted so the list can be written the way GitHub documents
     it. Exact string equality is checked first so a pattern containing no
     wildcards means precisely itself.
+
+    The leading `./` is stripped as a **prefix**, not with `lstrip("./")`. That
+    was the original spelling and it was a silent, severe bug: `lstrip` removes
+    any leading character in the set `{'.', '/'}`, so every dotfile path lost its
+    dot — `.github/workflows/mutation.yml` arrived as
+    `github/workflows/mutation.yml` and matched nothing. All three `.github/...`
+    entries in the canonical list were dead patterns, which meant a PR that
+    lowered the floor, deleted a gate, or edited the killed-set baseline was
+    judged irrelevant and reported the `mutate` check **green without running**.
+    The baseline entry exists precisely because its diff means "a kill was given
+    up on purpose"; that guarantee was inverted into its own blind spot.
     """
-    normalised = path.strip().replace("\\", "/").lstrip("./")
+    normalised = path.strip().replace("\\", "/").removeprefix("./")
     if not normalised:
         return False
     return any(
@@ -143,9 +154,8 @@ def main(argv: list[str] | None = None) -> int:
     _summary(
         "## Mutation testing — skipped\n\n"
         f"None of the **{len(changed)}** changed paths match "
-        "[`.github/mutation-paths.txt`](../blob/main/.github/mutation-paths.txt), "
-        "the canonical list of files that can move the mutation score, so the "
-        "36-minute pass was not run.\n\n"
+        "`.github/mutation-paths.txt`, the canonical list of files that can move "
+        "the mutation score, so the 36-minute pass was not run.\n\n"
         "This check still reports, deliberately: a required check that is skipped "
         "never reports at all, and GitHub would leave this pull request waiting on "
         "it forever.\n"

@@ -248,37 +248,75 @@ def identical_runs(lines: list[str]) -> list[tuple[int, int]]:
     return runs
 
 
-def disturbed_lines(
-    old_lines: list[str], new_lines: list[str], mapping: dict[int, int]
-) -> dict[int, tuple[int, int]]:
-    """New-line index -> the identical-line run it sits in, for disturbed runs only.
+def runs_by_line(lines: list[str]) -> dict[int, tuple[int, int]]:
+    """Line index -> the identical-line run containing it, singletons included.
 
-    The run bounds, not just the line, because the ambiguity is *between the
-    lines of a run*: two identities landing anywhere in the same run at the same
-    mutation index are the ones whose statuses have to agree before either can
-    transfer. Keying that check by line instead of by run puts every identity in
-    a group of one, where every set of statuses is trivially uniform and nothing
-    is ever refused.
+    Singletons are in the map on purpose. A line that is unique in the old file
+    can still land *inside* a run in the new one — someone added a line identical
+    to it — and that is a genuinely undecidable alignment even though nothing
+    about the old side looked duplicated.
+    """
+    index: dict[int, tuple[int, int]] = {n: (n, n + 1) for n in range(len(lines))}
+    for start, end in identical_runs(lines):
+        for line in range(start, end):
+            index[line] = (start, end)
+    return index
 
-    A run is *disturbed* when a line was inserted into or deleted from it, or when
-    the old lines landing in it are no longer consecutive. That is exactly the
-    situation where `SequenceMatcher` had to pick which of several identical lines
-    is "the original" — a question the text cannot answer.
+
+def ambiguous_identities(old: dict, new: dict, mapping: dict[int, int]) -> set[tuple[int, int]]:
+    """`(old_line, index)` pairs whose status cannot be migrated without guessing.
+
+    The ambiguity is *between the lines of a run of identical text*, so it is
+    decided per run and per mutation index — never per line. Keying it by line
+    puts every identity in a group of one, where every set of statuses is
+    trivially uniform and nothing is ever refused.
+
+    A run is **disturbed** when its alignment moved: the old run and the new run
+    it maps onto are different lengths, or the old lines do not land on the new
+    run consecutively and exactly. That is precisely when `SequenceMatcher` had
+    to pick which of several identical lines is "the original" — a question the
+    text cannot answer, and one it answers consistently but arbitrarily.
+
+    Both sides are then inspected, and this is the part the first version got
+    wrong twice:
+
+      * **Both sides' runs.** Looking only at runs in the *new* file misses a run
+        that shrank — delete one of two adjacent identical lines and there is no
+        run left to notice, so a coin-flip alignment was being reported as a
+        definite regression, or as a retirement that silently swallowed a real
+        one.
+      * **Both sides' statuses.** Requiring the *baseline* statuses to disagree
+        misses the case where a single unique identity lands in a new run whose
+        members disagree: one baseline status is trivially uniform, so it
+        transferred, and which new line to read from was still a guess.
 
     An untouched run is not disturbed, so an unchanged file produces no ambiguity
     at all. Refusing on every duplicate line regardless would make the 21 known
-    collisions in this repository permanently unadjudicable, which is a gate
-    nobody can get past rather than a gate that bites.
+    collisions in this repository permanently unadjudicable — a gate nobody can
+    get past rather than a gate that bites.
     """
-    inverse = {new: old for old, new in mapping.items()}
-    disturbed: dict[int, tuple[int, int]] = {}
-    for start, end in identical_runs(new_lines):
-        landed = sorted(inverse[j] for j in range(start, end) if j in inverse)
-        consecutive = bool(landed) and landed == list(range(landed[0], landed[0] + len(landed)))
-        if len(landed) != end - start or not consecutive:
-            for line in range(start, end):
-                disturbed[line] = (start, end)
-    return disturbed
+    old_runs = runs_by_line(old["lines"])
+    new_runs = runs_by_line(new["lines"])
+    ambiguous: set[tuple[int, int]] = set()
+
+    for a1, a2 in sorted(set(old_runs.values())):
+        images = [mapping[line] for line in range(a1, a2) if line in mapping]
+        if not images:
+            # The whole run went away. Nothing to attribute it to, and nothing to
+            # guess between: retirement is the honest verdict.
+            continue
+        b1, b2 = new_runs[images[0]]
+        if (a2 - a1) == (b2 - b1) and images == list(range(b1, b2)):
+            continue  # the alignment held; no guess was made
+
+        indices = {i for line, i in old["mutants"] if a1 <= line < a2}
+        indices |= {i for line, i in new["mutants"] if b1 <= line < b2}
+        for index in indices:
+            before = {old["mutants"].get((line, index)) for line in range(a1, a2)}
+            after = {new["mutants"].get((line, index)) for line in range(b1, b2)}
+            if len(before) > 1 or len(after) > 1:
+                ambiguous.update((line, index) for line in range(a1, a2))
+    return ambiguous
 
 
 # ---------------------------------------------------------------------------
@@ -333,47 +371,36 @@ def compare(baseline: dict[str, dict], current: dict[str, dict]) -> list[dict]:
             continue
 
         mapping = migrate(old["lines"], new["lines"])
-        disturbed = disturbed_lines(old["lines"], new["lines"], mapping)
-
-        # Which baseline identities land in each disturbed run, per mutation
-        # index — the group whose statuses have to agree before any of them can
-        # transfer. Keyed by the run, not by the line: the whole question is
-        # which line of the run an identity belongs to.
-        grouped: dict[tuple[tuple[int, int], int], list[str]] = {}
-        for (line, index), status in old["mutants"].items():
-            new_line = mapping.get(line)
-            if new_line is not None and new_line in disturbed:
-                grouped.setdefault((disturbed[new_line], index), []).append(status)
+        ambiguous = ambiguous_identities(old, new, mapping)
 
         for line, index in sorted(killed_before):
             record = {"file": filename, "line": line, "index": index}
             new_line = mapping.get(line)
+
+            # Checked before retirement, deliberately. When one of two adjacent
+            # identical lines is deleted, `SequenceMatcher` drops one of them
+            # arbitrarily — so "its line was deleted" is itself the guess, and a
+            # real regression can hide inside a retirement.
+            if (line, index) in ambiguous:
+                findings.append(
+                    {
+                        **record,
+                        "verdict": AMBIGUOUS,
+                        "detail": (
+                            "it sits in a run of identical lines whose alignment moved "
+                            "and whose statuses disagree. Which line is the original is "
+                            "not a question the text can answer, so the status was not "
+                            "transferred."
+                        ),
+                    }
+                )
+                continue
 
             if new_line is None:
                 findings.append(
                     {**record, "verdict": RETIRED, "detail": "its line was edited or deleted"}
                 )
                 continue
-
-            if new_line in disturbed:
-                siblings = grouped.get((disturbed[new_line], index), [])
-                # Only refuse when the guess would actually matter. Identical
-                # lines produce identical mutations, so swapping two identities
-                # that agree swaps nothing observable.
-                if len(set(siblings)) > 1:
-                    findings.append(
-                        {
-                            **record,
-                            "verdict": AMBIGUOUS,
-                            "detail": (
-                                f"line {new_line} sits in a run of identical lines whose "
-                                f"alignment moved, carrying more than one status "
-                                f"({sorted(set(siblings))}). Which line is the original "
-                                "is not a question the text can answer."
-                            ),
-                        }
-                    )
-                    continue
 
             status = new["mutants"].get((new_line, index))
             if status is None:

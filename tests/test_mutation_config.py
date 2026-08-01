@@ -801,6 +801,20 @@ def _relevance():
         (["uv.lock"], True),
         (["scripts/mutation_survivors.py"], True),
         (["pyproject.toml"], True),
+        # The dotfile paths, and every one of them a live hole while `matches()`
+        # used `lstrip("./")` — which strips *characters*, so `.github/...`
+        # arrived as `github/...` and matched nothing. A PR could lower the
+        # floor, delete a gate, or edit the killed-set baseline and be judged
+        # irrelevant, reporting `mutate` green without running it. This table had
+        # no dotfile row, which is how 316 tests passed over a dead matcher.
+        ([".github/workflows/mutation.yml"], True),
+        ([".github/mutation-paths.txt"], True),
+        ([".github/mutation-baseline.json"], True),
+        (["scripts/mutation_ratchet.py"], True),
+        (["scripts/mutation_relevance.py"], True),
+        # A leading `./` is the one prefix that must be stripped, and stripping
+        # it must not eat the dot of a dotfile behind it.
+        (["./drift/detectors.py"], True),
         # Mixed: one relevant path in a hundred is still relevant. This is the
         # case `paths` + `paths-ignore` gets wrong, per #19's rejected design.
         (["README.md", "docs/adr/0007.md", "drift/detectors.py"], True),
@@ -816,6 +830,47 @@ def test_the_relevance_decision_matches_what_can_move_the_score(changed, expecte
         f"{changed} was judged {'relevant' if not expected else 'irrelevant'}. "
         f"A false negative reports green without measuring anything; a false "
         f"positive costs 36 minutes."
+    )
+
+
+def test_every_literal_entry_in_the_canonical_list_matches_itself():
+    """The generic form of the `lstrip("./")` bug, rather than a row per path.
+
+    Enumerating cases in the table above only ever catches the paths someone
+    thought to enumerate; this catches any future normalisation that mangles a
+    path on its way into the matcher. A pattern that does not match its own text
+    is a pattern that can never fire, and a pattern that can never fire is a hole
+    that reports the `mutate` check green without running it.
+    """
+    module = _relevance()
+    patterns = module.load_patterns(PATHS_FILE)
+    literals = [p for p in patterns if not any(ch in p for ch in "*?[")]
+    assert literals, "the canonical list is all globs — this guard asserts nothing"
+    dead = [p for p in literals if not module.matches(p, patterns)]
+    assert not dead, (
+        f"{dead} appear in .github/mutation-paths.txt but do not match themselves, "
+        "so changing those files would skip the mutation run and report green"
+    )
+
+
+def test_the_diff_the_workflow_takes_cannot_mangle_a_path():
+    """Both flags fix a silent skip, and a silent skip here reports success.
+
+    `core.quotepath` renders a non-ASCII path as `"drift/caf\\303\\251.py"` —
+    quotes and octal escapes included — which matches no pattern. Rename
+    detection reports only the *new* name, so renaming a mutated module to an
+    unlisted path would look irrelevant.
+    """
+    steps = workflow()["jobs"]["mutate"]["steps"]
+    relevance = next(s for s in steps if s.get("id") == "relevance")
+    command = str(relevance.get("run", ""))
+    assert "core.quotepath=off" in command, (
+        "the relevance diff can emit quoted, octal-escaped paths for non-ASCII "
+        "filenames, which match nothing and skip the run silently"
+    )
+    assert "--no-renames" in command, (
+        "rename detection reports only the new name, so renaming a mutated module "
+        "out to an unlisted path would be judged irrelevant"
     )
 
 

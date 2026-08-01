@@ -327,6 +327,78 @@ def test_inserting_a_line_beside_a_duplicate_does_not_transfer_the_status(ratche
     )
 
 
+def test_deleting_one_of_two_identical_lines_refuses_instead_of_accusing(ratchet, tmp_path):
+    """A run can vanish, and the first version only looked for runs in the NEW file.
+
+    Delete one of two adjacent identical lines and there is no run left to notice,
+    so nothing was marked disturbed and the coin-flip alignment came out as a
+    **definite regression at exit 1** — the wrong-commit accusation the refusal
+    exists to prevent. `SequenceMatcher` drops one of the two arbitrarily; the
+    surviving mutant may belong to either.
+    """
+    shrunk = ["def f(x):", "    x = x + 1", "    return x"]
+    code, out = _run(
+        ratchet,
+        tmp_path,
+        {"m.py": (DUPLICATED, {(1, 0): "ok_killed", (2, 0): "bad_survived"})},
+        {"m.py": (shrunk, {(1, 0): "bad_survived"})},
+    )
+    assert "| **regressed** | **0** |" in out, (
+        f"an undecidable alignment was reported as a definite regression:\n{out}"
+    )
+    assert "| **ambiguous** | **1** |" in out, out
+    assert code == 1, out
+
+
+def test_a_regression_cannot_hide_inside_a_retirement(ratchet, tmp_path):
+    """The mirror of the case above, and the dangerous direction.
+
+    Same deletion, but the kill was on the *second* identical line. If
+    `SequenceMatcher` drops that one, the kill reads as "its line was deleted" —
+    `retired`, exit 0 — even though the line that actually went may have been its
+    twin, in which case a real regression just passed silently. Retirement is
+    only honest when it is not itself a guess, which is why ambiguity is decided
+    before it.
+    """
+    shrunk = ["def f(x):", "    x = x + 1", "    return x"]
+    code, out = _run(
+        ratchet,
+        tmp_path,
+        {"m.py": (DUPLICATED, {(1, 0): "bad_survived", (2, 0): "ok_killed"})},
+        {"m.py": (shrunk, {(1, 0): "bad_survived"})},
+    )
+    assert "| retired | 0 |" in out, (
+        f"a kill on an undecidable alignment was quietly retired:\n{out}"
+    )
+    assert "| **ambiguous** | **1** |" in out, out
+    assert code == 1, out
+
+
+def test_a_unique_line_landing_in_a_disagreeing_new_run_is_refused(ratchet, tmp_path):
+    """Uniformity has to be checked on the NEW run's statuses too.
+
+    A single baseline identity is trivially uniform on its own, so checking only
+    the baseline side let it transfer — while the new run it landed in carried
+    two different statuses, leaving "which new line do I read?" an open guess.
+    Here the baseline has one killed mutant on a line that was unique; the change
+    inserts an identical line beside it and the fresh run disagrees across the
+    two.
+    """
+    before = ["def f(x):", "    x = x + 1", "    return x"]
+    after = ["def f(x):", "    x = x + 1", "    x = x + 1", "    return x"]
+    code, out = _run(
+        ratchet,
+        tmp_path,
+        {"m.py": (before, {(1, 0): "ok_killed"})},
+        {"m.py": (after, {(1, 0): "bad_survived", (2, 0): "ok_killed"})},
+    )
+    assert "| **regressed** | **0** |" in out, (
+        f"the ratchet picked one of two identical new lines and called it a regression:\n{out}"
+    )
+    assert "| **ambiguous** | **1** |" in out, out
+    assert code == 1, out
+
+
 def test_adjacent_duplicates_that_agree_are_not_ambiguous(ratchet, tmp_path):
     """Identical lines produce identical mutations, so swapping equals swaps nothing.
 
@@ -404,7 +476,6 @@ def test_the_baseline_does_not_churn(ratchet, tmp_path):
     ratchet.main(["--cache", str(cache), "--write", str(first)])
     ratchet.main(["--cache", str(cache), "--write", str(second)])
     assert first.read_bytes() == second.read_bytes(), "the baseline is not deterministic"
-    assert "line_number" not in first.read_text(encoding="utf-8") or True
     # The pk must never be persisted: CI reassigns ids in insertion order every
     # run, so a baseline keyed on it would report a wholesale regression the
     # first time anyone inserted a line.

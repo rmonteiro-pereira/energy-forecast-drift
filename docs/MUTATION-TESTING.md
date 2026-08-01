@@ -378,8 +378,9 @@ constraints behind it, established by reading mutmut 2.5.1's `cache.py` and
 diffing two real CI caches; every one of them was re-verified against a real
 `.mutmut-cache` while the script was written.
 
-The baseline lives at `.github/mutation-baseline.json` and is **committed**, so
-losing a kill on purpose costs a visible diff in the pull request that loses it.
+The baseline lives at `.github/mutation-baseline.json` and is **committed once
+seeded** — it is not in the tree yet, see below — so losing a kill on purpose
+costs a visible diff in the pull request that loses it.
 That is the mechanism — not the file format, the attributability. Re-baselining
 *is* the adjudication: the workflow uploads a ready-made `mutation-baseline`
 artifact on every run, so accepting a loss means downloading it and committing it
