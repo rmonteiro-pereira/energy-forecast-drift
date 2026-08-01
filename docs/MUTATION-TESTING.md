@@ -1,9 +1,9 @@
 # Mutation testing
 
-> **The headline number is 66.7%**, measured on the CI runner
-> ([run 30680545024](https://github.com/rmonteiro-pereira/energy-forecast-drift/actions/runs/30680545024),
-> `ubuntu-latest`, commit `41e5d02`). The same commit scores **65.0%** on Windows,
-> and both numbers are below. It is published here because a measured mediocre
+> **The headline number is 66.9%**, measured on the CI runner
+> ([run 30684416557](https://github.com/rmonteiro-pereira/energy-forecast-drift/actions/runs/30684416557),
+> `ubuntu-latest`). The identical code scores **1.7 points lower on Windows**, for
+> a reason worth knowing; both numbers, and the reason, are below. It is published here because a measured mediocre
 > score with the survivors listed is worth more than a flattering one — and
 > because finding out *which* assertions were missing already produced a real fix.
 
@@ -54,7 +54,7 @@ uv run python scripts/mutation_score.py --floor 66       # the CI floor
 uv run python scripts/mutation_survivors.py --check      # every survivor judged
 ```
 
-> **On Windows, expect 65.0% and not 66.7%, and that is not a regression.** See
+> **On Windows, expect roughly 1.7 points lower, and that is not a regression.** See
 > [the platform note](#the-same-commit-scores-differently-on-windows) below before
 > concluding the score dropped.
 
@@ -69,29 +69,36 @@ this document is only worth something if someone else can regenerate it.
 
 ## The score
 
-**The measurement the floor is set from**, on the CI runner —
-[run 30680545024](https://github.com/rmonteiro-pereira/energy-forecast-drift/actions/runs/30680545024),
-`ubuntu-latest`, commit `41e5d02`, 2026-08-01:
+**The current measurement**, on the CI runner —
+[run 30684416557](https://github.com/rmonteiro-pereira/energy-forecast-drift/actions/runs/30684416557),
+`ubuntu-latest`, 2026-08-01:
 
 | File | Killed | Total | Score |
 |---|---:|---:|---:|
 | `drift/detectors.py` | 217 | 342 | **63.5%** |
-| `models/backtest.py` | 99 | 132 | **75.0%** |
-| **Total** | **316** | **474** | **66.7%** |
+| `models/backtest.py` | 100 | 132 | **75.8%** |
+| **Total** | **317** | **474** | **66.9%** |
 
-The floor is **66**.
+The floor is **66**, set from the run before this one
+([30680545024](https://github.com/rmonteiro-pereira/energy-forecast-drift/actions/runs/30680545024),
+316 / 474 = 66.7% at `41e5d02`). It is deliberately *not* raised in the same
+change that raised the score: a floor should follow a measurement it did not
+cause. See [the section on what replaces it](#what-replaces-the-percentage-floor)
+before tightening it — the percentage is not the quantity worth ratcheting.
 
 ### The same commit scores differently on Windows
 
 The local run of the same code, on Windows, 2026-07-31, gave `drift/detectors.py`
 **209 / 342** and `models/backtest.py` **99 / 132** — **308 / 474 = 65.0%**.
 
-**65.0% locally, 66.7% in CI, same code.** The difference is entirely the nine
-`untested` mutants described [below](#every-one-of-the-158-survivors-is-adjudicated):
-Windows leaves nine mutants untested and the score counts them as not-killed;
-this runner leaves **none** (`Raw statuses: {'ok_killed': 316, 'bad_survived':
-158}` — no `untested` key at all). Of the nine, eight resolve as killed and one
-as a survivor, which is exactly `308 + 8 = 316` and `157 + 1 = 158`.
+**65.0% locally, 66.7% in CI, at the same commit `41e5d02`.** The difference is
+entirely the nine `untested` mutants described
+[below](#every-one-of-the-157-survivors-is-adjudicated): Windows leaves nine
+mutants untested and the score counts them as not-killed; this runner leaves
+**none** (`Raw statuses: {'ok_killed': 316, 'bad_survived': 158}` — no `untested`
+key at all). Of the nine, eight resolve as killed and one as a survivor, which is
+exactly `308 + 8 = 316` and `157 + 1 = 158`. The current 317 / 157 is that run
+plus the rmse gap killed.
 
 That gap of 1.7 points is why the floor is set from a CI run rather than a local
 one. The floor before this was `65`, taken from the rounded **65.0%** above —
@@ -112,6 +119,7 @@ verdict cannot disagree again.
 | 3 — after closing three named gaps | 290 / 474 | 61.2% | 18 tests over `drift_timeline`, the MAPE formula and fold accounting |
 | 4 — after killing 19 of the 21 named gaps | 308 / 474 | **65.0%** | 13 tests written against the *mutant diffs*, not the prose descriptions of them |
 | 5 — **the same code, on the CI runner** | 316 / 474 | **66.7%** | *no test changed.* Runs 1–4 were local, on Windows; this one is `ubuntu-latest`, and the nine `untested` mutants resolve there |
+| 6 — after killing the rmse gap | 317 / 474 | **66.9%** | one test, for the artifact field that no test in the repository mentioned — found by re-reading the *accepted* pile, not the gap pile |
 
 Runs 1–4 are local (Windows). Across them `drift/detectors.py` went
 **42.0% → 48.8% → 57.9% → 61.1%** and `models/backtest.py`
@@ -173,7 +181,7 @@ happened to be eligible, and "everything was excluded as deterministic" is
 precisely when a reader most wants to know which columns those were. Both
 branches now report it.
 
-## Every one of the 158 survivors is adjudicated
+## Every one of the 157 survivors is adjudicated
 
 Not summarised — **adjudicated**. Each surviving mutant matches exactly one rule
 in [`scripts/mutation_survivors.py`](../scripts/mutation_survivors.py), and each
@@ -186,10 +194,10 @@ uv run python scripts/mutation_survivors.py            # the full table
 uv run python scripts/mutation_survivors.py --check    # the CI gate
 ```
 
-**158 mutants across 124 source lines. 4 are real gaps (2.5%); 154 are
+**157 mutants across 123 source lines. 4 are real gaps (2.5%); 153 are
 accepted.**
 
-> **0 mutants mutmut never tested** on the CI runner: `316 + 158 = 474` exactly,
+> **0 mutants mutmut never tested** on the CI runner: `317 + 157 = 474` exactly,
 > and the raw statuses carry no `untested` key at all. **The local Windows run
 > leaves nine**, and the score counts those as not-killed — `308 + 157 = 465`,
 > not 474. Every one of the nine is on a syntax-continuation line (a bare `)` or
@@ -247,11 +255,11 @@ unexamined.
 | `accepted:equivalent-unreachable-get-default` | `rollup.get("columns_scored", 0)` → `…, 1)` | The default is dead code. `_section_from_columns` returns `columns_scored` on **both** branches — `0` on the nothing-eligible path, `len(scored)` on the other — so the key is always present and the fallback never evaluates. |
 | `accepted:equivalent-first-increment-from-zero` | `skipped += 1` → `skipped = 1` | They differ only if `skipped` is already non-zero, and it cannot be: cutoffs ascend and `start >= series.min()` always holds, so at most the *first* cutoff has empty history, reached on iteration one with `skipped == 0`. The sibling `-= 1` and `+= 2` mutants on that line **are** killed, by the exact-count assertion. |
 
-### The accepted survivors — 154 mutants, and why each is not a defect
+### The accepted survivors — 153 mutants, and why each is not a defect
 
 | Rule | Lines | Mutants | Reason |
 |---|---:|---:|---|
-| `accepted:human-readable-text` | 75 | 96 | Summaries, notes, log messages, f-strings. Asserting exact wording breaks on every copy edit and protects nothing; the artifact *schema* is asserted separately. **This is the only row that differs between platforms** — the one Windows-`untested` mutant that survives on Linux lands here. |
+| `accepted:human-readable-text` | 74 | 95 | Summaries, notes, log messages, f-strings. Asserting exact wording breaks on every copy edit and protects nothing; the artifact *schema* is asserted separately. **This is the only row that differs between platforms** — the one Windows-`untested` mutant that survives on Linux lands here. |
 | `accepted:sort-or-selection-order` | 2 | 3 | Sort keys and `idxmax` selection deciding presentation order. The *set* is asserted; the order in a report is not a correctness property. **Narrowed this round** — it used to cover 8 mutants, four of which were `make_cutoffs` arithmetic and are now `gap:fold-window-arithmetic`. |
 | `accepted:equivalent-unreachable-get-default` | 1 | 1 | **Provably equivalent** — argued in full above. The `.get` default is unreachable because both return paths always set the key. |
 | `accepted:equivalent-first-increment-from-zero` | 1 | 1 | **Provably equivalent** — argued in full above. `skipped` is provably 0 when that branch is reached, so `= 1` and `+= 1` cannot differ. |
@@ -278,11 +286,11 @@ the row is dropped because a count of zero in a table of survivors is noise.
 
 - It covers **two files**. The other ~4,500 lines are unmeasured. This is not a
   repo-wide quality figure and is not presented as one.
-- 66.7% is still a **modest score**. Roughly a third of the small changes you
+- 66.9% is still a **modest score**. Roughly a third of the small changes you
   could make to those two files would go unnoticed by the suite. The mitigating
-  detail is *which* third: 96 of the 158 surviving mutants are filed as prose,
+  detail is *which* third: 95 of the 157 surviving mutants are filed as prose,
   and every comparison that drives the alarm is now pinned. **That mitigation is
-  now known to be partly false** — see the section below; 47 of those 96 are not
+  now known to be partly false** — see the section below; 46 of those 95 are not
   prose at all. The 4-gap figure is an undercount for the same reason.
 - **The floor does not catch a deliberate weakening.** Demonstrated, not feared.
   See below.
@@ -327,7 +335,7 @@ text a human reads. Re-running the adjudicator over the current results:
 - **195 of the 316 kills (62%)** would land on an existing ACCEPTED or GAP rule
   if they regressed, including MAE, MAPE, RMSE and bias;
 - **`--check` fails only on UNADJUDICATED**, never on a GAP verdict;
-- **47 of the 96 survivors filed as prose sit on `"key": <expression>` lines** —
+- **46 of the 95 survivors filed as prose sit on `"key": <expression>` lines** —
   they are not prose either.
 
 One of those 47 was a real gap, live on `main` and shipped: `"rmse"` →
