@@ -1,0 +1,66 @@
+# The files that can move the mutation score — the single source of truth.
+#
+# One glob per line, `#` comments and blank lines ignored, matched against paths
+# relative to the repository root. Read by two things, which is the whole point:
+#
+#   * scripts/mutation_relevance.py, which decides at run time whether the
+#     expensive steps of .github/workflows/mutation.yml need to happen;
+#   * tests/test_mutation_config.py, which recomputes the first-party import
+#     closure from the AST and fails if this list is missing anything.
+#
+# This list used to live in `mutation.yml` as the `paths:` filter on the
+# `pull_request` trigger. It moved here so the `mutate` job can run — and
+# therefore *report* — on every PR while still doing the work only on the PRs
+# that can change the answer. A required check that is skipped never reports:
+# GitHub leaves the PR at "Expected — Waiting for status to be reported"
+# forever, so requiring it would have deadlocked every docs-only PR. See #19.
+#
+# Two lists that must agree by hand is the failure mode this file designs out.
+# Add a path here — not in the workflow, and not in the test.
+
+# The two mutated modules, from `[tool.mutmut].paths_to_mutate`.
+drift/detectors.py
+models/backtest.py
+
+# The seven test files named in `[tool.mutmut].runner`, which are the only tests
+# that can kill or fail to kill a mutant. Not `tests/**`: most test files here
+# cannot move this number, and making an unrelated docs PR wait 36 minutes is
+# how a job gets routed around. `tests/test_mutation_config.py` asserts this
+# list matches the runner, so the two cannot drift apart.
+tests/test_drift_detectors.py
+tests/test_drift_boundaries.py
+tests/test_drift_timeline.py
+tests/test_drift_trigger.py
+tests/test_backtest.py
+tests/test_backtest_accounting.py
+tests/test_baseline.py
+
+# Every first-party module those nine files import, directly or transitively.
+# The first version of this filter omitted all of them and was wrong:
+# `drift/config.py` holds the `DEFAULT_THRESHOLDS` the boundary tests pin, so
+# editing a threshold changes what `drift/detectors.py`'s mutants do while
+# touching no listed path. `tests/test_mutation_config.py` recomputes this
+# closure from the import graph and fails if anything is missing, so the list
+# cannot silently rot.
+drift/**
+features/**
+models/**
+ingest/config.py
+ingest/store.py
+
+# The lockfile. `uv sync --frozen` installs exactly this, so a pandas, numpy or
+# lightgbm bump changes behaviour under a suite nobody touched while matching
+# none of the paths above. Dependabot has already opened four PRs here, so most
+# dependency change *does* arrive in a commit — and a commit should be caught by
+# the trigger that can attribute it rather than left for Monday's cron.
+uv.lock
+
+# ...and the tooling that decides the verdict — including the relevance decision
+# itself. A change to the matcher changes which PRs get measured, so a change to
+# the matcher has to be measured.
+pyproject.toml
+scripts/mutation_score.py
+scripts/mutation_survivors.py
+scripts/mutation_relevance.py
+.github/mutation-paths.txt
+.github/workflows/mutation.yml

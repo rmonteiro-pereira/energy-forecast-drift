@@ -15,12 +15,17 @@
 #   * it is late. A test weakened on Tuesday surfaces six days and twenty commits
 #     later, by which point the change is no longer under review.
 #
-# So the trigger is `pull_request`, narrowed by `paths` to the files that can
-# actually move the score: the two mutated modules, the seven test files that
+# So the trigger is `pull_request`, and the *work* is narrowed to the files that
+# can actually move the score: the two mutated modules, the seven test files that
 # drive them, **every first-party module those nine import**, the lockfile, and
-# the mutation tooling. Those PRs are the minority, so the 25 minutes are paid
-# only where they can buy something — and the "wrong cost on every push"
-# objection stops applying, because it is no longer every push.
+# the mutation tooling. That list is `.github/mutation-paths.txt`. Those PRs are
+# the minority, so the 25 minutes are paid only where they can buy something —
+# and the "wrong cost on every push" objection stops applying, because it is no
+# longer every push.
+#
+# Narrowing the *work* rather than the *trigger* is deliberate and is the whole
+# point of #19: this job must report on every PR in order to be eligible as a
+# required check. It reports in seconds when nothing relevant changed.
 #
 # The schedule stays, but its remit is narrower than first claimed here.
 # "Dependency change does not arrive in a commit" is false for this repository:
@@ -44,61 +49,30 @@
 name: mutation testing
 
 on:
-  # The trigger that attributes: only on PRs that touch something able to change
-  # the score. Everything else in the repo can be reviewed without paying 25
-  # minutes, and a PR that does touch these gets its verdict while it is open.
+  # The trigger that attributes: every PR, with the *work* — not the trigger —
+  # narrowed to the changes that can move the score.
   #
-  # Note the granularity, which is easy to get wrong: on `pull_request`, `paths`
-  # is evaluated against the **whole PR diff versus the base**, not against the
-  # individual push. So once a PR touches one of these files, every later push to
-  # it re-runs this job — including a docs-only follow-up commit. Combined with
-  # `cancel-in-progress` below, that means the verdict always belongs to the
+  # This used to carry a `paths:` filter listing those files. The filter was
+  # correct about which PRs deserve 36 minutes and wrong about what it cost: a
+  # filtered-out PR produces no `mutate` check at all, and a check that never
+  # reports cannot be a *required* one. GitHub parks the PR at "Expected —
+  # Waiting for status to be reported" forever, and there is no native "skipped
+  # counts as success". Measured on two real PRs before branch protection went
+  # on, neither #16 nor #18 produced a `mutate` check; requiring it that day
+  # would have deadlocked both, and every docs-only PR after them.
+  #
+  # So the job now runs unconditionally and decides for itself, in about a
+  # second, whether to do the expensive part — see the `relevance` step below
+  # and `.github/mutation-paths.txt`, which is the list this filter used to be.
+  #
+  # The granularity is unchanged and still easy to get wrong: relevance is
+  # computed against the **whole PR diff versus the base**, not against the
+  # individual push. So once a PR touches one of those files, every later push
+  # to it re-runs the full pass — including a docs-only follow-up commit.
+  # Combined with `cancel-in-progress` below, the verdict always belongs to the
   # current head and the intermediate 36-minute runs are cancelled, which is the
   # trade we want: a stale verdict is worse than a missing one.
   pull_request:
-    paths:
-      # The two mutated modules...
-      - "drift/detectors.py"
-      - "models/backtest.py"
-      # ...and the seven test files named in `[tool.mutmut].runner`, which are
-      # the only tests that can kill or fail to kill a mutant. Not `tests/**`:
-      # most test files here cannot move this number, and making an unrelated
-      # docs PR wait 25 minutes is how a job gets routed around.
-      # `tests/test_mutation_config.py` asserts this list matches the runner, so
-      # the two cannot drift apart.
-      - "tests/test_drift_detectors.py"
-      - "tests/test_drift_boundaries.py"
-      - "tests/test_drift_timeline.py"
-      - "tests/test_drift_trigger.py"
-      - "tests/test_backtest.py"
-      - "tests/test_backtest_accounting.py"
-      - "tests/test_baseline.py"
-      # ...and every first-party module those nine files import, directly or
-      # transitively. The first version of this filter omitted all of them and
-      # was wrong: `drift/config.py` holds the `DEFAULT_THRESHOLDS` the boundary
-      # tests pin, so editing a threshold changes what `drift/detectors.py`'s
-      # mutants do while touching no filtered path.
-      # `tests/test_mutation_config.py` recomputes this closure from the import
-      # graph and fails if anything is missing, so the list cannot silently rot.
-      - "drift/**"
-      - "features/**"
-      - "models/**"
-      - "ingest/config.py"
-      - "ingest/store.py"
-      # The lockfile. `uv sync --frozen` installs exactly this, so a pandas,
-      # numpy or lightgbm bump changes behaviour under a suite nobody touched
-      # while matching none of the paths above. That was offered as the reason
-      # to keep the cron — wrongly, for this repo: Dependabot has already opened
-      # four PRs here, so most dependency change *does* arrive in a commit, and
-      # a commit should be caught by the trigger that can attribute it rather
-      # than left for Monday. The cron's real remit is narrower than the comment
-      # above it claimed: a transitive bump that no PR here ever names.
-      - "uv.lock"
-      # ...and the tooling that decides the verdict.
-      - "pyproject.toml"
-      - "scripts/mutation_score.py"
-      - "scripts/mutation_survivors.py"
-      - ".github/workflows/mutation.yml"
   schedule:
     # 04:40 UTC on Mondays — for dependency drift, not for the suite. See the
     # header. Off the hour: GitHub throttles the top-of-hour stampede and delays
@@ -162,29 +136,74 @@ jobs:
     timeout-minutes: 60
 
     steps:
+      # `fetch-depth: 0` is load-bearing, not cargo cult: the relevance step
+      # diffs against the base branch, and the default shallow checkout has no
+      # base to diff against. Without it `git diff` fails — which is handled
+      # below, but by running the full 36-minute pass every time.
       - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
 
+      # Does this change touch anything that can move the score? Answered here,
+      # in about a second, using the system `python3` and the standard library —
+      # before `uv sync`, because installing a dependency tree in order to decide
+      # whether to do any work would spend a minute of the time this saves.
+      #
+      # Every branch of this writes `relevant`. The failure directions are all
+      # chosen the same way: when the answer is unknown, run the pass. A skipped
+      # run reports green, so guessing "not relevant" would be guessing green.
+      - name: Does this change touch anything that can move the score?
+        id: relevance
+        env:
+          BASE_REF: ${{ github.base_ref }}
+        run: |
+          set -uo pipefail
+
+          if [ "${{ github.event_name }}" != "pull_request" ]; then
+            echo "Event is ${{ github.event_name }}, not a pull request — always relevant."
+            echo "relevant=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          changed="${RUNNER_TEMP}/changed-paths.txt"
+          if ! git diff --name-only "origin/${BASE_REF}...HEAD" > "$changed"; then
+            echo "::warning::Could not diff against origin/${BASE_REF}; running the full pass."
+            echo "relevant=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          echo "Changed paths:"
+          cat "$changed"
+          python3 scripts/mutation_relevance.py --changed "$changed"
+
+      # Everything below is conditional on that answer. The job itself is not:
+      # it must always reach a conclusion so the `mutate` check always reports.
       - name: Install uv
+        if: steps.relevance.outputs.relevant == 'true'
         uses: astral-sh/setup-uv@v7
         with:
           enable-cache: true
           python-version: "3.11"
 
       - name: Install dependencies
+        if: steps.relevance.outputs.relevant == 'true'
         run: uv sync --extra dev --frozen
 
       # Fail loudly and immediately if the config points at files that do not
       # exist. A mutation config aimed at a missing directory reports a perfect
       # score over zero mutants, which is worse than not running at all.
       - name: The mutation config must point at real files
+        if: steps.relevance.outputs.relevant == 'true'
         run: uv run pytest tests/test_mutation_config.py -v
 
       - name: Run mutmut
+        if: steps.relevance.outputs.relevant == 'true'
         # mutmut exits non-zero whenever any mutant survives, which is expected.
         # The verdict comes from the score, not from this exit code.
         run: uv run mutmut run || true
 
       - name: Report the score and enforce the floor
+        if: steps.relevance.outputs.relevant == 'true'
         env:
           # `inputs.floor` is set only by workflow_dispatch; on a pull request or
           # the schedule it is empty, and the shell default supplies FLOOR from
@@ -205,6 +224,7 @@ jobs:
       # rule in scripts/mutation_survivors.py, so a new one cannot quietly join
       # the pile unexamined.
       - name: Every surviving mutant must be adjudicated
+        if: steps.relevance.outputs.relevant == 'true'
         run: |
           uv run python scripts/mutation_survivors.py --check \
             | tee -a "$GITHUB_STEP_SUMMARY"
@@ -215,8 +235,13 @@ jobs:
       # since v4 — so without this the upload finds nothing and
       # `if-no-files-found: error` fails the job *after* a 25-minute run. Found
       # while triaging the v4 -> v7 bump, and it was already wrong at v4.
+      # `always()` so a failed floor or a failed adjudication still leaves the
+      # cache behind to inspect — but only when there *is* one. Without the
+      # relevance clause a skipped run would reach `if-no-files-found: error`
+      # with nothing to upload and fail the very check this job exists to let
+      # `main` require.
       - name: Upload the mutation cache
-        if: always()
+        if: always() && steps.relevance.outputs.relevant == 'true'
         uses: actions/upload-artifact@v7
         with:
           name: mutation-cache-${{ github.run_id }}

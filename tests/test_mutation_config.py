@@ -27,6 +27,30 @@ MUTMUT = PYPROJECT.get("tool", {}).get("mutmut", {})
 WORKFLOW = REPO / ".github" / "workflows" / "mutation.yml"
 SCORE_SCRIPT = REPO / "scripts" / "mutation_score.py"
 SURVIVOR_SCRIPT = REPO / "scripts" / "mutation_survivors.py"
+RELEVANCE_SCRIPT = REPO / "scripts" / "mutation_relevance.py"
+#: The canonical list of files that can move the score. It used to be the
+#: `paths:` filter on mutation.yml's `pull_request` trigger; it moved here so
+#: the `mutate` job could run — and therefore report — on every PR. See #19.
+PATHS_FILE = REPO / ".github" / "mutation-paths.txt"
+
+
+def _load(path: Path):
+    """Import a committed script by path, without it being a package."""
+    import importlib.util
+    import sys
+
+    spec = importlib.util.spec_from_file_location(path.stem, path)
+    assert spec and spec.loader, f"cannot import {path}"
+    module = importlib.util.module_from_spec(spec)
+    # Registered before exec: modules here use `from __future__ import
+    # annotations`, and dataclasses resolves those annotations via
+    # sys.modules[cls.__module__]. Without this it raises AttributeError on None.
+    sys.modules[spec.name] = module
+    try:
+        spec.loader.exec_module(module)
+    finally:
+        sys.modules.pop(spec.name, None)
+    return module
 
 
 def targets() -> list[str]:
@@ -429,37 +453,38 @@ def test_the_floor_is_enforced_against_the_reported_score(
 
 
 def test_the_pull_request_paths_filter_covers_every_test_that_drives_mutmut():
-    """The `paths:` filter and `[tool.mutmut].runner` must name the same tests.
+    """The canonical path list and `[tool.mutmut].runner` must name the same tests.
 
     The PR trigger exists so the score is measured on the changes that can move
-    it (ADR 0007, amended). That only holds while the filter lists every test
-    file mutmut actually runs — add an eighth file to the runner, forget the
-    filter, and the job silently stops firing on the one change most likely to
-    weaken the suite. The failure mode is a workflow that looks configured and
-    no longer covers what it claims to.
+    it (ADR 0007, amended). That only holds while the list names every test file
+    mutmut actually runs — add an eighth file to the runner, forget the list, and
+    the job silently stops *doing* anything on the one change most likely to
+    weaken the suite, while still reporting green. The failure mode is a workflow
+    that looks configured and no longer covers what it claims to; since #19 it is
+    strictly worse than it used to be, because the skip now reports success
+    instead of not reporting at all.
     """
     triggers = workflow()[True]  # `on:` parses to the boolean True in YAML 1.1
     assert "pull_request" in triggers, (
         "mutation.yml no longer runs on pull requests, so a score regression "
         "would not be attributed to the change that caused it"
     )
-    filtered = set(triggers["pull_request"].get("paths", []))
-    assert filtered, "the pull_request trigger has no paths filter"
+    filtered = _canonical_patterns()
 
     runner = MUTMUT.get("runner", "")
     driving = set(re.findall(r"tests/\S+\.py", runner))
     assert driving, "[tool.mutmut].runner names no test files"
 
-    missing = driving - filtered
+    missing = sorted(t for t in driving if not _matches_filter(t, filtered))
     assert not missing, (
-        f"{sorted(missing)} drive mutmut but are not in mutation.yml's paths "
-        "filter, so changing them would not trigger the job"
+        f"{missing} drive mutmut but are not matched by .github/mutation-paths.txt, "
+        "so changing them would skip the mutation run and report green"
     )
 
     for target in targets():
-        assert target in filtered, (
-            f"{target} is mutated but is not in mutation.yml's paths filter, so "
-            "changing it would not trigger the job"
+        assert _matches_filter(target, filtered), (
+            f"{target} is mutated but is not matched by .github/mutation-paths.txt, "
+            "so changing it would skip the mutation run and report green"
         )
 
 
@@ -580,18 +605,28 @@ def _import_closure(entrypoints: list[str]) -> set[str]:
     return found
 
 
-def _matches_filter(path: str, patterns: set[str]) -> bool:
-    from fnmatch import fnmatch
-
-    return any(
-        path == pattern or fnmatch(path, pattern) or fnmatch(path, pattern.replace("**", "*"))
-        for pattern in patterns
+def _canonical_patterns() -> list[str]:
+    """The globs in `.github/mutation-paths.txt`, read the way the workflow reads them."""
+    assert PATHS_FILE.exists(), (
+        f"{PATHS_FILE.relative_to(REPO)} is missing. It is the single source of "
+        "truth for which changes can move the mutation score — mutation.yml's "
+        "relevance step and these tests both read it."
     )
+    return _load(RELEVANCE_SCRIPT).load_patterns(PATHS_FILE)
+
+
+def _matches_filter(path: str, patterns: list[str]) -> bool:
+    """Delegated to the script the workflow actually runs.
+
+    Not reimplemented here on purpose. A guard that matches paths its own way
+    proves that *the test's* matcher covers the closure, which is not the claim
+    being made — the claim is that the decision the workflow makes covers it.
+    """
+    return _load(RELEVANCE_SCRIPT).matches(path, list(patterns))
 
 
 def test_the_paths_filter_covers_everything_the_mutation_run_reads():
-    triggers = workflow()[True]
-    filtered = set(triggers["pull_request"].get("paths", []))
+    filtered = _canonical_patterns()
     runner_tests = sorted(re.findall(r"tests/\S+\.py", MUTMUT.get("runner", "")))
 
     closure = _import_closure([*targets(), *runner_tests])
@@ -600,8 +635,9 @@ def test_the_paths_filter_covers_everything_the_mutation_run_reads():
     missing = sorted(m for m in closure if not _matches_filter(m, filtered))
     assert not missing, (
         f"{missing} are imported by the mutated modules or by the tests that drive "
-        "them, so changing one can change the score — but mutation.yml's paths "
-        "filter does not match them, so the job would not run on that change."
+        "them, so changing one can change the score — but .github/mutation-paths.txt "
+        "does not match them, so the mutation job would report green on that change "
+        "without running."
     )
 
 
@@ -615,10 +651,181 @@ def test_the_paths_filter_covers_the_lockfile():
     change that arrives in a commit should be caught by the trigger that can
     name the commit.
     """
-    triggers = workflow()[True]
-    filtered = set(triggers["pull_request"].get("paths", []))
+    filtered = _canonical_patterns()
     assert (REPO / "uv.lock").exists()
     assert _matches_filter("uv.lock", filtered), (
-        "uv.lock is not in mutation.yml's paths filter, so a dependency bump "
+        "uv.lock is not in .github/mutation-paths.txt, so a dependency bump "
         "would change what the tests do without re-measuring the score"
+    )
+
+
+# ---------------------------------------------------------------------------
+# #19 — the `mutate` check must always report, so that `main` can require it.
+#
+# The old design narrowed the *trigger* with `paths:`. That is correct about
+# which PRs deserve 36 minutes and fatal for a required check: a filtered-out PR
+# produces no `mutate` check at all, and GitHub parks the PR at "Expected —
+# Waiting for status to be reported" with no way through. Measured before branch
+# protection went on, neither PR #16 nor PR #18 produced a `mutate` check.
+#
+# So the trigger is unconditional and the *work* is conditional. These guard the
+# half of that which is easy to undo by accident.
+# ---------------------------------------------------------------------------
+def test_the_pull_request_trigger_has_no_paths_filter():
+    """Re-adding `paths:` here would make `mutate` un-requireable again.
+
+    This is the assertion that keeps #19 fixed. It looks like a tidy-up — the
+    list is duplicated in `.github/mutation-paths.txt`, so why not filter with it
+    too? — and it silently converts the check back into one that never reports on
+    the PRs it skips.
+    """
+    trigger = workflow()[True]["pull_request"]
+    assert not (trigger or {}).get("paths"), (
+        "mutation.yml's pull_request trigger has a `paths:` filter again. A "
+        "filtered-out PR produces no `mutate` check at all, which cannot be a "
+        "required check: GitHub waits for a report that never comes. Narrow the "
+        "work instead — .github/mutation-paths.txt and the `relevance` step."
+    )
+    assert not (trigger or {}).get("paths-ignore"), (
+        "`paths-ignore` has the same effect on reporting as `paths`, and for a "
+        "mixed PR the two are not even complementary."
+    )
+
+
+def test_the_job_itself_is_unconditional():
+    """A job-level `if` is the other way to stop reporting."""
+    job = workflow()["jobs"]["mutate"]
+    assert "if" not in job, (
+        f"the mutate job is gated by `if: {job.get('if')!r}`. The job must always "
+        "run so the check always reports; gate the expensive steps instead."
+    )
+
+
+def _steps() -> list[dict]:
+    return workflow()["jobs"]["mutate"]["steps"]
+
+
+def test_the_relevance_step_decides_before_anything_expensive_happens():
+    steps = _steps()
+    relevance = [i for i, s in enumerate(steps) if s.get("id") == "relevance"]
+    assert len(relevance) == 1, (
+        "mutation.yml has no step with `id: relevance`, so nothing computes "
+        "whether the 36-minute pass is needed"
+    )
+    index = relevance[0]
+
+    assert "mutation_relevance.py" in str(steps[index].get("run", "")), (
+        "the relevance step does not run scripts/mutation_relevance.py, so the "
+        "decision is being made by something the tests do not read"
+    )
+    assert "python3" in str(steps[index].get("run", "")), (
+        "the relevance step must use the system python3: it runs before "
+        "`uv sync`, and installing a dependency tree to decide whether to do any "
+        "work would spend the time this decision exists to save"
+    )
+
+    installs = [i for i, s in enumerate(steps) if "uv sync" in str(s.get("run", ""))]
+    assert installs and min(installs) > index, (
+        "dependencies are installed before relevance is decided, which pays part "
+        "of the cost the skip exists to avoid"
+    )
+
+    checkout = [s for s in steps[:index] if str(s.get("uses", "")).startswith("actions/checkout")]
+    assert checkout, "the relevance step diffs against the base but nothing checked the repo out"
+    assert str(checkout[0].get("with", {}).get("fetch-depth")) == "0", (
+        "checkout is shallow, so `git diff` against the base branch has no base "
+        "to diff against. The step falls back to running the full pass, so this "
+        "is a silent 36 minutes on every PR rather than a failure."
+    )
+
+
+def test_every_step_after_the_decision_is_gated_on_it():
+    """Including the artifact upload, which fails a skipped run if it is not."""
+    steps = _steps()
+    index = next(i for i, s in enumerate(steps) if s.get("id") == "relevance")
+
+    ungated = [
+        s.get("name", s.get("uses"))
+        for s in steps[index + 1 :]
+        if "steps.relevance.outputs.relevant" not in str(s.get("if", ""))
+    ]
+    assert not ungated, (
+        f"{ungated} run even when nothing relevant changed. Every step after the "
+        "decision must be gated on `steps.relevance.outputs.relevant == 'true'` — "
+        "the point of #19 is that the check reports in seconds on an irrelevant "
+        "change, not that it reports after doing the work anyway."
+    )
+
+    upload = [s for s in steps if str(s.get("uses", "")).startswith("actions/upload-artifact")]
+    assert len(upload) == 1
+    condition = str(upload[0].get("if", ""))
+    assert "always()" in condition, (
+        "the cache upload no longer runs on failure, so a run that fails the "
+        "floor leaves nothing to diagnose it with"
+    )
+    if str(upload[0].get("with", {}).get("if-no-files-found")) == "error":
+        assert "steps.relevance.outputs.relevant" in condition, (
+            "the upload is `if-no-files-found: error` under a bare `always()`. On "
+            "a skipped run there is no cache to upload, so this would fail the "
+            "very check #19 exists to make requireable."
+        )
+
+
+# ---------------------------------------------------------------------------
+# The decision itself, exercised rather than described.
+# ---------------------------------------------------------------------------
+def _relevance():
+    return _load(RELEVANCE_SCRIPT)
+
+
+@pytest.mark.parametrize(
+    ("changed", "expected"),
+    [
+        # The cases that must skip: this is the entire cost argument.
+        (["README.md"], False),
+        (["docs/MUTATION-TESTING.md", "CONTRIBUTING.md"], False),
+        (["dashboard/src/App.tsx", "dashboard/package.json"], False),
+        (["tests/test_doc_claims.py"], False),
+        # The cases that must not. A mutated module, a driving test, a module in
+        # the import closure, the lockfile, and the tooling that decides.
+        (["drift/detectors.py"], True),
+        (["models/backtest.py"], True),
+        (["tests/test_backtest_accounting.py"], True),
+        (["drift/config.py"], True),
+        (["ingest/store.py"], True),
+        (["uv.lock"], True),
+        (["scripts/mutation_survivors.py"], True),
+        (["pyproject.toml"], True),
+        # Mixed: one relevant path in a hundred is still relevant. This is the
+        # case `paths` + `paths-ignore` gets wrong, per #19's rejected design.
+        (["README.md", "docs/adr/0007.md", "drift/detectors.py"], True),
+        # An empty diff is not relevant — and must not be confused with a diff
+        # that could not be computed, which the workflow handles separately.
+        ([], False),
+    ],
+)
+def test_the_relevance_decision_matches_what_can_move_the_score(changed, expected):
+    module = _relevance()
+    patterns = module.load_patterns(PATHS_FILE)
+    assert bool(module.select(changed, patterns)) is expected, (
+        f"{changed} was judged {'relevant' if not expected else 'irrelevant'}. "
+        f"A false negative reports green without measuring anything; a false "
+        f"positive costs 36 minutes."
+    )
+
+
+def test_the_canonical_list_ignores_comments_and_blank_lines():
+    """Otherwise the prose in that file becomes patterns matching nothing, or worse."""
+    module = _relevance()
+    patterns = module.load_patterns(PATHS_FILE)
+    assert patterns, "the canonical list parsed to nothing"
+    assert not [p for p in patterns if p.startswith("#") or not p.strip()], (
+        f"comments or blank lines survived parsing: {patterns}"
+    )
+    # The file is heavily commented on purpose; if that stopped being true the
+    # reasoning moved somewhere this test cannot see.
+    raw = PATHS_FILE.read_text(encoding="utf-8").splitlines()
+    assert len([ln for ln in raw if ln.strip().startswith("#")]) > len(patterns) / 2, (
+        "the canonical path list has lost the reasoning that says why each entry "
+        "is in it — which is the part that stops it rotting"
     )
