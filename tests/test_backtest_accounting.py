@@ -40,6 +40,30 @@ def _biased(offset: float):
     return predict
 
 
+def _alternating(small: float, large: float):
+    """Wrong by `small` on even calls and by `large` on odd ones.
+
+    Needed to separate RMSE from MAE: with a *constant* error the two are equal,
+    so a spread of errors is the only input that can tell `sqrt(mean(e**2))`
+    apart from `mean(|e|)`.
+
+    The alternation counts predictor calls rather than reading `cutoff`. An
+    earlier version keyed on `cutoff.dayofyear % 2`, which ties the fixture to
+    the calendar as well as to the fold cadence — and day-of-year parity is not
+    even continuous across a year boundary (Dec 31 and Jan 1 are both odd in a
+    non-leap year). A counter says what the docstring says.
+    """
+    calls = 0
+
+    def predict(history: pd.Series, targets: pd.DatetimeIndex, cutoff: pd.Timestamp) -> pd.Series:
+        nonlocal calls
+        offset = small if calls % 2 == 0 else large
+        calls += 1
+        return pd.Series(np.full(len(targets), history.iloc[-1] + offset), index=targets)
+
+    return predict
+
+
 # ---------------------------------------------------------------------------
 # the MAPE formula
 # ---------------------------------------------------------------------------
@@ -91,6 +115,59 @@ def test_a_negative_error_gives_the_same_mape_as_a_positive_one():
     assert over.overall["mae"] == pytest.approx(under.overall["mae"])
     assert over.overall["bias"] == pytest.approx(-under.overall["bias"])
     assert over.overall["bias"] != pytest.approx(0.0), "a biased predictor must show bias"
+
+
+def test_rmse_is_reported_and_is_the_root_mean_square_of_the_error():
+    """`overall["rmse"]` was published and asserted by nothing at all.
+
+    Found by adjudicating a survivor rather than by reading the code: the mutant
+    that renames the key — `"rmse"` -> `"XXrmseXX"` — survived every run on
+    record, while the identical mutants on `"mae"`, `"mape_pct"` and `"bias"`
+    were killed. The difference was simply that no test in the repository
+    mentioned rmse; `grep -rn rmse tests/` returned nothing.
+
+    It had been filed as `accepted:human-readable-text` — "the prose is not
+    load-bearing" — because that rule's pattern matches any line beginning with
+    a quoted dict key, and every metric in `overall` is such a line. A published
+    artifact field that no test reads is a gap, not prose. This is the second
+    time a real gap has been found inside the *accepted* pile, which is the
+    lesson `docs/MUTATION-TESTING.md` already draws and then had to draw again.
+
+    With a constant +10 bias every error is exactly 10, so RMSE, MAE and |bias|
+    all collapse to 10 — the one case where the three are analytically equal,
+    which pins the formula without re-deriving it in the test.
+    """
+    constant_bias = backtest.run(
+        _series(24 * 30), _biased(10.0), horizons=(1,), weeks=1, min_history_hours=24
+    )
+
+    assert constant_bias.overall["rmse"] == pytest.approx(10.0)
+    assert constant_bias.overall["rmse"] == pytest.approx(constant_bias.overall["mae"])
+
+    # ...and on a *spread* of errors RMSE must take a specific value, not merely
+    # a larger one. `rmse > mae` is the weak version of this assertion and it is
+    # not enough: `max(|e|)` is 15 against an MAE of 10, so a maximum-error
+    # implementation would satisfy it while being the wrong metric entirely.
+    # Pinning the number is the whole lesson of this file.
+    #
+    # Worked out by hand: the errors alternate 5 and 15 over 8 folds, four of
+    # each, so
+    #     MAE  = (4*5  + 4*15 ) / 8 = 10
+    #     RMSE = sqrt((4*25 + 4*225) / 8) = sqrt(125) = 11.1803...
+    spread = backtest.run(
+        _series(24 * 30), _alternating(5.0, 15.0), horizons=(1,), weeks=1, min_history_hours=24
+    )
+
+    # The hand arithmetic above assumes the folds split evenly between the two
+    # error sizes. Assert that rather than trusting it, so a change to the fold
+    # cadence fails here instead of silently moving the expected value.
+    assert spread.overall["n"] == 8
+    assert spread.overall["mae"] == pytest.approx(10.0)
+
+    assert spread.overall["rmse"] == pytest.approx(np.sqrt(125.0))
+    assert spread.overall["rmse"] > spread.overall["mae"], (
+        "RMSE must exceed MAE whenever the errors are not all equal"
+    )
 
 
 # ---------------------------------------------------------------------------
