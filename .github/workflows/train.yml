@@ -53,7 +53,13 @@ concurrency:
 jobs:
   train:
     runs-on: ubuntu-latest
-    timeout-minutes: 60
+    # Raised from 60 when `models.train` gained the forecast-weather ablation.
+    # It re-runs the whole walk-forward backtest a second time with the `fcst_`
+    # columns removed, so the LightGBM half of the run roughly doubles — and
+    # that is on two years of real hourly demand, not the 200-day fixture. A
+    # timeout here would kill the run *after* ingestion and training, losing the
+    # champion for want of the measurement that justifies it.
+    timeout-minutes: 150
 
     steps:
       - uses: actions/checkout@v7
@@ -93,6 +99,10 @@ jobs:
           key: lake-${{ github.run_id }}
           restore-keys: lake-
 
+      # All legs, which since 2026-08-01 includes `weather_forecast`: the
+      # archived day-before model run that the `fcst_*` features are built from.
+      # On a lake that predates it the nine sites and both weather datasets
+      # backfill here, which is slow once and incremental forever after.
       - name: Ingest
         env:
           EIA_API_KEY: ${{ secrets.EIA_API_KEY }}

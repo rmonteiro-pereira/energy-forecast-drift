@@ -84,6 +84,17 @@ nothing more:
    `--source real` fails loudly rather than falling back, so a green run proves
    the numbers came from the API. Both artifacts flip to `"is_real": true`.
 
+   **That run also answers a question nothing else can.** Since 2026-08-01 the
+   model has forecast-weather features — what the day-before model run predicted
+   for the target hour, from nine metros across the PJM footprint. Whether they
+   help is not knowable on the fixture, whose synthetic temperature is nearly
+   implied by the calendar; there, the ablation correctly reports them as
+   *harmful*. `models.train` re-scores the identical protocol without those
+   columns and writes the delta to `ablation.forecast_weather` in
+   `metrics/model.json`. On real demand that number is the first honest evidence
+   of whether forward-looking weather is worth its ingestion cost. It roughly
+   doubles the LightGBM half of the run; `--skip-ablation` opts out.
+
 Then update the README tables from `metrics/baseline_table.md` and
 `metrics/model_table.md`, delete the pending-key banner and the two SYNTHETIC
 `<details>` blocks, and close this file.
