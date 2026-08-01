@@ -357,6 +357,96 @@ def test_the_publish_step_tolerates_one_named_failure_and_no_others():
     )
 
 
+def _publish_step_body() -> str:
+    """The publish step's `run:` block with shell comments stripped.
+
+    Stripped for the reason the whole file strips: this step explains its own
+    history inline — including the sentence describing the close loop it no
+    longer has — and a test matching raw text would be satisfied by the
+    explanation instead of the code.
+    """
+    steps = steps_of(load(DAILY), "pipeline")
+    publish = [s for s in steps if "PR" in s.get("name", "")]
+    assert len(publish) == 1, "expected exactly one step that opens the metrics PR"
+    return "\n".join(
+        line
+        for line in str(publish[0].get("run", "")).splitlines()
+        if not line.lstrip().startswith("#")
+    )
+
+
+def test_the_publish_step_never_discards_an_unpublished_refresh():
+    """Closing yesterday's metrics PR threw away a day that never published.
+
+    The step used to "supersede": open today's PR, close yesterday's. An *open*
+    metrics PR is by definition one that was never merged, so that loop deleted
+    a day's numbers on the way to tidying up. It matters because every run
+    recomputes fixed rolling windows (`drift/config.py`) — the week-over-week
+    accumulation this project exists to show lives only in the git history of
+    merged refreshes. The tidying was deleting the product.
+
+    Merged predecessors leave the `open` list by themselves. The ones that
+    linger are exactly the days that failed, and they must stay visible.
+    """
+    body = _publish_step_body()
+    assert "gh pr close" not in body, (
+        "the publish step closes an earlier metrics PR. If that PR is open it "
+        "was never merged, so this discards a day that was never published"
+    )
+    assert "--delete-branch" not in body, (
+        "deleting the branch of an unmerged metrics PR destroys the only copy of that day's numbers"
+    )
+
+
+def test_the_publish_step_arms_auto_merge():
+    """A refresh needing a human every morning is a chore with a cron attached.
+
+    Branch protection still decides: `--auto` publishes only what `test` and
+    `mutate` have already passed, and queues rather than merging if they have
+    not. Without it, the daily job produces a PR a day that nobody merges — and
+    an unmerged day is a lost day.
+    """
+    body = _publish_step_body()
+    assert "gh pr merge" in body, "nothing ever merges the PR this step opens"
+    assert "--auto" in body, (
+        "`gh pr merge` without `--auto` would merge regardless of the checks, "
+        "walking straight past the honesty gates in ci.yml"
+    )
+
+
+def test_the_publish_step_goes_red_once_days_stack_up_unpublished():
+    """Two days is a hiccup; three is a broken publish path.
+
+    Counted before the new PR exists, so it never counts itself. Zero is the
+    healthy state — yesterday merged and left the open list. Anything else must
+    be loud, and past a couple of days the job must stop quietly manufacturing
+    work nobody is reading.
+    """
+    body = _publish_step_body()
+    assert "unpublished" in body, "nothing counts the refreshes that never merged"
+    assert "-ge 3" in body, "no threshold turns a stalled publish path red"
+    assert "::warning" in body, "a stalled publish path passes without an annotation"
+
+
+def test_every_swallowed_failure_announces_itself():
+    """A tolerated failure that says nothing is indistinguishable from success.
+
+    Two failures here are legitimately not bugs — `gh pr create` refused by repo
+    policy, and `gh pr merge --auto` refused when auto-merge is off — because in
+    both the commit is already pushed and the day is not lost. Neither may pass
+    silently: the whole failure mode this workflow was rewritten to escape is a
+    publish step reporting success having published nothing.
+    """
+    body = _publish_step_body()
+    for line in body.splitlines():
+        if "||" not in line:
+            continue
+        assert "::warning" in line or "echo" in line, (
+            f"`{line.strip()}` swallows a failure without announcing it"
+        )
+        assert "|| true" not in line, f"`{line.strip()}` is a blanket tolerance"
+
+
 def test_concurrency_stops_two_runs_writing_metrics_at_once():
     assert load(DAILY)["concurrency"]["group"]
     assert load(DAILY)["concurrency"]["cancel-in-progress"] is False

@@ -246,14 +246,26 @@ jobs:
           # fast-forward becomes impossible. Forcing is the wrong tool for an
           # unattended job: it is unreviewable, and it would let a later run
           # rewrite a PR while somebody is reading it. Per-run branches cost a
-          # ref that the close loop below deletes.
+          # ref, which merging deletes.
           branch="metrics/daily-${GITHUB_RUN_ID}"
 
-          # Collected BEFORE the new PR exists, so the new one can never appear
-          # in its own supersede list and close itself.
-          superseded=$(gh pr list --base main --state open \
-                         --json number,headRefName \
-                         --jq '[.[] | select(.headRefName | startswith("metrics/daily-")) | .number] | join(" ")')
+          # Counted BEFORE the new PR exists, so it never counts itself.
+          #
+          # This used to be a supersede list: the step closed yesterday's PR
+          # when it opened today's. That was wrong, and wrong in the direction
+          # that hurts most. An open metrics PR is one that was never merged,
+          # so closing it threw away a day that was never published — and since
+          # every run recomputes fixed rolling windows (`drift/config.py`), the
+          # week-over-week accumulation this project exists to show lives ONLY
+          # in the git history of merged refreshes. The tidying loop was
+          # deleting the product.
+          #
+          # So nothing is closed here any more. Merged predecessors leave the
+          # `open` list on their own; the ones that linger are exactly the days
+          # that failed to publish, and they are supposed to be visible.
+          unpublished=$(gh pr list --base main --state open \
+                          --json number,headRefName \
+                          --jq '[.[] | select(.headRefName | startswith("metrics/daily-")) | .number] | length')
 
           git push origin "HEAD:refs/heads/${branch}"
 
@@ -265,15 +277,30 @@ jobs:
           # blanket `|| true` here is exactly how a publish step goes green
           # having published nothing.
           err="${RUNNER_TEMP}/pr-create.err"
-          if gh pr create --base main --head "$branch" \
+          if url=$(gh pr create --base main --head "$branch" \
                --title "chore(metrics): daily refresh" \
-               --body "Automated refresh from run ${GITHUB_RUN_ID}. Merging publishes the numbers in \`metrics/\`." 2> "$err"; then
-            # Only once the replacement exists. Closing first would leave a
-            # window where a failure here means no open metrics PR at all.
-            for stale in ${superseded}; do
-              gh pr close "${stale}" --delete-branch \
-                --comment "Superseded by a fresher refresh (run ${GITHUB_RUN_ID})."
-            done
+               --body "Automated refresh from run ${GITHUB_RUN_ID}. Merging publishes the numbers in \`metrics/\`." 2> "$err"); then
+
+            # Auto-merge, not a daily click. Branch protection still decides:
+            # this publishes only what `test` and `mutate` have already passed,
+            # and it queues rather than merging if they have not. A refresh that
+            # needs a human every morning is not a daily pipeline, it is a chore
+            # with a cron attached — and an unmerged day is a lost day.
+            gh pr merge "${url##*/}" --auto --squash \
+              || echo "::warning title=Auto-merge not armed::The PR is open but will not merge itself; publish it by hand."
+
+            # The alarm the old close loop silenced. Zero is the healthy state:
+            # yesterday merged and left the open list. Anything else means days
+            # are stacking up unpublished, and past a couple of days that is not
+            # a hiccup, it is a broken publish path that should not go on
+            # quietly producing more work nobody is reading.
+            if [ "${unpublished}" -gt 0 ]; then
+              echo "::warning title=${unpublished} unpublished refresh(es)::Earlier metrics PRs never merged. Nothing was discarded, but nothing was published either."
+            fi
+            if [ "${unpublished}" -ge 3 ]; then
+              echo "Three or more metrics PRs are open and unmerged: publication is broken, not slow." >&2
+              exit 1
+            fi
             exit 0
           fi
 
