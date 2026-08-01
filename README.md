@@ -48,8 +48,8 @@ accumulates in public week after week and can be pointed at.
 
 | | Status | Notes |
 |---|---|---|
-| **The code** | ✅ real, complete, tested | 274 Python tests + 4 dashboard tests, no network. Every path below runs today, and [`docs/REPRODUCE.md`](docs/REPRODUCE.md) has the transcripts. The tests are themselves measured — see [mutation testing](docs/MUTATION-TESTING.md). |
-| **Open-Meteo temperature** | ✅ **real data**, pulled live | No key needed. Genuinely fetched, genuinely joined. |
+| **The code** | ✅ real, complete, tested | 275 Python tests + 4 dashboard tests, no network. Every path below runs today, and [`docs/REPRODUCE.md`](docs/REPRODUCE.md) has the transcripts. The tests are themselves measured — see [mutation testing](docs/MUTATION-TESTING.md). |
+| **Open-Meteo temperature** | ⚠️ **real client, real data — but not in any committed artifact** | No key needed, and the client genuinely runs: the whole of [`docs/DRIFT-EVALUATION.md`](docs/DRIFT-EVALUATION.md) is measured on real Philadelphia ERA5 observations. It does **not** reach the model. `models/data.py::resolve_panel` falls back to the fixture *as a whole* when the lake has no EIA demand, and that is the permanent state today — so `models/fixtures.py` synthesises the temperature too, and every number below is fixture temperature, not Open-Meteo. |
 | **EIA hourly demand** | ❌ **absent** | The client is finished and not stubbed. It has never been given a key. |
 | **The demand series used everywhere** | ❌ **seeded synthetic fixture** | `models/fixtures.py`, seed `20260728`. A plausible curve, not a measurement. |
 | **Every number in `metrics/*.json`** | ❌ **fixture-derived** | MAE, MAPE, RMSE, bias, PSI, KS, the retrain verdict. All of it. `"is_real": false`. |
@@ -86,10 +86,16 @@ including [one that documents a bug that shipped](docs/adr/0005-monitor-refuses-
 Longer form, including three bugs this project actually had and what a real
 drift episode is predicted to look like: **[docs/writeup.md](docs/writeup.md)**.
 Real captured transcripts of every command above, including the ones that fail
-on purpose: **[docs/REPRODUCE.md](docs/REPRODUCE.md)**. The pre-publication
-secret and size scan: **[docs/PUBLICATION-SCAN.md](docs/PUBLICATION-SCAN.md)**.
-An honest list of everything you might trip on here, including what is thin:
-**[docs/PUBLICATION-READY.md](docs/PUBLICATION-READY.md)**.
+on purpose: **[docs/REPRODUCE.md](docs/REPRODUCE.md)**.
+
+Two **dated pre-publication records**, kept as written so their predictions can be
+scored rather than quietly refreshed — read them as of the commit each names, not
+as today's status: the secret and size scan
+(**[docs/PUBLICATION-SCAN.md](docs/PUBLICATION-SCAN.md)**, scope 125 blobs / 21
+commits, since outrun by the history) and the readiness assessment
+(**[docs/PUBLICATION-READY.md](docs/PUBLICATION-READY.md)** — an honest list of
+what a reviewer trips on and what is thin, written before this repo had a remote;
+its resolved items are marked in place).
 
 **Status: M0 → M7 complete and committed** — ingestion, the seasonal-naive
 baseline, a global LightGBM on the same walk-forward folds, MLflow tracking +
@@ -134,7 +140,7 @@ flowchart LR
     DRIFT -->|"retrain verdict"| REG
     REG --> SERVE["serving/<br/>FastAPI <b>/forecast</b><br/>loads @champion"]
 
-    CRON["daily.yml<br/><i>inert until published</i>"] --> PIPE["pipeline.daily<br/>one entrypoint,<br/>six stages"]
+    CRON["daily.yml<br/><i>dormant until the EIA key</i>"] --> PIPE["pipeline.daily<br/>one entrypoint,<br/>six stages"]
     PIPE --> ING
     METRICS --> DASH["dashboard/<br/>Vite · React · ECharts<br/>banner driven by <b>is_real</b>"]
 ```
@@ -156,7 +162,7 @@ uv run python -m drift.run --out metrics/drift.json   # M4: 4 drift types + retr
 uv run python -m pipeline.daily  # M5: the whole loop -> metrics/*.json + PNGs
 uv run python -m serving         # M5: FastAPI on :8000, /forecast from @champion
 
-uv run pytest -v               # 274 tests, no network
+uv run pytest -v               # 275 tests, no network
 
 cd dashboard && npm ci && npm test && npm run build   # M6: static dist/ over metrics/*.json
 ```
@@ -236,10 +242,13 @@ compound its own error the way recursion does, and a global fit sees 24× more
 rows than a per-horizon fit — which matters when the history is months, not
 years.
 
-**Features (20)** — calendar (hour / day-of-week / month / weekend / US federal
-holiday), demand lags at 24 h, 48 h, 168 h and 336 h, the same-hour-of-week mean
-over four weeks, rolling mean/std/min/max of the last 24 h and 168 h, and the
-Open-Meteo temperature in the same two shapes.
+**Features (20)** — the horizon itself; calendar (hour / day-of-week / month /
+weekend / US federal holiday); demand lags at 24 h, 48 h, 168 h and 336 h; the
+same-hour-of-week mean over four weeks; the last observed demand; **five** demand
+rollings — mean, std, min and max over 24 h, and mean over 168 h; and temperature
+in three shapes — the 168 h lag, the last observation, and the 24 h rolling mean.
+The list is `features/build.py::FEATURE_COLUMNS`, and the count in the heading
+above is checked against it by `tests/test_doc_claims.py`.
 
 **Refit cadence:** the model is **retrained at every one of the 56 fold
 cutoffs**, on exactly the rows whose target hour had already happened at that
@@ -634,7 +643,7 @@ metrics/    committed artifacts: baseline.json, model.json, drift.json,
             forecast.json, monitor.json, pipeline.json + tables + 2 PNGs
 dashboard/  Vite + React + ECharts over metrics/*.json — no deploy step here
             components.test.tsx  the banner tests (vitest)
-tests/      274 Python tests: idempotency, leakage (backtest *and* features),
+tests/      275 Python tests: idempotency, leakage (backtest *and* features),
             retries, secret redaction, registry wiring, PSI/KS vs scipy, drift
             injection, threshold boundaries, the daily chain, the HTTP surface,
             both workflow YAMLs, and the artifacts' own honesty contract
@@ -644,8 +653,10 @@ docs/       adr/      7 decision records, each with the rejected alternative
             MUTATION-TESTING.md (66.7% measured in CI, every survivor judged)
             PUBLICATION-SCAN.md (pre-publication secret + size scan)
             PUBLICATION-READY.md (what a reviewer will trip on, and what is thin)
-            spec.md (the original brief — in Portuguese) · BLOCKED.md (the key)
-.github/    ci.yml (active on publish) · daily.yml (inert until published)
+            DRIFT-EVALUATION.md (the detectors vs real weather) · BLOCKED.md
+.github/    ci.yml (runs on every push and PR) · mutation.yml (mutation score,
+            gated by a floor) · daily.yml (dormant until the EIA key — see
+            docs/adr/0006, and README §"the loop is built" above)
 mlruns/     MLflow artifacts — gitignored, never committed (nor is mlflow.db)
 reports/    Evidently HTML (~5MB of inlined plotly) — gitignored
 ```
@@ -662,9 +673,7 @@ Exactly one thing: **real data.** No code is waiting to be written.
 
 The steps to unblock it are in [`docs/BLOCKED.md`](docs/BLOCKED.md); what will
 change, and what a real episode is predicted to look like, is in
-[`docs/writeup.md`](docs/writeup.md). Full brief:
-[`docs/spec.md`](docs/spec.md) *(in Portuguese — it is the original brief, left
-as written)*. Pre-publication scan:
+[`docs/writeup.md`](docs/writeup.md). Pre-publication scan:
 [`docs/PUBLICATION-SCAN.md`](docs/PUBLICATION-SCAN.md); readiness assessment:
 [`docs/PUBLICATION-READY.md`](docs/PUBLICATION-READY.md).
 
@@ -681,3 +690,17 @@ the dashboard is a static `dist/`. No server stays on.
   how the one secret in this project is handled.
 - **[MIT](LICENSE)** — the code is yours to use. The numbers are not results, so
   there is nothing there to cite.
+
+- **Upstream data.** Weather data by [Open-Meteo.com](https://open-meteo.com/),
+  licensed **[CC BY 4.0](https://creativecommons.org/licenses/by/4.0/)**, derived
+  from ECMWF ERA5 reanalysis — the source of every figure in
+  [`docs/DRIFT-EVALUATION.md`](docs/DRIFT-EVALUATION.md). Demand data comes from
+  the **U.S. Energy Information Administration**, under its [copyright and reuse
+  terms](https://www.eia.gov/about/copyrights_reuse.php).
+
+  No upstream series is redistributed here: the Open-Meteo cache lives under
+  `reports/`, which is gitignored, and the EIA leg has never run. That is why the
+  attribution above is a courtesy today rather than an obligation — **and why it
+  becomes an obligation the moment a fetched series is committed**, which is
+  exactly what unblocking the EIA key does. Noted here so that change does not
+  have to remember it unaided.
