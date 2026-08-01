@@ -87,7 +87,7 @@ The local run of the same code, on Windows, 2026-07-31, gave `drift/detectors.py
 **209 / 342** and `models/backtest.py` **99 / 132** — **308 / 474 = 65.0%**.
 
 **65.0% locally, 66.7% in CI, same code.** The difference is entirely the nine
-`untested` mutants described [below](#every-one-of-the-157-survivors-is-adjudicated):
+`untested` mutants described [below](#every-one-of-the-158-survivors-is-adjudicated):
 Windows leaves nine mutants untested and the score counts them as not-killed;
 this runner leaves **none** (`Raw statuses: {'ok_killed': 316, 'bad_survived':
 158}` — no `untested` key at all). Of the nine, eight resolve as killed and one
