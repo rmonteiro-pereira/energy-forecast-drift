@@ -49,7 +49,7 @@ accumulates in public week after week and can be pointed at.
 | | Status | Notes |
 |---|---|---|
 | **The code** | ✅ real, complete, tested | 280 Python tests + 4 dashboard tests, no network. Every path below runs today, and [`docs/REPRODUCE.md`](docs/REPRODUCE.md) has the transcripts. The tests are themselves measured — see [mutation testing](docs/MUTATION-TESTING.md). |
-| **Open-Meteo temperature** | ⚠️ **real client, real data — but not in any committed artifact** | No key needed, and the client genuinely runs: the whole of [`docs/DRIFT-EVALUATION.md`](docs/DRIFT-EVALUATION.md) is measured on real Philadelphia ERA5 observations. It does **not** reach the model. `models/data.py::resolve_panel` falls back to the fixture *as a whole* when the lake has no EIA demand, and that is the permanent state today — so `models/fixtures.py` synthesises the temperature too, and every number below is fixture temperature, not Open-Meteo. |
+| **Open-Meteo temperature** | ⚠️ **real, and it reaches the drift evaluation — but never the model** | No key needed, and the client genuinely runs. The whole of [`docs/DRIFT-EVALUATION.md`](docs/DRIFT-EVALUATION.md) is real Philadelphia ERA5 observations, and **those derived results are committed**; only the raw series is not (it is cached under gitignored `reports/`). What the temperature never reaches is the **model**: `models/data.py::resolve_panel` falls back to the fixture *as a whole* when the lake has no EIA demand, which is the permanent state today, so `models/fixtures.py` synthesises the temperature too and every number below is fixture temperature, not Open-Meteo. |
 | **EIA hourly demand** | ❌ **absent** | The client is finished and not stubbed. It has never been given a key. |
 | **The demand series used everywhere** | ❌ **seeded synthetic fixture** | `models/fixtures.py`, seed `20260728`. A plausible curve, not a measurement. |
 | **Every number in `metrics/*.json`** | ❌ **fixture-derived** | MAE, MAPE, RMSE, bias, PSI, KS, the retrain verdict. All of it. `"is_real": false`. |
@@ -698,9 +698,13 @@ the dashboard is a static `dist/`. No server stays on.
   the **U.S. Energy Information Administration**, under its [copyright and reuse
   terms](https://www.eia.gov/about/copyrights_reuse.php).
 
-  No upstream series is redistributed here: the Open-Meteo cache lives under
-  `reports/`, which is gitignored, and the EIA leg has never run. That is why the
-  attribution above is a courtesy today rather than an obligation — **and why it
-  becomes an obligation the moment a fetched series is committed**, which is
-  exactly what unblocking the EIA key does. Noted here so that change does not
-  have to remember it unaided.
+  **That credit is required now, not later.** The raw Open-Meteo series is not
+  redistributed — the cache lives under gitignored `reports/` — but
+  `docs/DRIFT-EVALUATION.md` publishes results *derived* from it (hourly 2 m
+  temperature for Philadelphia from the ERA5 archive, binned into PSI and KS
+  statistics over calendar windows by `scripts/drift_eval_real_weather.py`).
+  Adapted material is still covered by CC BY 4.0, so attribution is an
+  obligation the moment a derived figure is published, which already happened —
+  not, as an earlier draft of this section had it, only once a fetched series is
+  committed. Committing a raw series, which is what unblocking the EIA key does,
+  would add redistribution on top; it is not what triggers the requirement.
