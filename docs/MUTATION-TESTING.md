@@ -9,6 +9,21 @@
 > score with the survivors listed is worth more than a flattering one — and
 > because finding out *which* assertions were missing already produced a real fix.
 
+> **The most valuable result on this page is not the score.** It is that the
+> method surfaced a **real, shipped gap** the moment somebody attacked the
+> *adjudication rules* instead of the number. `overall["rmse"]` was a published
+> metric that no test in this repository asserted: `grep -rn rmse tests/`
+> returned **zero** at commit `41e5d02` and returns **11** today. The mutant that
+> proved it — `"rmse"` → `"XXrmseXX"` — had been sitting in the *accepted* pile
+> under the label "the prose is not load-bearing".
+>
+> It was not a weakness anyone injected to test the gate. It was already there,
+> on `main`, **hidden by the same mechanism built to expose it** — a
+> classification rule broad enough to swallow the thing it existed to surface. A
+> mutation score can be perfectly honest and still be decorative if the survivor
+> list is triaged by a regex nobody re-reads. [Full account
+> below](#the-gate-was-attacked-and-it-did-not-hold).
+
 A green suite says the tests ran. It does not say they would have noticed if the
 code were wrong. Mutation testing answers the second question: change the code in
 a small, plausible way, and see whether any test fails. A mutant that survives is
