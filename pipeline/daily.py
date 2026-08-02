@@ -56,7 +56,12 @@ if TYPE_CHECKING:
 from drift import detectors, evidently_report, trigger
 from drift.config import DEFAULT_CURRENT_DAYS, DEFAULT_REFERENCE_DAYS, DriftThresholds
 from drift.run import render_summary
-from drift.windows import PREDICTION_COLUMN, NotEnoughHistoryError, build_windows
+from drift.windows import (
+    PREDICTION_COLUMN,
+    NoPostTrainingData,
+    NotEnoughHistoryError,
+    build_windows,
+)
 from features import build as build_mod
 from features import panel as panel_mod
 from ingest.config import INGEST_LEGS, METRICS_DIR, eia_api_key
@@ -179,6 +184,13 @@ class DailyPipeline:
         # infers `None` and every downstream attribute access looks like a bug.
         self.champion: lgb.Booster | None = None
         self.windows: ScoredWindows | None = None
+        # Set only when the champion is younger than the first hour it could be
+        # judged on; carried into the artifact so the state explains itself.
+        # `drift_measurable` is deliberately separate from `windows is None`:
+        # the windows are always built, because forecast accuracy is measurable
+        # on every run even when drift is not.
+        self.no_drift_reason: str = ""
+        self.drift_measurable: bool = True
         self.sections: dict[str, DriftSection] = {}
         self.verdict: RetrainVerdict | None = None
         self.artifacts: list[str] = []
@@ -343,16 +355,21 @@ class DailyPipeline:
             "champion_train_data_end_utc": trained_to,
         }
 
-    def step_score(self) -> tuple[str, dict]:
-        """Load the champion, then score the two monitoring windows out of sample."""
-        self._load_champion()
+    def _build_sliding_windows(self) -> ScoredWindows:
+        """The calendar split: the last fortnight against the one before it.
 
+        This is not the drift question — it cannot be, because the boundary is
+        the wall clock rather than anything about the model. It is the *quality*
+        question: how well does a frozen model of this family forecast recent
+        hours it was not fitted on? That is what `forecast_vs_actual.png` and
+        `rolling_mae.png` have always shown, and it is answerable on every run,
+        including the runs where drift is not.
+        """
         end = self.panel.index.max()
         reference_start = end - pd.Timedelta(days=self.args.current_days + self.args.reference_days)
         booster, self.monitor_model_info = self._monitoring_booster(reference_start)
-
         try:
-            self.windows = build_windows(
+            return build_windows(
                 self.panel,
                 reference_days=self.args.reference_days,
                 current_days=self.args.current_days,
@@ -364,9 +381,101 @@ class DailyPipeline:
         except NotEnoughHistoryError as exc:
             raise PipelineError(str(exc)) from exc
 
+    def step_score(self) -> tuple[str, dict]:
+        """Load the champion, then score the two monitoring windows out of sample.
+
+        Two questions get asked of the same panel, and conflating them is what
+        made a model trained minutes ago report drift:
+
+        * *has the world moved since the champion stopped learning?* — the drift
+          question, so the split has to be `train_data_end_utc`. Immediately
+          after a retrain there is nothing on the far side of that boundary and
+          the honest answer is "not measurable yet";
+        * *how accurate is the forecast?* — answerable always, against the last
+          fortnight, by a booster fitted before it.
+
+        The first may be unanswerable while the second is not, so a run that
+        cannot measure drift still publishes every chart and every metric. The
+        reverted first attempt tied them together and a fresh champion took the
+        forecast chart down with the verdict — which `daily.yml` would have hit
+        as a missing path in `git add`, in production, at 06:20 UTC.
+        """
+        self._load_champion()
+
+        # The boundary that makes drift a question about the model rather than
+        # about the calendar: everything after it is data the champion never
+        # learned. Only a champion that reports when its training data ends can
+        # provide it; without one the windows fall back to sliding with `end`,
+        # which is the old behaviour and is all that is available.
+        trained_to = self.model_info.get("train_data_end_utc")
+        anchor = pd.Timestamp(trained_to) if trained_to else None
+
+        if anchor is None:
+            self.windows = self._build_sliding_windows()
+            self.drift_measurable = True
+            return "ok", {
+                "served_model": self.model_info,
+                "monitoring_model": self.monitor_model_info,
+                "anchor_utc": None,
+                "drift_measurable": True,
+                "rows": self.windows.split["rows"],
+            }
+
+        reference_start = anchor - pd.Timedelta(days=self.args.reference_days)
+        booster, self.monitor_model_info = self._monitoring_booster(reference_start)
+
+        try:
+            self.windows = build_windows(
+                self.panel,
+                reference_days=self.args.reference_days,
+                current_days=self.args.current_days,
+                horizons=tuple(range(1, self.args.max_horizon + 1)),
+                stride_hours=self.args.train_stride_hours,
+                num_boost_round=self.args.num_boost_round,
+                booster=booster,
+                anchor=anchor,
+            )
+        except NoPostTrainingData as exc:
+            self.no_drift_reason = str(exc)
+        except NotEnoughHistoryError as exc:
+            raise PipelineError(str(exc)) from exc
+        else:
+            # Structure said the window exists; policy decides whether it can
+            # speak. Anchored at the end of training, "a few hours have arrived"
+            # leaves a handful of rows rather than none, and a verdict computed
+            # from a handful is noise wearing a rule name. `min_samples` is the
+            # floor the detectors already use for exactly this, applied here to
+            # the window as a whole.
+            if len(self.windows.current) >= self.thresholds.min_samples:
+                self.drift_measurable = True
+                return "ok", {
+                    "served_model": self.model_info,
+                    "monitoring_model": self.monitor_model_info,
+                    "anchor_utc": anchor.isoformat(),
+                    "drift_measurable": True,
+                    "rows": self.windows.split["rows"],
+                }
+            self.no_drift_reason = (
+                f"only {len(self.windows.current)} scored row(s) have arrived since the "
+                f"champion stopped learning at {anchor.isoformat()}; "
+                f"{self.thresholds.min_samples} are needed to measure drift."
+            )
+
+        # Green and empty, not red. The champion is younger than the first hour
+        # it would be judged on, so there is nothing to judge it with — but the
+        # forecast is still being served and its accuracy is still measurable,
+        # so the run falls back to the calendar split for the charts and says
+        # plainly, in `drift.json`, that the drift verdict is not one of the
+        # things it measured today.
+        log.info("Drift is not measurable yet: %s", self.no_drift_reason)
+        self.drift_measurable = False
+        self.windows = self._build_sliding_windows()
         return "ok", {
             "served_model": self.model_info,
             "monitoring_model": self.monitor_model_info,
+            "anchor_utc": anchor.isoformat(),
+            "drift_measurable": False,
+            "drift_reason": self.no_drift_reason,
             "rows": self.windows.split["rows"],
         }
 
@@ -421,7 +530,12 @@ class DailyPipeline:
         """The rolling-MAE monitor: `metrics/monitor.json` + its PNG.
 
         Computed from the same `performance` section the drift verdict reads, so
-        the chart and the alarm can never tell different stories.
+        the chart and the alarm can never tell different stories — on the runs
+        where there is a drift verdict at all. When there is not, these windows
+        are the calendar split and this is a pure accuracy report; the severity
+        below then describes the forecast, and `drift.json` says in its own
+        `measurable` field that it is not being read as a statement about the
+        champion.
         """
         self.sections = detectors.run_all(self.windows, self.thresholds)
         performance = self.sections["performance"].details
@@ -469,8 +583,82 @@ class DailyPipeline:
             "days": len(performance["rolling"]),
         }
 
+    def _drift_not_measurable_yet(self) -> tuple[str, dict]:
+        """The state every retrain passes through, published as itself.
+
+        The alternative was to keep sliding the windows with the wall clock, and
+        that is what produced a verdict on 2026-08-02 asserting "a regime the
+        model was never fitted on" about two windows entirely inside the
+        champion's own training set. Drift is measured against the end of
+        training, so a champion trained to the end of the panel has nothing yet
+        to be measured on. Saying so is the honest artifact; inventing a verdict
+        is not, and `retrain` in particular is a claim about a model that has
+        just been refit.
+
+        Only the *verdict* goes quiet. `self.windows` still holds the calendar
+        split, so the forecast charts and the rolling-error monitor are computed
+        and published exactly as on any other day — they answer a question that
+        is still answerable. Suppressing those too was the bug in the first
+        attempt at this: `forecast_vs_actual.png` stopped being written, which
+        the CI smoke test caught and `daily.yml`'s explicit-path `git add` would
+        have hit in production.
+        """
+        payload = {
+            "milestone": "M4",
+            "generated_at_utc": datetime.now(UTC).isoformat(timespec="seconds"),
+            "is_real": self.is_real,
+            "warning": self.warning,
+            "measurable": False,
+            "reason": self.no_drift_reason,
+            "verdict": {
+                "should_retrain": False,
+                "action": "none",
+                "severity": "ok",
+                "rule": "R0_champion_is_current",
+                "rationale": (
+                    "The champion was trained through the end of the available data, so no "
+                    "hour has arrived yet that it did not learn from. Drift is measured "
+                    "against the end of training; there is nothing after it to measure. "
+                    "This is what every run looks like straight after a retrain, and the "
+                    "signals start accumulating as fresh data arrives. Forecast accuracy "
+                    "is unaffected and was measured as usual — see monitor.json."
+                ),
+                "signals": {},
+                "reasons": [],
+            },
+            "thresholds": self.thresholds.as_dict(),
+            "data": {**self.provenance, "panel": panel_mod.describe_panel(self.panel)},
+            "monitoring_model": self.monitor_model_info,
+            "served_model": self.model_info,
+            # The windows that produced today's *accuracy* numbers. They are the
+            # calendar split, not the anchored one, and are recorded here so the
+            # artifact cannot be mistaken for a drift measurement that happens
+            # to be empty.
+            "windows": self.windows.split if self.windows is not None else {},
+            "drift": {},
+            "timeline": {
+                "description": "no post-training data yet",
+                "trailing_window_days": 7,
+                "points": [],
+            },
+            "evidently": {"status": "skipped", "reason": "no post-training data"},
+        }
+        self._write(DRIFT_JSON, payload)
+
+        summary_path = self.out_dir / DRIFT_SUMMARY
+        summary_path.write_text(
+            "# Drift\n\nNothing to measure yet: the champion was trained through the end of "
+            "the available data.\n",
+            encoding="utf-8",
+        )
+        self.artifacts.append(DRIFT_SUMMARY)
+        return "ok", {"action": "none", "rule": "R0_champion_is_current", "measurable": False}
+
     def step_drift(self) -> tuple[str, dict]:
         """All four detectors + the retrain verdict -> `metrics/drift.json`."""
+        if not self.drift_measurable:
+            return self._drift_not_measurable_yet()
+
         self.verdict = trigger.evaluate(self.sections, self.thresholds)
 
         if self.args.no_evidently:

@@ -25,11 +25,20 @@ from pipeline import daily
 
 # Ingestion is skipped (it would hit the network) and the booster is small; the
 # pipeline's wiring is what is under test, not LightGBM's accuracy.
+#
+# `--no-champion` is not decoration. The monitoring windows are anchored on the
+# champion's `train_data_end_utc`, so without it these tests read whatever
+# happens to be in the developer's local `mlflow.db` — and a champion trained up
+# to the end of the fixture legitimately produces no post-training data at all,
+# which changes the artifacts these assertions describe. That made the suite
+# pass or fail on untracked local state. Pinned here so the full-artifact path
+# is exercised deterministically; the anchored path has its own test below.
 FAST = [
     "--source",
     "synthetic",
     "--skip-ingest",
     "--no-evidently",
+    "--no-champion",
     "--train-stride-hours",
     "12",
     "--num-boost-round",
@@ -204,6 +213,78 @@ def test_no_champion_at_all_falls_back_and_says_why(tmp_path):
     booster, info = pipeline._monitoring_booster(pd.Timestamp("2026-06-16T00:00:00+00:00"))
     assert booster is None
     assert info["reason"] == "registry is empty"
+
+
+@pytest.fixture(scope="module")
+def champion_trained_to_the_end():
+    """A registry champion whose training data reaches the last hour of the panel.
+
+    This is not a corner case: it is what the registry holds for the whole first
+    day after every retrain, it is what CI holds because an earlier step trains
+    one, and it is what production held on 2026-08-02.
+    """
+    from features import build as build_mod
+    from models import lgbm as lgbm_mod
+    from models.data import resolve_panel
+
+    panel, _provenance = resolve_panel("synthetic", fixture_days=200)
+    origins = build_mod.training_origins(panel.index, stride_hours=24, max_horizon=24)
+    design = build_mod.build_design_matrix(panel, origins, tuple(range(1, 25)))
+    design = design[design[build_mod.TARGET_COLUMN].notna()]
+    booster = lgbm_mod.train_booster(design, num_boost_round=30)
+    return booster, {
+        "source": "mlflow_registry",
+        "version": "42",
+        "train_data_end_utc": panel.index.max().isoformat(),
+        "trained_on_real_data": False,
+    }
+
+
+def test_a_freshly_trained_champion_publishes_no_verdict_but_every_artifact(
+    tmp_path, monkeypatch, champion_trained_to_the_end
+):
+    """Drift going quiet must not take the forecast charts down with it.
+
+    The first attempt at anchoring returned early from the score stage, so
+    `self.windows` stayed `None`, so `_chart_history()` was empty, so
+    `forecast_vs_actual.png` was never written. Nothing in the unit suite
+    noticed — the tests above all pass `--no-champion` and never reach this
+    path. CI caught it, and `daily.yml` would have caught it harder: it `git
+    add`s that PNG by explicit path, so the 06:20 UTC publish would have failed
+    on a file that no longer existed.
+
+    Two different questions were being conflated. "Has the world moved since the
+    champion stopped learning?" genuinely has no answer here. "How accurate is
+    the forecast?" still does, measured against the calendar split by a booster
+    fitted before it. So the verdict goes quiet and everything else does not.
+    """
+    monkeypatch.setattr(tracking, "load_champion", lambda: champion_trained_to_the_end)
+    anchored = [flag for flag in FAST if flag != "--no-champion"]
+    assert daily.main([*anchored, "--out-dir", str(tmp_path)]) == 0
+
+    for name in EXPECTED_ARTIFACTS:
+        path = tmp_path / name
+        assert path.exists(), f"{name} is missing on the not-measurable path"
+        assert path.stat().st_size > 0, f"{name} is empty on the not-measurable path"
+
+    record = _load(tmp_path, "pipeline.json")
+    assert record["status"] == "ok"
+    assert set(record["artifacts"]) == EXPECTED_ARTIFACTS
+
+    drift = _load(tmp_path, "drift.json")
+    assert drift["measurable"] is False
+    assert drift["verdict"]["rule"] == "R0_champion_is_current"
+    assert drift["verdict"]["should_retrain"] is False, (
+        "a model trained through the end of the data cannot be told to retrain"
+    )
+    assert drift["verdict"]["action"] == "none"
+
+    # The half that is still answerable must still be answered.
+    monitor = _load(tmp_path, "monitor.json")
+    assert monitor["daily"], "forecast accuracy is measurable here and must still be published"
+    forecast = _load(tmp_path, "forecast.json")
+    assert forecast["history"], "the scored history is what the forecast chart draws"
+    assert forecast["forward"], "the live forecast is the point of serving a champion"
 
 
 def test_a_missing_registry_does_not_stop_the_run(tmp_path, monkeypatch):
