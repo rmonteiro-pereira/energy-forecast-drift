@@ -13,6 +13,7 @@ import pytest
 
 from features import build as build_mod
 from features import panel as panel_mod
+from models import backtest as backtest_mod
 from models import fixtures
 
 
@@ -269,3 +270,42 @@ def test_the_design_matrix_has_no_duplicated_columns(panel, origin):
 
     assert list(design.columns) == list(dict.fromkeys(design.columns))
     assert list(build_mod.feature_frame(design).columns) == list(build_mod.FEATURE_COLUMNS)
+
+
+def test_every_backtest_horizon_can_actually_see_a_published_forecast():
+    """The gap neither neighbouring test could see, because each was right.
+
+    `test_a_forecast_the_origin_could_not_have_seen_yet_is_blanked` proves an
+    origin before midday loses every horizon that crosses midnight — correct,
+    and the whole no-leakage point. `models.backtest.DEFAULT_CUTOFF_HOUR` put
+    every fold origin at 00:00 UTC — also defensible on its own.
+
+    Together they meant horizon 24, and only horizon 24, was scored with all
+    seven `fcst_*` features NaN at 100% of origins. Measured on real PJM demand
+    in run 30725157840: MAE 10,982 against 2,820 averaged over h1-h23, with
+    -10,002 MWh of that being systematic bias — 91% of the error. The model was
+    not bad at 24 hours; it was blindfolded at 24 hours, having lost the feature
+    that carries 8.9% of its gain.
+
+    Nothing spanned the two files, so nothing failed. This does.
+    """
+    origins = pd.date_range("2026-06-07", periods=14, freq="D", tz="UTC") + pd.Timedelta(
+        hours=backtest_mod.DEFAULT_CUTOFF_HOUR
+    )
+
+    blind = []
+    for horizon in HORIZONS:
+        targets = pd.DatetimeIndex(origins + pd.Timedelta(hours=horizon))
+        published = build_mod.forecast_published_at(targets)
+        if not (published <= origins).any():
+            blind.append(horizon)
+
+    assert not blind, (
+        f"at cutoff hour {backtest_mod.DEFAULT_CUTOFF_HOUR:02d}:00 UTC, horizons {blind} "
+        f"never have a published forecast, so every `fcst_*` feature is NaN there. "
+        f"Either move `DEFAULT_CUTOFF_HOUR` to at least "
+        f"{build_mod.FORECAST_PUBLISHED_HOUR_UTC:02d}:00, or ingest a longer-lead "
+        f"forecast for the horizons that cross midnight — do not simply relax "
+        f"`FORECAST_PUBLISHED_HOUR_UTC`, which would grant the model a run that had "
+        f"not been published at the origin."
+    )

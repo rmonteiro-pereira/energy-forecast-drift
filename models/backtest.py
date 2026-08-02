@@ -30,7 +30,32 @@ log = logging.getLogger(__name__)
 
 DEFAULT_HORIZONS = tuple(range(1, 25))
 DEFAULT_WEEKS = 8
-DEFAULT_CUTOFF_HOUR = 0  # fold boundary, UTC
+# Fold boundary, UTC. Not arbitrary, and it was 00:00 until it was measured.
+#
+# `features.build.FORECAST_PUBLISHED_HOUR_UTC` treats the day-before model run
+# covering a target day as published at midday. From a 00:00 origin, horizon 24
+# is the only horizon whose target falls on the *next* calendar day, so it alone
+# needed a run published at 12:00 that same day — twelve hours after the origin.
+# It was correctly withheld, and horizon 24 was therefore scored with all seven
+# `fcst_*` features NaN at every single origin.
+#
+# The cost was invisible on the fixture, where those features are worthless
+# (the ablation there says they *hurt* by 0.59%), and severe on real demand,
+# where they are worth 34%: MAE 10,982 at h24 against 2,820 averaged over
+# h1-h23, of which -10,002 MWh was systematic bias.
+#
+# Moving the origin to midday is the fix that adds no information the forecaster
+# would not have. The alternative — relaxing FORECAST_PUBLISHED_HOUR_UTC — would
+# hand the model a run that had not been published yet, which is the leak this
+# whole masking scheme exists to prevent. Midday is also the more honest
+# simulation of a day-ahead desk, which decides before the market closes rather
+# than at 20:00 the previous evening, local time.
+#
+# 12 is the earliest hour that works, and it works by an inclusive boundary
+# (`published <= origin`). `test_every_backtest_horizon_can_actually_see_a_published_forecast`
+# pins the relationship, so raising the publication hour without moving this
+# fails loudly instead of quietly blinding a horizon again.
+DEFAULT_CUTOFF_HOUR = 12
 
 
 @dataclass
