@@ -42,7 +42,7 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 
 from drift.config import DEFAULT_THRESHOLDS, DriftThresholds, Severity
-from drift.detectors import DriftSection
+from drift.detectors import INSUFFICIENT_DATA, DriftSection
 
 DISTRIBUTION_TYPES = ("feature", "target", "prediction")
 
@@ -135,6 +135,18 @@ def evaluate(
     performance = severities.get("performance", Severity.OK)
     distribution_alerts = [t for t in DISTRIBUTION_TYPES if severities.get(t) is Severity.ALERT]
 
+    # "OK" from `performance_drift` carries two very different meanings: the
+    # error was measured and did not degrade, or there were too few scored rows
+    # to measure it at all — the second returns OK with `status:
+    # insufficient_data`. Only the first may be used to argue *against* a
+    # retrain, so the distinction is made once, here, rather than at each use.
+    performance_section = sections.get("performance")
+    performance_is_measured = (
+        performance_section is not None
+        and performance_section.details.get("status") != INSUFFICIENT_DATA
+    )
+    performance_is_measured_and_clean = performance_is_measured and performance is Severity.OK
+
     overall = Severity.worst(severities.values())
     reasons = [
         _reason_for(section, thresholds)
@@ -173,14 +185,51 @@ def evaluate(
             "degrading: a plausible cause with a visible effect.",
         )
 
-    if len(distribution_alerts) >= 2:
+    if len(distribution_alerts) >= 2 and not performance_is_measured_and_clean:
         return verdict(
             True,
             ACTION_RETRAIN,
             "R3_multiple_distribution_alerts",
             f"{len(distribution_alerts)} distribution signals are alerting "
-            f"({', '.join(distribution_alerts)}) — a regime the model was never fitted on. "
+            f"({', '.join(distribution_alerts)}) — a regime the model was never fitted on, "
+            "and the error is not measured well enough to contradict them. "
             "Acting before the errors confirm it is the point of monitoring.",
+        )
+
+    if len(distribution_alerts) >= 2:
+        # Same evidence as R3, opposite conclusion, because the lagging
+        # indicator is available here and disagrees. R3 used to fire on the
+        # distribution signals alone, and on 2026-08-02 that made the published
+        # verdict assert "the champion should be refit" while the very same
+        # artifact measured the error 25.7% *better* than the reference window.
+        #
+        # That was a gap in the ladder rather than a threshold: R2 above
+        # requires performance to be at least WARN before it will retrain on a
+        # distribution signal, and R4 below says in its own words that a
+        # distribution signal "without measured degradation is a leading
+        # indicator, not proof of harm". R3 sat between them and skipped the
+        # question entirely, which also left R2 with almost nothing to do.
+        #
+        # The signals are not suppressed — every one of them is still reported,
+        # still charted, and the verdict is still not OK. What changes is the
+        # action, because `retrain` is a claim about the model and that claim
+        # was false. Inputs moving while the model tracks them is what a
+        # seasonal series does.
+        #
+        # The guard is on *measured* and clean, not merely on "not alerting".
+        # `performance_drift` returns severity OK with `status:
+        # insufficient_data` when there are too few scored rows, so reading the
+        # severity alone would silence exactly the label-free case R3 exists
+        # for. Unknown is not safe, the same rule `drift.windows` applies to a
+        # champion with no `train_data_end_utc`.
+        return verdict(
+            False,
+            ACTION_WATCH,
+            "R3b_distribution_without_measured_harm",
+            f"{len(distribution_alerts)} distribution signals are alerting "
+            f"({', '.join(distribution_alerts)}), but the frozen model's error was measured "
+            "over the same windows and did not degrade. Inputs moved and the model tracked "
+            "them: that is drift worth watching, not proof the champion needs refitting.",
         )
 
     if overall is not Severity.OK:

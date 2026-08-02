@@ -11,7 +11,7 @@ from __future__ import annotations
 import pytest
 
 from drift.config import DEFAULT_THRESHOLDS, DriftThresholds, Severity
-from drift.detectors import DriftSection
+from drift.detectors import INSUFFICIENT_DATA, DriftSection
 from drift.trigger import ACTION_NONE, ACTION_RETRAIN, ACTION_WATCH, evaluate
 
 
@@ -48,11 +48,67 @@ def test_r2_distribution_alert_plus_performance_warning_retrains():
     assert verdict.rule == "R2_distribution_alert_with_performance_warning"
 
 
-def test_r3_two_distribution_alerts_retrain_before_the_errors_confirm_it():
-    verdict = evaluate(sections(target=Severity.ALERT, prediction=Severity.ALERT))
+def test_r3_two_distribution_alerts_retrain_when_the_error_cannot_contradict_them():
+    """R3 is the label-free rule, so it needs the error to be *unmeasurable*.
+
+    This replaces `test_r3_two_distribution_alerts_retrain_before_the_errors_confirm_it`,
+    which asserted a retrain on the distribution signals alone. It passed, and
+    the behaviour it pinned published a false claim on 2026-08-02: the verdict
+    said "the champion should be refit" while the same artifact measured the
+    error 25.7% *better* than the reference window.
+
+    Acting before the errors confirm it is still the point of monitoring — when
+    the errors cannot yet speak. `performance_drift` says so explicitly with
+    `status: insufficient_data`, and that is what this case supplies.
+    """
+    without_labels = sections(target=Severity.ALERT, prediction=Severity.ALERT)
+    without_labels["performance"] = DriftSection(
+        "performance", Severity.OK, "not enough scored rows", {"status": INSUFFICIENT_DATA}
+    )
+
+    verdict = evaluate(without_labels)
     assert verdict.should_retrain is True
     assert verdict.rule == "R3_multiple_distribution_alerts"
-    assert verdict.signals["performance"] == "ok"
+
+
+def test_r3_still_retrains_when_there_is_no_performance_section_at_all():
+    """Unknown is not safe — the same rule `drift.windows` applies to a champion.
+
+    A missing section must not read as "measured and fine", or dropping the
+    performance detector would silently disarm the retrain policy.
+    """
+    missing = sections(target=Severity.ALERT, prediction=Severity.ALERT)
+    del missing["performance"]
+
+    verdict = evaluate(missing)
+    assert verdict.should_retrain is True
+    assert verdict.rule == "R3_multiple_distribution_alerts"
+
+
+def test_r3b_watches_when_the_error_was_measured_and_did_not_degrade():
+    """The gap in the ladder, closed.
+
+    R2 above will not retrain on a distribution signal unless performance is at
+    least WARN. R4 below says a distribution signal "without measured
+    degradation is a leading indicator, not proof of harm". R3 sat between them
+    and never asked, so two seasonal signals outvoted a directly measured
+    improvement — and left R2 with almost nothing to do.
+
+    Nothing is suppressed: the severity is still ALERT and every reason is still
+    reported. Only the *action* changes, because `retrain` is a claim about the
+    model and the measurement contradicted it.
+    """
+    verdict = evaluate(sections(target=Severity.ALERT, prediction=Severity.ALERT))
+
+    assert verdict.should_retrain is False
+    assert verdict.action == ACTION_WATCH
+    assert verdict.rule == "R3b_distribution_without_measured_harm"
+
+    # Watched, not silenced.
+    assert verdict.severity is Severity.ALERT
+    assert verdict.signals["target"] == "alert"
+    assert verdict.signals["prediction"] == "alert"
+    assert [r.drift_type for r in verdict.reasons]
 
 
 def test_r4_a_single_distribution_alert_is_watched_not_acted_on():
