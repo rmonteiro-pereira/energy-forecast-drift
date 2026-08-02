@@ -56,12 +56,7 @@ if TYPE_CHECKING:
 from drift import detectors, evidently_report, trigger
 from drift.config import DEFAULT_CURRENT_DAYS, DEFAULT_REFERENCE_DAYS, DriftThresholds
 from drift.run import render_summary
-from drift.windows import (
-    PREDICTION_COLUMN,
-    NoPostTrainingData,
-    NotEnoughHistoryError,
-    build_windows,
-)
+from drift.windows import PREDICTION_COLUMN, NotEnoughHistoryError, build_windows
 from features import build as build_mod
 from features import panel as panel_mod
 from ingest.config import INGEST_LEGS, METRICS_DIR, eia_api_key
@@ -184,9 +179,6 @@ class DailyPipeline:
         # infers `None` and every downstream attribute access looks like a bug.
         self.champion: lgb.Booster | None = None
         self.windows: ScoredWindows | None = None
-        # Set only when the champion is younger than the first hour it could be
-        # judged on; carried into the artifact so the state explains itself.
-        self.no_drift_reason: str = ""
         self.sections: dict[str, DriftSection] = {}
         self.verdict: RetrainVerdict | None = None
         self.artifacts: list[str] = []
@@ -356,21 +348,7 @@ class DailyPipeline:
         self._load_champion()
 
         end = self.panel.index.max()
-
-        # The boundary that makes drift a question about the model rather than
-        # about the calendar: everything after it is data the champion never
-        # learned. Only a champion that reports when its training data ends can
-        # provide it; without one the windows fall back to sliding with `end`,
-        # which is the old behaviour and is all that is available.
-        trained_to = self.model_info.get("train_data_end_utc")
-        anchor = pd.Timestamp(trained_to) if trained_to else None
-
-        if anchor is not None:
-            reference_start = anchor - pd.Timedelta(days=self.args.reference_days)
-        else:
-            reference_start = end - pd.Timedelta(
-                days=self.args.current_days + self.args.reference_days
-            )
+        reference_start = end - pd.Timedelta(days=self.args.current_days + self.args.reference_days)
         booster, self.monitor_model_info = self._monitoring_booster(reference_start)
 
         try:
@@ -382,51 +360,9 @@ class DailyPipeline:
                 stride_hours=self.args.train_stride_hours,
                 num_boost_round=self.args.num_boost_round,
                 booster=booster,
-                anchor=anchor,
             )
-        except NoPostTrainingData as exc:
-            # Green and empty, not red. The champion is younger than the first
-            # hour it would be judged on, so there is nothing to judge. Failing
-            # here would paint a freshly retrained model as broken.
-            self.windows = None
-            self.no_drift_reason = str(exc)
-            log.info("No post-training data yet: %s", exc)
-            return "ok", {
-                "served_model": self.model_info,
-                "monitoring_model": {
-                    "source": "none",
-                    "reason": "the champion has no data after it to be scored on",
-                },
-                "drift_measurable": False,
-                "anchor_utc": anchor.isoformat() if anchor is not None else None,
-            }
         except NotEnoughHistoryError as exc:
             raise PipelineError(str(exc)) from exc
-
-        # Structure said the window exists; policy decides whether it can speak.
-        # Anchored at the end of training, "a few hours have arrived" leaves a
-        # handful of rows rather than none, and a verdict computed from a
-        # handful is noise wearing a rule name. `min_samples` is the floor the
-        # detectors already use for exactly this, applied here to the window as
-        # a whole.
-        if anchor is not None and len(self.windows.current) < self.thresholds.min_samples:
-            reason = (
-                f"only {len(self.windows.current)} scored row(s) have arrived since the "
-                f"champion stopped learning at {anchor.isoformat()}; "
-                f"{self.thresholds.min_samples} are needed to measure drift."
-            )
-            self.windows = None
-            self.no_drift_reason = reason
-            log.info("Not enough post-training data yet: %s", reason)
-            return "ok", {
-                "served_model": self.model_info,
-                "monitoring_model": {
-                    "source": "none",
-                    "reason": "too little data after the champion to score it",
-                },
-                "drift_measurable": False,
-                "anchor_utc": anchor.isoformat(),
-            }
 
         return "ok", {
             "served_model": self.model_info,
@@ -487,29 +423,6 @@ class DailyPipeline:
         Computed from the same `performance` section the drift verdict reads, so
         the chart and the alarm can never tell different stories.
         """
-        if self.windows is None:
-            # The champion is younger than the first hour it could be judged on.
-            # Publishing zeros here would read as "no error", which is a claim;
-            # the truth is that nothing has been measured yet, and the artifact
-            # says exactly that.
-            self.sections = {}
-            self._write(
-                MONITOR_JSON,
-                self._stamp(
-                    {
-                        "units": {"mae": "MWh", "mape_pct": "%", "bias": "MWh"},
-                        "monitoring_model": self.monitor_model_info,
-                        "served_model": self.model_info,
-                        "measurable": False,
-                        "reason": self.no_drift_reason,
-                        "severity": "ok",
-                        "summary": "no data has arrived since the champion stopped learning",
-                        "daily": [],
-                    }
-                ),
-            )
-            return "ok", {"measurable": False}
-
         self.sections = detectors.run_all(self.windows, self.thresholds)
         performance = self.sections["performance"].details
 
@@ -556,68 +469,8 @@ class DailyPipeline:
             "days": len(performance["rolling"]),
         }
 
-    def _drift_not_measurable_yet(self) -> tuple[str, dict]:
-        """The state every retrain passes through, published as itself.
-
-        The alternative was to keep sliding the windows with the wall clock, and
-        that is what produced a verdict on 2026-08-02 asserting "a regime the
-        model was never fitted on" about two windows entirely inside the
-        champion's own training set. Drift is measured against the end of
-        training, so a champion trained to the end of the panel has nothing yet
-        to be measured on. Saying so is the honest artifact; inventing a verdict
-        is not, and `retrain` in particular is a claim about a model that has
-        just been refit.
-        """
-        payload = {
-            "milestone": "M4",
-            "generated_at_utc": datetime.now(UTC).isoformat(timespec="seconds"),
-            "is_real": self.is_real,
-            "warning": self.warning,
-            "measurable": False,
-            "reason": self.no_drift_reason,
-            "verdict": {
-                "should_retrain": False,
-                "action": "none",
-                "severity": "ok",
-                "rule": "R0_champion_is_current",
-                "rationale": (
-                    "The champion was trained through the end of the available data, so no "
-                    "hour has arrived yet that it did not learn from. Drift is measured "
-                    "against the end of training; there is nothing after it to measure. "
-                    "This is what every run looks like straight after a retrain, and the "
-                    "signals below start accumulating as fresh data arrives."
-                ),
-                "signals": {},
-                "reasons": [],
-            },
-            "thresholds": self.thresholds.as_dict(),
-            "data": {**self.provenance, "panel": panel_mod.describe_panel(self.panel)},
-            "monitoring_model": self.monitor_model_info,
-            "served_model": self.model_info,
-            "drift": {},
-            "timeline": {
-                "description": "no post-training data yet",
-                "trailing_window_days": 7,
-                "points": [],
-            },
-            "evidently": {"status": "skipped", "reason": "no post-training data"},
-        }
-        self._write(DRIFT_JSON, payload)
-
-        summary_path = self.out_dir / DRIFT_SUMMARY
-        summary_path.write_text(
-            "# Drift\n\nNothing to measure yet: the champion was trained through the end of "
-            "the available data.\n",
-            encoding="utf-8",
-        )
-        self.artifacts.append(DRIFT_SUMMARY)
-        return "ok", {"action": "none", "rule": "R0_champion_is_current", "measurable": False}
-
     def step_drift(self) -> tuple[str, dict]:
         """All four detectors + the retrain verdict -> `metrics/drift.json`."""
-        if self.windows is None:
-            return self._drift_not_measurable_yet()
-
         self.verdict = trigger.evaluate(self.sections, self.thresholds)
 
         if self.args.no_evidently:
@@ -671,14 +524,11 @@ class DailyPipeline:
         **largest horizon within the day-ahead window** — the earliest forecast
         that was still a day-ahead forecast, which is also the hardest one.
         """
-        if self.windows is None:
-            # Not a stage-ordering bug any more: since the windows are anchored
-            # on the end of training, a champion trained right up to the end of
-            # the panel legitimately produces none. There is then no scored
-            # history to chart — the forward forecast below is still published,
-            # and the empty frame is the honest input for it.
-            return pd.DataFrame(columns=["target_utc", "actual_mwh", "forecast_mwh"])
-
+        if self.windows is None:  # pragma: no cover - the score stage runs first
+            raise RuntimeError(
+                "_chart_history() ran before the score stage built the monitoring "
+                "windows. This is a stage-ordering bug in run()."
+            )
         frame = pd.concat([self.windows.reference, self.windows.current], ignore_index=True)
         horizon = min(CHART_HORIZON_H, self.args.max_horizon)
         frame = frame[(frame["horizon_h"] <= horizon) & frame[build_mod.TARGET_COLUMN].notna()]

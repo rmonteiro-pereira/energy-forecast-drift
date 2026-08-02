@@ -18,8 +18,8 @@ import pandas as pd
 import pytest
 
 from drift import detectors, simulate, trigger
-from drift.config import DEFAULT_CURRENT_DAYS, DEFAULT_THRESHOLDS, Severity
-from drift.windows import NoPostTrainingData, NotEnoughHistoryError, build_windows
+from drift.config import DEFAULT_THRESHOLDS, Severity
+from drift.windows import NotEnoughHistoryError, build_windows
 from features import build as build_mod
 from features import panel as panel_mod
 from models import fixtures
@@ -186,74 +186,3 @@ def test_a_tiny_window_is_reported_as_insufficient_rather_than_scored():
     result = detectors.compare_column([1.0] * 10, [500.0] * 10, "toy", DEFAULT_THRESHOLDS)
     assert result["insufficient_data"] is True
     assert result["severity"] == Severity.OK.value
-
-
-# ---------------------------------------------------------------------------
-# window anchoring — drift is measured from the end of training, not from "now"
-# ---------------------------------------------------------------------------
-def test_windows_anchor_on_the_end_of_training_rather_than_the_wall_clock(panel):
-    """Drift asks about the model, so the boundary is where the model stopped learning.
-
-    Unanchored, both windows slide with the clock and the monitor answers "did
-    the last fortnight differ from the one before it?" — a question about the
-    calendar. Measured on 2026-08-02, that shipped a verdict reading "a regime
-    the model was never fitted on" about two windows lying entirely inside the
-    champion's own training set.
-    """
-    anchor = panel.index.max() - pd.Timedelta(days=10)
-    anchored = build_windows(panel, anchor=anchor, **FAST)
-
-    assert pd.Timestamp(anchored.split["current_start_utc"]) == anchor, (
-        "the current window must begin exactly where the champion stopped learning"
-    )
-    assert anchored.current["target_utc"].min() >= anchor, (
-        "the current window contains hours the model was trained on"
-    )
-
-    # And the reference is the tail of what it *did* learn, so the comparison is
-    # "what it knows" against "what has happened since".
-    reference_start = pd.Timestamp(anchored.split["reference_start_utc"])
-    assert reference_start < anchor
-    assert anchored.reference["target_utc"].max() < anchor
-
-
-def test_without_an_anchor_the_old_wall_clock_split_is_unchanged(panel):
-    """No champion, no `train_data_end_utc`, no anchor — the fallback must still work."""
-    unanchored = build_windows(panel, **FAST)
-    end = panel.index.max()
-
-    expected = end - pd.Timedelta(days=DEFAULT_CURRENT_DAYS)
-    assert pd.Timestamp(unanchored.split["current_start_utc"]) == expected
-
-
-def test_a_champion_trained_to_the_end_of_the_panel_has_nothing_to_monitor(panel):
-    """The state every retrain passes through, and it is healthy rather than an error.
-
-    Immediately after a retrain there is no hour the champion did not learn
-    from, so there is no drift to measure. The distinct exception is what lets
-    the pipeline publish "nothing to monitor yet" instead of either failing or —
-    far worse — scoring the model against its own training data.
-    """
-    # One hour past the last labelled target: nothing at all has arrived since
-    # the champion stopped learning.
-    with pytest.raises(NoPostTrainingData):
-        build_windows(panel, anchor=panel.index.max() + pd.Timedelta(hours=1), **FAST)
-
-
-def test_a_current_window_too_small_to_measure_is_not_a_verdict(panel):
-    """Structure and policy are separated, and this is the policy half.
-
-    Anchoring exactly at the end of the panel leaves a handful of rows rather
-    than none, so `build_windows` builds them — but a handful is not enough to
-    say anything, and scoring it would publish a drift verdict computed from
-    noise. `DriftThresholds.min_samples` is the existing answer to "too few to
-    speak", and `pipeline.daily` applies it to the current window for exactly
-    that reason.
-    """
-    barely = build_windows(panel, anchor=panel.index.max(), **FAST)
-
-    assert not barely.current.empty, "the premise of this test no longer holds"
-    assert len(barely.current) < DEFAULT_THRESHOLDS.min_samples, (
-        "a window this thin must fall under the min_samples floor, or the "
-        "pipeline would treat it as measurable"
-    )

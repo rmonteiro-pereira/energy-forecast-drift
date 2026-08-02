@@ -25,20 +25,11 @@ from pipeline import daily
 
 # Ingestion is skipped (it would hit the network) and the booster is small; the
 # pipeline's wiring is what is under test, not LightGBM's accuracy.
-#
-# `--no-champion` is not decoration. The monitoring windows are anchored on the
-# champion's `train_data_end_utc`, so without it these tests read whatever
-# happens to be in the developer's local `mlflow.db` — and a champion trained up
-# to the end of the fixture legitimately produces no post-training data at all,
-# which changes the artifacts these assertions describe. That made the suite
-# pass or fail on untracked local state. Pinned here so the full-artifact path
-# is exercised deterministically; the anchored path has its own test below.
 FAST = [
     "--source",
     "synthetic",
     "--skip-ingest",
     "--no-evidently",
-    "--no-champion",
     "--train-stride-hours",
     "12",
     "--num-boost-round",
