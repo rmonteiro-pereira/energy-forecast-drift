@@ -1,19 +1,19 @@
 {
   "milestone": "M5",
-  "generated_at_utc": "2026-08-02T02:29:31+00:00",
+  "generated_at_utc": "2026-08-02T02:42:15+00:00",
   "is_real": true,
   "warning": null,
   "status": "ok",
   "error": null,
-  "started_at_utc": "2026-08-02T02:29:06+00:00",
-  "seconds": 25.39,
+  "started_at_utc": "2026-08-02T02:41:51+00:00",
+  "seconds": 24.23,
   "entrypoint": "python -m pipeline.daily",
   "verdict": {
-    "should_retrain": true,
-    "action": "retrain",
+    "should_retrain": false,
+    "action": "watch",
     "severity": "alert",
-    "rule": "R3_multiple_distribution_alerts",
-    "rationale": "3 distribution signals are alerting (feature, target, prediction) \u2014 a regime the model was never fitted on. Acting before the errors confirm it is the point of monitoring.",
+    "rule": "R3b_distribution_without_measured_harm",
+    "rationale": "3 distribution signals are alerting (feature, target, prediction), but the frozen model's error was measured over the same windows and did not degrade. Inputs moved and the model tracked them: that is drift worth watching, not proof the champion needs refitting.",
     "signals": {
       "feature": "alert",
       "target": "alert",
@@ -46,7 +46,7 @@
         "detail": "forecast PSI 0.452, mean moved -8,905 MWh (label-free signal: available before the actuals arrive)"
       }
     ],
-    "evaluated_at_utc": "2026-08-02T02:29:27+00:00"
+    "evaluated_at_utc": "2026-08-02T02:42:09+00:00"
   },
   "served_model": {
     "source": "mlflow_registry",
@@ -70,13 +70,13 @@
     {
       "step": "ingest",
       "status": "ok",
-      "seconds": 15.55,
+      "seconds": 11.61,
       "sources": "all"
     },
     {
       "step": "features",
       "status": "ok",
-      "seconds": 0.39,
+      "seconds": 0.36,
       "kind": "eia_api_v2",
       "is_real": true,
       "panel": {
@@ -91,7 +91,7 @@
     {
       "step": "score",
       "status": "ok",
-      "seconds": 4.43,
+      "seconds": 5.59,
       "served_model": {
         "source": "mlflow_registry",
         "uri": "models:/energy-demand-forecaster@champion",
@@ -119,23 +119,23 @@
     {
       "step": "forecast",
       "status": "ok",
-      "seconds": 0.26,
+      "seconds": 0.35,
       "history_points": 505,
       "forward_points": 24
     },
     {
       "step": "monitor",
       "status": "ok",
-      "seconds": 0.17,
+      "seconds": 0.23,
       "severity": "ok",
       "days": 28
     },
     {
       "step": "drift",
       "status": "ok",
-      "seconds": 4.6,
-      "action": "retrain",
-      "should_retrain": true,
+      "seconds": 6.1,
+      "action": "watch",
+      "should_retrain": false,
       "signals": {
         "feature": "alert",
         "target": "alert",
