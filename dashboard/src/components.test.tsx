@@ -18,7 +18,8 @@
 import { cleanup, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it } from "vitest";
 
-import { ProvenanceBanner } from "./components";
+import { ProvenanceBanner, VerdictCard } from "./components";
+import type { DriftArtifact } from "./types";
 
 afterEach(cleanup);
 
@@ -99,5 +100,97 @@ describe("ProvenanceBanner", () => {
     const banner = screen.getByRole("alert");
     expect(banner.textContent).toMatch(/not a benchmark/i);
     expect(banner.textContent).toMatch(/seeded synthetic fixture/i);
+  });
+});
+
+/**
+ * The verdict card, which has to be wrong in only one direction.
+ *
+ * On 2026-08-02 this page showed "Retrain" over a champion that had been
+ * trained hours earlier, because the monitoring windows slid with the wall
+ * clock and both of them lay inside that champion's own training data. The
+ * Python side now anchors on the end of training and publishes
+ * `measurable: false` when nothing has arrived since; these assert the page
+ * actually renders that state rather than falling through to a verdict.
+ */
+function driftArtifact(overrides: Partial<DriftArtifact> = {}): DriftArtifact {
+  return {
+    generated_at_utc: "2026-08-02T06:20:00+00:00",
+    is_real: true,
+    warning: null,
+    verdict: {
+      should_retrain: true,
+      action: "retrain",
+      severity: "alert",
+      rule: "R1_performance_alert",
+      rationale: "The rolling error crossed the degradation alert line.",
+      signals: { feature: "alert", target: "ok", prediction: "alert", performance: "alert" },
+      reasons: [],
+      evaluated_at_utc: "2026-08-02T06:20:00+00:00",
+    },
+    thresholds: { psi_warn: 0.1, psi_alert: 0.2, mae_degradation_alert: 0.25 },
+    windows: {
+      reference_start_utc: "2026-07-05T01:00:00+00:00",
+      current_start_utc: "2026-07-19T01:00:00+00:00",
+      panel_end_utc: "2026-08-02T01:00:00+00:00",
+      rows: { train: 1000, reference: 500, current: 500 },
+    },
+    data: { kind: "eia_api_v2", is_real: true },
+    drift: {},
+    ...overrides,
+  } as DriftArtifact;
+}
+
+describe("VerdictCard", () => {
+  it("shows the verdict when the artifact measured one", () => {
+    render(<VerdictCard drift={driftArtifact()} />);
+
+    expect(document.body.textContent).toContain("Retrain");
+    expect(document.body.textContent).toContain("should_retrain = true");
+    // Every signal the artifact carries is rendered, not just the worst.
+    for (const name of ["feature", "target", "prediction", "performance"]) {
+      expect(document.body.textContent).toContain(name);
+    }
+  });
+
+  it("refuses to print a verdict when the champion is younger than the data", () => {
+    render(
+      <VerdictCard
+        drift={driftArtifact({
+          measurable: false,
+          reason:
+            "only 1 scored row(s) have arrived since the champion stopped learning at " +
+            "2026-08-02T00:00:00+00:00; 200 are needed to measure drift.",
+          verdict: {
+            ...driftArtifact().verdict,
+            should_retrain: false,
+            action: "none",
+            severity: "ok",
+            rule: "R0_champion_is_current",
+            rationale: "The champion was trained through the end of the available data.",
+            signals: {},
+          },
+        })}
+      />,
+    );
+
+    expect(document.body.textContent).toContain("Not measurable yet");
+    expect(document.body.textContent).toContain("should_retrain = false");
+    // The bug this exists to prevent, asserted as an absence.
+    expect(document.body.textContent).not.toMatch(/\bRetrain\b/);
+    // It says *why*, quoting the artifact rather than a hardcoded sentence.
+    expect(document.body.textContent).toMatch(/only 1 scored row/);
+  });
+
+  it("treats an artifact with no `measurable` field as measured", () => {
+    // Older artifacts predate the field. Absent means "this run measured drift",
+    // not "unknown" — reading it as falsy would blank the card on every one of
+    // them, which is a silent regression rather than a visible one.
+    const legacy = driftArtifact();
+    expect("measurable" in legacy).toBe(false);
+
+    render(<VerdictCard drift={legacy} />);
+    expect(document.body.textContent).toContain("Retrain");
+    expect(document.body.textContent).not.toContain("Not measurable yet");
   });
 });

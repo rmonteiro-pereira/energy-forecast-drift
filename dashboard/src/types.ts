@@ -133,6 +133,15 @@ export interface Verdict {
 
 export interface DriftArtifact extends Provenance {
   verdict: Verdict;
+  /**
+   * False on the runs where the champion was trained through the end of the
+   * available data, so nothing has arrived yet that it did not learn from.
+   * Absent on artifacts written before that state existed, which is why the
+   * dashboard tests `=== false` rather than falsiness — an older artifact means
+   * "measured", not "unknown".
+   */
+  measurable?: boolean;
+  reason?: string;
   thresholds: { psi_warn: number; psi_alert: number; mae_degradation_alert: number };
   windows: {
     reference_start_utc: string;
@@ -165,9 +174,66 @@ export interface PipelineArtifact extends Provenance {
   monitoring_model: ModelInfo | null;
 }
 
+/**
+ * `metrics/model.json` — the walk-forward backtest, written by `models.train`.
+ *
+ * Unlike the other four this is *not* refreshed daily: it is the measurement
+ * that decided the champion, so it changes only when a model is retrained. It
+ * is what answers "is this any good?", which no amount of drift monitoring
+ * does, and until now the dashboard did not read it at all.
+ */
+export interface ModelArtifact extends Provenance {
+  models: {
+    baseline: { name: string; description: string };
+    challenger: {
+      name: string;
+      description: string;
+      n_features: number;
+      num_boost_round: number;
+      refits: number;
+    };
+  };
+  data: {
+    kind: string;
+    respondent?: string;
+    weather_sites?: string[];
+    panel?: { rows: number; start_utc: string; end_utc: string };
+  };
+  backtest: {
+    protocol: string;
+    weeks: number;
+    folds: number;
+    horizons_h: number[];
+    first_cutoff_utc: string;
+    last_cutoff_utc: string;
+  };
+  metrics: {
+    baseline: { overall: ErrorSummary };
+    lightgbm: { overall: ErrorSummary };
+    comparison: {
+      mae_delta: number;
+      mae_delta_pct: number;
+      mape_delta_pct_points: number;
+      horizons_won: number;
+      horizons_total: number;
+    };
+  };
+  ablation?: {
+    forecast_weather?: {
+      measured: boolean;
+      mae_delta_pct: number | null;
+      helped: boolean;
+      warning: string | null;
+    };
+  };
+  feature_importance_gain_pct?: { feature: string; gain_pct: number }[];
+  registry?: { registered_model?: string; version?: string | number; alias?: string };
+}
+
 export interface Metrics {
   forecast: ForecastArtifact;
   monitor: MonitorArtifact;
   drift: DriftArtifact;
   pipeline: PipelineArtifact;
+  model: ModelArtifact;
 }

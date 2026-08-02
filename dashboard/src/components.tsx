@@ -11,7 +11,7 @@
 
 import { useState, type ReactNode } from "react";
 
-import type { Severity } from "./types";
+import type { DriftArtifact, Severity, VerdictAction } from "./types";
 
 const SEVERITY_CLASS: Record<Severity, string> = {
   ok: "status-ok",
@@ -189,6 +189,102 @@ export function ChartWithTable<T>({
       ) : (
         chart
       )}
+    </>
+  );
+}
+
+const ACTION_COPY: Record<VerdictAction, { title: string; blurb: string }> = {
+  retrain: {
+    title: "Retrain",
+    blurb: "A retrain rule fired. The champion should be refit before it is trusted further.",
+  },
+  watch: {
+    title: "Watch",
+    blurb:
+      "Drift is visible but no retrain rule is satisfied — a leading indicator without measured harm.",
+  },
+  none: { title: "Healthy", blurb: "All four drift signals are inside their thresholds." },
+};
+
+/**
+ * The verdict, in whichever of its two shapes the artifact is in.
+ *
+ * It lives here rather than inline in `App` so it can be tested without
+ * mounting the charts, and the branch is worth testing: collapsing these two
+ * states is what once printed "Retrain" over a model that had been trained
+ * that same morning. When `measurable` is false the champion's training data
+ * reaches the end of the panel, so there is no window on the far side of it to
+ * compare against — and the honest render says that rather than computing a
+ * verdict from windows the model already learned.
+ *
+ * `measurable !== false` rather than a truthiness check on purpose: artifacts
+ * written before the field existed have no opinion, and for those the answer is
+ * "measured", not "unknown".
+ */
+export function VerdictCard({ drift }: { drift: DriftArtifact }) {
+  const verdict = drift.verdict;
+  const measurable = drift.measurable !== false;
+
+  if (!measurable) {
+    return (
+      <div className="verdict">
+        <div className="verdict-headline">
+          <span className="dot status-ok" style={{ width: 14, height: 14 }} aria-hidden="true" />
+          <div>
+            <div className="verdict-figure">Not measurable yet</div>
+            <div className="verdict-rule">should_retrain = false</div>
+          </div>
+        </div>
+        <p className="card-note" style={{ margin: 0, maxWidth: "52ch" }}>
+          The champion was trained through the end of the available data, so no hour has arrived
+          yet that it did not learn from — and drift is the difference between those two. This is
+          what every run looks like straight after a retrain. Forecast accuracy is unaffected and
+          is still measured; the charts below are today&rsquo;s.
+          {drift.reason ? (
+            <>
+              {" "}
+              <span className="mono-note">{drift.reason}</span>
+            </>
+          ) : null}
+        </p>
+      </div>
+    );
+  }
+
+  const action = ACTION_COPY[verdict.action];
+  const severityClass =
+    verdict.action === "retrain" ? "alert" : verdict.action === "watch" ? "warn" : "ok";
+
+  return (
+    <>
+      <div className="verdict">
+        <div className="verdict-headline">
+          <span
+            className={`dot status-${severityClass}`}
+            style={{ width: 14, height: 14 }}
+            aria-hidden="true"
+          />
+          <div>
+            <div className="verdict-figure">{action.title}</div>
+            <div className="verdict-rule">should_retrain = {String(verdict.should_retrain)}</div>
+          </div>
+        </div>
+        <p className="card-note" style={{ margin: 0, maxWidth: "48ch" }}>
+          {action.blurb}
+        </p>
+      </div>
+
+      <div className="signals">
+        {Object.entries(verdict.signals).map(([name, severity]) => (
+          <div className="signal" key={name}>
+            <div className="signal-head">
+              <StatusDot severity={severity} />
+              <span>{name}</span>
+            </div>
+            <p className="signal-detail">{drift.drift[name]?.summary ?? ""}</p>
+          </div>
+        ))}
+      </div>
     </>
   );
 }

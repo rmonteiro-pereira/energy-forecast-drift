@@ -452,6 +452,170 @@ tbody tr:last-child td {
   transition: opacity 120ms ease-out;
 }
 
+/* --- the explanatory layer ----------------------------------------------- */
+/*
+  Prose, not chrome. A reader who has never seen this repository needs to be
+  told what is being forecast before being shown how well — so these sections
+  are typeset to be read (measure capped near 68 characters, generous leading)
+  rather than scanned like the stat strip below them.
+*/
+.masthead-lede {
+  margin: 6px 0 0;
+  color: var(--text-secondary);
+  font-size: 15px;
+  line-height: 1.5;
+  max-width: 62ch;
+}
+
+.explainer {
+  display: grid;
+  grid-template-columns: minmax(0, 1.35fr) minmax(0, 1fr);
+  gap: 28px;
+  padding: 4px 0 26px;
+  border-bottom: 1px solid var(--border);
+  margin-bottom: 26px;
+}
+
+.explainer-block h2 {
+  margin: 0 0 10px;
+  font-size: 13px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--text-muted);
+  font-weight: 620;
+}
+
+.explainer-block p {
+  margin: 0 0 12px;
+  font-size: 15px;
+  line-height: 1.62;
+  color: var(--text-primary);
+  max-width: 68ch;
+}
+
+.explainer-block p:last-child {
+  margin-bottom: 0;
+}
+
+.fact-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: grid;
+  gap: 10px;
+}
+
+.fact-list li {
+  font-size: 14px;
+  line-height: 1.5;
+  color: var(--text-secondary);
+  padding-left: 16px;
+  position: relative;
+}
+
+.fact-list li::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 8px;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--border);
+}
+
+.section-heading {
+  margin: 30px 0 6px;
+  font-size: 19px;
+  letter-spacing: -0.01em;
+}
+
+.section-note {
+  margin: 0 0 18px;
+  font-size: 14px;
+  line-height: 1.62;
+  color: var(--text-secondary);
+  max-width: 78ch;
+}
+
+.mono-note {
+  font-family: ui-monospace, "SF Mono", "Cascadia Mono", Menlo, monospace;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+/* --- how it was made ----------------------------------------------------- */
+/*
+  Numbered because the order is the argument: each stage exists to close a hole
+  the one before it opened. The rail on the left is a single border rather than
+  per-item connectors, so it stays continuous when an item wraps.
+*/
+.stages {
+  list-style: none;
+  margin: 0 0 26px;
+  padding: 0 0 0 4px;
+  display: grid;
+  gap: 2px;
+}
+
+.stage {
+  display: grid;
+  grid-template-columns: 132px minmax(0, 1fr);
+  gap: 18px;
+  padding: 16px 0;
+  border-top: 1px solid var(--border);
+}
+
+.stage:last-child {
+  border-bottom: 1px solid var(--border);
+}
+
+.stage-mark {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+}
+
+.stage-index {
+  font-variant-numeric: tabular-nums;
+  font-size: 12px;
+  color: var(--text-muted);
+  min-width: 14px;
+}
+
+.stage-step {
+  font-size: 13px;
+  font-weight: 640;
+  letter-spacing: 0.02em;
+  color: var(--text-primary);
+}
+
+.stage-body h3 {
+  margin: 0 0 6px;
+  font-size: 15px;
+  font-weight: 620;
+  letter-spacing: -0.005em;
+}
+
+.stage-body p {
+  margin: 0;
+  font-size: 14px;
+  line-height: 1.62;
+  color: var(--text-secondary);
+  max-width: 74ch;
+}
+
+@media (max-width: 860px) {
+  .explainer {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 22px;
+  }
+  .stage {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 8px;
+  }
+}
+
 @media (max-width: 640px) {
   .chart {
     height: 300px;

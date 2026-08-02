@@ -51,7 +51,7 @@ lands, drift accumulates in public week after week and can be pointed at.
 
 | | Status | Notes |
 |---|---|---|
-| **The code** | ✅ real, complete, tested | 384 Python tests + 4 dashboard tests, no network. Every path below runs today, and [`docs/REPRODUCE.md`](docs/REPRODUCE.md) has the transcripts. The tests are themselves measured — see [mutation testing](docs/MUTATION-TESTING.md). |
+| **The code** | ✅ real, complete, tested | 384 Python tests + 7 dashboard tests, no network. Every path below runs today, and [`docs/REPRODUCE.md`](docs/REPRODUCE.md) has the transcripts. The tests are themselves measured — see [mutation testing](docs/MUTATION-TESTING.md). |
 | **EIA hourly demand** | ✅ **real** | 17,520 hourly PJM rows, 2024-08-01 → 2026-08-01, **0 missing hours**, pulled by the finished client the day the key landed. |
 | **Open-Meteo weather** | ✅ **real, and it now reaches the model** | It always reached [`docs/DRIFT-EVALUATION.md`](docs/DRIFT-EVALUATION.md) — real Philadelphia ERA5, derived results committed, raw series cached under gitignored `reports/`. It could not reach the *model* while `resolve_panel` fell back to the fixture as a whole; with real demand in the lake it no longer does. **Caveat on the committed artifacts:** they were produced on 2026-08-01 and record `"weather_site": "philadelphia_pa"`, i.e. one city. The nine-metro blend and the archived day-ahead forecast landed *after* them; no published run has used those yet. |
 | **`forecast.json`, `monitor.json`, `drift.json`, `pipeline.json`** | ✅ **real** | `"is_real": true`, `"kind": "eia_api_v2"`. The rolling MAE, the MAPE, the bias flip, the PSI/KS signals and the **retrain** verdict are all measurements of PJM load. |
