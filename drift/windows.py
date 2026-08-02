@@ -49,6 +49,21 @@ class NotEnoughHistoryError(ValueError):
     """The panel cannot be split into three non-empty windows."""
 
 
+class NoPostTrainingData(NotEnoughHistoryError):
+    """The champion's training data reaches the end of the panel.
+
+    A distinct type because it is a *healthy* state, not a shortage of history:
+    it is what every run looks like immediately after a retrain, and it stays
+    true until a day of fresh data has arrived. Callers report "nothing to
+    monitor yet" rather than failing — and rather than falling back to windows
+    the model has already learned, which is what produced a verdict reading
+    "a regime the model was never fitted on" about its own training set.
+
+    Subclasses `NotEnoughHistoryError` so an existing `except` that meant "the
+    panel is too short" keeps behaving, rather than this escaping as a crash.
+    """
+
+
 @dataclass
 class ScoredWindows:
     """Reference and current design matrices, scored by one frozen booster."""
@@ -84,6 +99,7 @@ def build_windows(
     stride_hours: int = 6,
     num_boost_round: int = lgbm_mod.DEFAULT_NUM_BOOST_ROUND,
     booster: lgb.Booster | None = None,
+    anchor: pd.Timestamp | None = None,
 ) -> ScoredWindows:
     """Split `panel`, fit on the oldest slice, score the two newest ones.
 
@@ -95,8 +111,30 @@ def build_windows(
         raise NotEnoughHistoryError("The panel is empty.")
 
     end = panel.index.max()
-    current_start = end - pd.Timedelta(days=current_days)
-    reference_start = current_start - pd.Timedelta(days=reference_days)
+
+    # Anchored on when the champion stopped learning, not on "now".
+    #
+    # Without an anchor both windows slide with the wall clock, so the monitor
+    # asks "did the last fortnight differ from the fortnight before it?" — a
+    # question about the calendar. Drift is a question about the *model*: is it
+    # being asked about a world it was not fitted on? That makes the only
+    # meaningful boundary the end of its training data.
+    #
+    # Measured on 2026-08-02, before this existed: the champion had learned
+    # through 00:00 that day, and the monitor was comparing 07-05..07-19 against
+    # 07-19..08-02 — both entirely inside the training set — while the verdict
+    # read "a regime the model was never fitted on". It was fitted on all of it.
+    #
+    # Anchored, `current` is exactly the data that arrived after the model
+    # stopped learning and `reference` is the tail of what it did learn, so
+    # drift starts at zero on every retrain and grows while nobody retrains.
+    # That accumulation is the thing this repository exists to show.
+    if anchor is not None:
+        current_start = anchor
+        reference_start = anchor - pd.Timedelta(days=reference_days)
+    else:
+        current_start = end - pd.Timedelta(days=current_days)
+        reference_start = current_start - pd.Timedelta(days=reference_days)
 
     origins = build_mod.training_origins(
         panel.index, stride_hours=stride_hours, max_horizon=max(horizons)
@@ -113,6 +151,18 @@ def build_windows(
     train = design[target < reference_start]
     reference = design[(target >= reference_start) & (target < current_start)]
     current = design[target >= current_start]
+
+    # Not a failure, and the distinction matters: a champion trained up to the
+    # end of the panel has nothing after it to be judged on. That is the state
+    # every retrain passes through, so it gets its own exception and a caller
+    # that reports "nothing to monitor yet" instead of an error or, worse, a
+    # verdict computed on windows the model already learned.
+    if anchor is not None and current.empty:
+        raise NoPostTrainingData(
+            f"The champion learned through {anchor.isoformat()} and the panel ends at "
+            f"{end.isoformat()}, so no labelled data has arrived since it stopped "
+            "learning. There is no drift to measure yet."
+        )
 
     empty = [
         name
