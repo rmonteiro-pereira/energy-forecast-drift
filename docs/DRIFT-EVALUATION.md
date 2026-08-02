@@ -18,7 +18,8 @@ right, because the size of the shift and the size of the threshold were chosen b
 the same person.
 
 So this evaluation uses the one leg of the pipeline that runs on real data today:
-**hourly 2 m temperature for Philadelphia, from Open-Meteo's ERA5 reanalysis.**
+**hourly 2 m temperature for Philadelphia, from
+[Open-Meteo](https://open-meteo.com/)'s ERA5 reanalysis.**
 Real observations, no API key, reproducible by anyone:
 
 ```bash
@@ -187,3 +188,23 @@ the only network call; re-runs read the cache.
 
 The raw numbers in this page came from that script on 2026-07-31. Nothing in the
 table is hand-entered.
+
+## Data attribution
+
+Weather data by **[Open-Meteo.com](https://open-meteo.com/)**, licensed
+**[CC BY 4.0](https://creativecommons.org/licenses/by/4.0/)**, derived from
+**ECMWF ERA5** reanalysis via the
+[historical weather API](https://open-meteo.com/en/docs/historical-weather-api).
+
+**Modified.** Every figure on this page is adapted material, not the licensed
+material itself: `scripts/drift_eval_real_weather.py` takes hourly 2 m
+temperature for Philadelphia and transforms it into PSI and KS statistics over
+calendar windows. The raw series is not redistributed — it is cached under
+gitignored `reports/`.
+
+The licensed material is provided as-is and without warranties; see the
+[licence text](https://creativecommons.org/licenses/by/4.0/legalcode) §5.
+
+*This credit belongs here, not only in the README, because CC BY 4.0 §3(a)(1)
+attaches the condition to the point where the material — or an adaptation of it —
+is shared, and this page is where the derived figures are published.*

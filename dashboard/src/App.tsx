@@ -250,6 +250,19 @@ function Dashboard({
           {shortDateTime(drift.windows.panel_end_utc)} ·{" "}
           {compact.format(drift.windows.rows.current)} rows.
         </p>
+        {/*
+          Not boilerplate, and not optional. Open-Meteo publishes under CC BY 4.0
+          and asks for the credit next to where the data is shown — this page is
+          that place, and the charts above are adapted material, not the series
+          itself. The README carrying it is not enough: §3(a)(1) attaches the
+          condition to each point of sharing.
+        */}
+        <p>
+          Weather data by <a href="https://open-meteo.com/">Open-Meteo.com</a>, licensed{" "}
+          <a href="https://creativecommons.org/licenses/by/4.0/">CC BY 4.0</a> and modified —
+          aggregated to hourly features and scored, not shown raw. Demand data from the{" "}
+          <a href="https://www.eia.gov/opendata/">U.S. Energy Information Administration</a>.
+        </p>
       </footer>
     </>
   );
