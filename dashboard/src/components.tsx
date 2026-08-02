@@ -60,10 +60,10 @@ export function ProvenanceBanner({
           ⚠️
         </span>
         <div>
-          <h2>Synthetic data — these are not real forecasts, and not a benchmark</h2>
+          <h2>Synthetic data: these are not real forecasts, and not a benchmark</h2>
           <p>
             Every number on this page was computed from a <strong>seeded synthetic
-            fixture</strong> (<code>{dataKind}</code>), not from EIA demand data — this lake
+            fixture</strong> (<code>{dataKind}</code>), not from EIA demand data. This lake
             holds no real demand, so the pipeline fell back to the fixture and said so. The
             charts prove the pipeline runs end to end. They say nothing about PJM and must
             not be quoted.
@@ -75,8 +75,8 @@ export function ProvenanceBanner({
           ) : null}
           <p>
             The Open-Meteo weather leg <em>is</em> real. Set <code>EIA_API_KEY</code>, re-run
-            <code>python -m ingest</code> and the pipeline, and everything flips to real data —
-            this banner turns green on its own, because it reads the artifact rather than a
+            <code>python -m ingest</code> and the pipeline, and everything flips to real data.
+            This banner turns green on its own, because it reads the artifact rather than a
             hardcoded state.
           </p>
         </div>
@@ -201,7 +201,7 @@ const ACTION_COPY: Record<VerdictAction, { title: string; blurb: string }> = {
   watch: {
     title: "Watch",
     blurb:
-      "Drift is visible but no retrain rule is satisfied — a leading indicator without measured harm.",
+      "Drift is visible but no retrain rule is satisfied: a leading indicator without measured harm.",
   },
   none: { title: "Healthy", blurb: "All four drift signals are inside their thresholds." },
 };
@@ -237,7 +237,7 @@ export function VerdictCard({ drift }: { drift: DriftArtifact }) {
         </div>
         <p className="card-note" style={{ margin: 0, maxWidth: "52ch" }}>
           The champion was trained through the end of the available data, so no hour has arrived
-          yet that it did not learn from — and drift is the difference between those two. This is
+          yet that it did not learn from, and drift is the difference between those two. This is
           what every run looks like straight after a retrain. Forecast accuracy is unaffected and
           is still measured; the charts below are today&rsquo;s.
           {drift.reason ? (

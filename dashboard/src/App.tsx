@@ -134,7 +134,7 @@ function Dashboard({
 
       <footer className="footer">
         <p>
-          Pipeline <code>{pipeline.entrypoint}</code> — {pipeline.status} in{" "}
+          Pipeline <code>{pipeline.entrypoint}</code>: {pipeline.status} in{" "}
           {pipeline.seconds.toFixed(1)}s ({pipeline.steps.map((s) => s.step).join(" → ")}).
         </p>
         <p>
@@ -178,8 +178,8 @@ function WhatThisIs({ model }: { model: ModelArtifact }) {
         <p>
           Grid operators must commit generation a day before it is consumed. Every hour of that
           commitment rests on a forecast of how much electricity the region will draw, and being
-          wrong is expensive in both directions — too little and reserves get bought at the spot
-          price, too much and plants are paid to idle.
+          wrong is expensive in both directions. Too little, and reserves get bought at the spot
+          price. Too much, and plants are paid to idle.
         </p>
         <p>
           This forecasts the next <strong>24 hours</strong> of demand for{" "}
@@ -198,7 +198,7 @@ function WhatThisIs({ model }: { model: ModelArtifact }) {
           </li>
           <li>
             <strong>{sites || "—"} weather sites</strong> across the region, including{" "}
-            <em>archived forecasts</em> — what the weather service predicted, not what the
+            <em>archived forecasts</em>: what the weather service predicted, not what the
             weather turned out to be
           </li>
           <li>
@@ -252,7 +252,7 @@ function Results({ model }: { model: ModelArtifact }) {
           value={weatherHelped ? `${ablation.mae_delta_pct!.toFixed(0)}%` : "—"}
           sub={
             weatherHelped
-              ? "error when they are added — measured by removing them and refitting"
+              ? "error when they are added, measured by removing them and refitting"
               : "not measured on this run"
           }
         />
@@ -262,9 +262,9 @@ function Results({ model }: { model: ModelArtifact }) {
         <strong>{model.backtest.folds} walk-forward refits</strong> (
         {shortDateTime(model.backtest.first_cutoff_utc)} →{" "}
         {shortDateTime(model.backtest.last_cutoff_utc)}), never on data the model had seen. For
-        scale, published day-ahead errors for large ISOs sit around 2–3% MAPE — so this is in
-        the right band, on a summer window that is the easier half of the year. It has not been
-        tested through a winter peak, and eight weeks is a short evidence base; both are stated
+        scale, published day-ahead errors for large ISOs sit around 2–3% MAPE, so this is in the
+        right band, on a summer window that is the easier half of the year. It has not been
+        tested through a winter peak, and eight weeks is a short evidence base. Both are stated
         rather than smoothed over.
       </p>
     </>
@@ -297,8 +297,8 @@ function HowItWasMade({ model, served }: { model: ModelArtifact; served: string 
           The model uses <em>forecast</em> weather, which is what would actually be available
           when a day-ahead forecast is made. The trap is using the forecast that was published
           after the moment being simulated. Each archived forecast therefore carries the hour it
-          became public, and a feature is null until then — a mask that costs accuracy and buys
-          the right to believe the number.
+          became public, and a feature is null until then. The mask costs accuracy and buys the
+          right to believe the number.
         </>
       ),
     },
@@ -320,8 +320,8 @@ function HowItWasMade({ model, served }: { model: ModelArtifact; served: string 
       body: (
         <>
           {model.backtest.protocol}. The model is refit at each daily cutoff on data available
-          only up to that point, then scored on the next 24 hours. The baseline —{" "}
-          {model.models.baseline.description} — runs on the identical folds and horizons, so the
+          only up to that point, then scored on the next 24 hours. The baseline ({" "}
+          {model.models.baseline.description}) runs on the identical folds and horizons, so the
           comparison is like for like.
         </>
       ),
@@ -334,8 +334,8 @@ function HowItWasMade({ model, served }: { model: ModelArtifact; served: string 
           Runs, parameters and metrics go to MLflow. A model becomes{" "}
           <code>@champion</code>
           {served ? ` (currently v${served})` : ""} only if it beats the baseline on the same
-          backtest, and it is tagged with the last hour of its training data — the tag the drift
-          monitor reads below.
+          backtest, and it is tagged with the last hour of its training data. That tag is what the
+          drift monitor reads below.
         </>
       ),
     },
@@ -396,8 +396,8 @@ function DriftMonitoring({
     <>
       <h2 className="section-heading">Is the model still trustworthy?</h2>
       <p className="section-note">
-        A model is fitted on the world as it was. The world moves — a new heatwave pattern,
-        a change in industrial load, a meter revision — and accuracy decays without anything
+        A model is fitted on the world as it was. Then the world moves. A new heatwave pattern,
+        a change in industrial load, a meter revision, and accuracy decays without anything
         failing loudly. This half of the project watches four signals for that, and turns them
         into one decision: refit, or leave it alone. Drift is measured from the moment training
         ended, not from the calendar, so a model retrained this morning starts at zero by
@@ -414,7 +414,7 @@ function DriftMonitoring({
 
       <div className="stats">
         <Stat
-          label="MAE — current window"
+          label="MAE, current window"
           value={monitor.current.mae == null ? "—" : compact.format(monitor.current.mae)}
           unit="MWh"
           sub={`reference ${monitor.reference.mae == null ? "—" : compact.format(monitor.reference.mae)} MWh`}
@@ -425,7 +425,7 @@ function DriftMonitoring({
           sub={`retrain at +${(drift.thresholds.mae_degradation_alert * 100).toFixed(0)}%`}
         />
         <Stat
-          label="MAPE — current window"
+          label="MAPE, current window"
           value={monitor.current.mape_pct == null ? "—" : precise.format(monitor.current.mape_pct)}
           unit="%"
           sub={
@@ -449,7 +449,7 @@ function DriftMonitoring({
         }
         aside={
           <span className="tag">
-            log scale — feature PSI runs orders of magnitude above the rest
+            log scale: feature PSI runs orders of magnitude above the rest
           </span>
         }
       >
@@ -473,8 +473,9 @@ function DriftMonitoring({
         note={
           <>
             {drift.drift.feature?.summary ?? "No feature drift was measured on this run."} Greyed
-            dots are deterministic calendar columns — reported, but excluded from the verdict,
-            because their PSI measures which dates the windows cover rather than the data. Dots
+            dots are deterministic calendar columns. They are reported, but excluded from the
+            verdict, because their PSI measures which dates the windows cover rather than the
+            data. Dots
             rather than bars on purpose: PSI here spans three orders of magnitude, and a bar
             length measured from a log axis&rsquo; minimum would make a feature at 0.02 look two
             thirds as drifted as one at 6.7.
