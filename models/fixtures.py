@@ -1,18 +1,22 @@
-"""SYNTHETIC demand fixture — a stand-in while the EIA API key is pending.
+"""SYNTHETIC demand fixture — the fallback when the lake holds no real demand.
 
 WHY THIS EXISTS
 ---------------
 The EIA key had not been registered when M0/M1 were built (docs/BLOCKED.md), so
-there is no real demand history yet. Rather than ship a backtest nobody can
-run, the pipeline can be driven by a deterministic synthetic series. It makes
-the code executable and testable *today*.
+there was no real demand history at all. Rather than ship a backtest nobody
+could run, the pipeline could be driven by a deterministic synthetic series.
+
+The key landed on 2026-08-01, so this is no longer the normal path — it is what
+a clone with no key falls back to, which is still worth having: every entrypoint
+stays runnable and testable without credentials. It also still backs
+`metrics/baseline.json` and `metrics/model.json`, because no model has been
+trained on the real lake yet.
 
 WHAT IT IS NOT
 --------------
 It is **not** data and the MAE it produces is **not** a result. It is a
 plausible-looking curve from a seeded random generator, and every artifact
-derived from it is stamped `"is_real": false`. The real baseline number gets
-recomputed — and this fixture retired — the moment the key lands.
+derived from it is stamped `"is_real": false`.
 """
 
 from __future__ import annotations

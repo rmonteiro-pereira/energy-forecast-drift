@@ -1,8 +1,15 @@
 # Reproducing this repository
 
-> **⚠️ Reminder before any number below:** there is no EIA API key, so the demand
-> series is a **seeded synthetic fixture**. Everything here demonstrates that the
-> pipeline runs and that it runs *deterministically*. None of it is a benchmark.
+> **⚠️ Reminder before any number below:** every transcript on this page was
+> captured **before 2026-08-01**, when the demand series was still a seeded
+> synthetic fixture. They are dated records of what those commands printed on that
+> day, and they are kept verbatim — that is the whole point of the document.
+>
+> They are **no longer what the same commands print today.** The EIA key landed on
+> 2026-08-01 and the demand leg is now real, so `pipeline.daily` writes
+> `"is_real": true` and the drift verdict is RETRAIN rather than the WATCH shown
+> below. `models.train` also moved, for an unrelated reason recorded in §5.
+> Nothing here was a benchmark then and nothing here is one now.
 
 Every block on this page is **real captured output**, pasted from the run
 recorded at the top of each section. Nothing is retyped from memory or tidied up.
@@ -477,8 +484,9 @@ worth less than nothing:
 
 | | Why |
 |---|---|
-| **Any real demand number** | There is no EIA API key. Not a code problem: `ingest/eia.py` is complete and tested, and has simply never been given a key. |
-| **A real drift episode** | Drift is measured between two windows of real history. There is no real history. What the repo can show is the mechanism, and an injected shift proving the alarm responds to it. |
+| **Any real demand number, *offline*** | ~~There is no EIA API key.~~ **Closed 2026-08-01** — the key was registered and 17,520 hourly PJM rows are in the lake. What a stranger still cannot do is regenerate them without registering their own free key; the resulting artifacts are committed and readable either way. |
+| **A real *model* number** | Still open, and now the largest gap. Nothing has been trained on real demand, so `baseline.json` and `model.json` remain fixture and the LightGBM-vs-baseline delta is fixture against fixture. One dispatch of `train.yml` closes it. |
+| **A diagnosed drift episode** | ~~There is no real history.~~ There is now, and R1 fired on it — see the README's M4 section. What is still missing is the *diagnosis*: an alarm firing is not the same as knowing why, and the monitoring model was fitted on its own training window rather than promoted. |
 | **The exact MLflow run ids above** | Every `models.train` run registers a new version, so `run_id` and `version` are local to your machine. The *metrics* reproduce exactly; the run identifiers do not. |
 | **Byte-identical `metrics/pipeline.json`** | It records wall-clock durations and a UTC timestamp. The metric values inside are deterministic; the timings are not. |
 | **The weather rows exactly** | Open-Meteo is live, so `rows_added` / `rows_revised` depend on when you run it. This is the one input that is genuinely real, and therefore the one that genuinely moves. |
@@ -502,5 +510,7 @@ worth less than nothing:
 | Dashboard build | `npm run build` | exit 0, `dist/` produced |
 | Diagram | `mermaid-cli` render | exit 0 |
 
-And the standing caveat, one last time: **every metric above is fixture-derived.
-None of it is a benchmark.**
+And the standing caveat, one last time: **every metric above is fixture-derived,
+because every run above predates 2026-08-01.** None of it is a benchmark. The
+artifacts committed today are a different matter — four of the six are real, and
+the README's opening banner is the place that keeps that split straight.

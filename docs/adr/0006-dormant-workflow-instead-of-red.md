@@ -2,6 +2,13 @@
 
 **Status:** Accepted · **Date:** 2026-07 · Amends [0001](0001-synthetic-fixture-instead-of-waiting.md)
 
+> *2026-08-01:* the key exists, so the dormant path is no longer the one taken —
+> `daily.yml` has run against the live API and published. The decision stands
+> unchanged for the case it was written for: a fork or a clone with no secret
+> configured, where going dormant still beats a red badge that means nothing. The
+> `schedule:` block remains commented for a different reason, recorded in the
+> workflow header — not the missing key, but the missing champion.
+
 ## Context
 
 `daily.yml` runs one command: `pipeline.daily --require-eia-key --source real`.

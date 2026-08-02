@@ -1,6 +1,8 @@
-# BLOCKED — real demand data is pending an EIA API key
+# BLOCKED — no model has been trained on the real demand data
 
-**Status:** the key landed 2026-08-01. The block moved; it did not close.
+**Status:** the key landed 2026-08-01 and the demand block **closed**. What is
+left is one training run. The title of this file used to say "real demand data is
+pending an EIA API key"; that is no longer what it is about.
 **Opened:** 2026-07-28 (during M0/M1)
 **Still blocks:** the real baseline MAE and the real LightGBM-vs-baseline delta,
 because no real-data model has been trained or registered yet.
@@ -20,9 +22,13 @@ protected and requires the `test` check, and `github-actions[bot]` is not an
 admin — `GH006: Protected branch update failed`. The commit was built on the
 runner and died with it. That step now opens a PR instead.
 
-Two things therefore remain true even though the key works:
+That publication gap has since closed: the rewritten step opened a PR, it merged,
+and `forecast.json`, `monitor.json`, `drift.json` and `pipeline.json` on `main`
+now carry `"is_real": true` — along with both PNGs, which lost their watermark
+because `pipeline/plots.py` only stamps a fixture.
 
-- every `metrics/*.json` in this repository still carries `"is_real": false`;
+One thing from that run remains true:
+
 - the run logged `No registry champion` — `mlflow.db` is restored from cache and
   never seeded, so nothing has trained on real data yet. Step 4 below is what
   fixes that, and it has not been run. There is now a workflow that does it on a
@@ -35,45 +41,58 @@ Two things therefore remain true even though the key works:
 
 ## What is blocked
 
-The **Open-Meteo** leg is complete and running: `uv run python -m ingest` pulls
-real hourly temperature today, incrementally and idempotently.
+**Both ingestion legs run.** Open-Meteo needs no key and pulls observed
+temperature for nine metros plus the archived day-ahead forecast. The EIA leg has
+a key and has pulled 17,520 hourly PJM rows with no gaps. Neither is blocked.
 
-The **EIA** leg — hourly electricity demand for PJM, which is the target
-variable of the whole project — cannot run because no `EIA_API_KEY` has been
-registered yet. The client is finished, not stubbed: respondent discovery,
-paging, retry/backoff, revision handling and parsing are all implemented and
-covered by tests against a mock transport. It runs the moment the key exists.
+What is blocked is **one training run against that data.** Nothing has called
+`models.train --source real`, so there is no `@champion`, `served_model.source` is
+`"none"`, and the monitor scores with a booster it fitted on its own training
+window rather than a promoted model.
 
 ## Consequence right now
 
-Without demand history there is no real baseline to beat, so `python -m models`
-and `python -m models.train` both fall back to a **seeded synthetic fixture**
-(`models/fixtures.py`). That keeps the pipeline runnable and testable, and
-nothing more:
+`python -m models` and `python -m models.train` have not been re-run since the
+lake filled, so they still hold output from the **seeded synthetic fixture**
+(`models/fixtures.py`):
 
-- every artifact they produce carries `"is_real": false` and a warning string;
-- `metrics/baseline.json` and `metrics/model.json` currently hold **synthetic**
-  numbers, and the MLflow runs are tagged `is_real=false`;
-- **neither the MAE nor the LightGBM-vs-baseline delta in the README is a
-  result.** They are smoke tests. Do not quote them anywhere.
+- `metrics/baseline.json` and `metrics/model.json` carry `"is_real": false` and a
+  warning string, and the MLflow runs are tagged `is_real=false`;
+- **the LightGBM-vs-baseline delta in the README is not a result.** It is a smoke
+  test, on a fixture, and the README says so beside the number. Do not quote it.
 
-## Unblocking it — 4 steps, ~5 minutes
+Note the asymmetry, because it is the whole state of the project: everything that
+*measures what happened* is real, and everything that *compares one model to
+another* is not.
 
-1. **Register** at <https://www.eia.gov/opendata/register.php> — free, no card,
-   the key arrives by email in seconds.
-2. **Store it locally**:
+## Unblocking it
+
+**Steps 1–3 are done.** The key is registered and stored in repository secrets,
+and the lake holds two years of hourly PJM demand. They are kept below because a
+stranger cloning this repo starts where the project started, with no key.
+
+**The only step left is 4**, and the fastest way to run it is not locally at all:
+dispatch `.github/workflows/train.yml` from the Actions tab. It ingests, trains
+with `--source real`, promotes to `@champion` only on a genuine win, and publishes
+the registry as a release asset so it stops living in an evictable cache.
+
+1. ~~**Register**~~ *(done 2026-08-01)* at
+   <https://www.eia.gov/opendata/register.php> — free, no card, the key arrives by
+   email in seconds.
+2. ~~**Store it**~~ *(done — it is in repository secrets as `EIA_API_KEY`)*:
    ```bash
    cp .env.example .env
    # then edit .env:  EIA_API_KEY=<the key from the email>
    ```
    `.env` is gitignored. Never paste the key into a file that is tracked, into
    a commit message, or into a log.
-3. **Backfill**:
+3. ~~**Backfill**~~ *(done — 17,520 rows, 0 missing hours)*:
    ```bash
    uv run python -m ingest          # ~2 years of hourly PJM demand, first run
    uv run python -m ingest          # re-run: should report +0 new rows
    ```
-4. **Recompute the real baseline and the real model comparison**, then commit:
+4. **← THE REMAINING STEP. Recompute the real baseline and the real model
+   comparison**, then commit:
    ```bash
    uv run python -m models --source real          # metrics/baseline.json
    uv run python -m models.train --source real    # metrics/model.json + MLflow
@@ -95,8 +114,9 @@ nothing more:
    of whether forward-looking weather is worth its ingestion cost. It roughly
    doubles the LightGBM half of the run; `--skip-ablation` opts out.
 
-Then update the README tables from `metrics/baseline_table.md` and
-`metrics/model_table.md`, delete the pending-key banner and the two SYNTHETIC
+Then update the README's M1 and M2 tables from `metrics/baseline_table.md` and
+`metrics/model_table.md`, rewrite the "still synthetic" half of the README banner
+(the "drift numbers are real" half already stands), retire the two SYNTHETIC
 `<details>` blocks, and close this file.
 
 ## The cron — no longer gated, but not yet scheduled

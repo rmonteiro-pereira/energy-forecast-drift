@@ -63,9 +63,9 @@ export function ProvenanceBanner({
           <h2>Synthetic data — these are not real forecasts, and not a benchmark</h2>
           <p>
             Every number on this page was computed from a <strong>seeded synthetic
-            fixture</strong> (<code>{dataKind}</code>), not from EIA demand data. The EIA API
-            key has not been registered yet, so there is no real demand history in the lake.
-            The charts prove the pipeline runs end to end. They say nothing about PJM and must
+            fixture</strong> (<code>{dataKind}</code>), not from EIA demand data — this lake
+            holds no real demand, so the pipeline fell back to the fixture and said so. The
+            charts prove the pipeline runs end to end. They say nothing about PJM and must
             not be quoted.
           </p>
           {warning ? (
@@ -74,8 +74,10 @@ export function ProvenanceBanner({
             </p>
           ) : null}
           <p>
-            The Open-Meteo weather leg <em>is</em> real. Everything flips to real data — and
-            this banner turns green — the moment the key lands and the pipeline is re-run.
+            The Open-Meteo weather leg <em>is</em> real. Set <code>EIA_API_KEY</code>, re-run
+            <code>python -m ingest</code> and the pipeline, and everything flips to real data —
+            this banner turns green on its own, because it reads the artifact rather than a
+            hardcoded state.
           </p>
         </div>
       </section>

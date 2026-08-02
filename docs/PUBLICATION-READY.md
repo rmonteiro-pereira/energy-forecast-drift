@@ -9,9 +9,22 @@ state today — this is a dated pre-flight record, not a live status page.*
 > the README, which is the one `tests/test_doc_claims.py` keeps honest — no second
 > live copy of it belongs here); and there are 36 commits on `main`, not 25.
 > §2's "CI has never run" and §5's "no remote configured" are
-> marked resolved in place. **The document's conclusion — reproducible by a
-> stranger, with the demand data as the one honest exception — is unchanged**,
-> and the exception is still open (`docs/BLOCKED.md`).
+> marked resolved in place.
+>
+> **Superseded on 2026-08-01: the exception closed.** The EIA key was
+> registered, 17,520 hourly PJM rows were backfilled (2024-08-01 → 2026-08-01,
+> no missing hours), and `pipeline.daily` published against them.
+> `forecast.json`, `monitor.json`, `drift.json` and `pipeline.json` now carry
+> `"is_real": true`, and both PNGs are real and unwatermarked. So the sentence
+> this document was built around — *"every number is synthetic"* — is no longer
+> the headline, and §1 below has been rewritten rather than left standing.
+>
+> **What did not close:** `baseline.json` and `model.json` are still fixture, so
+> the LightGBM-vs-baseline delta remains fixture against fixture. Nothing has
+> trained on real demand, `served_model.source` is `"none"`, and
+> `.github/workflows/train.yml` exists to fix that in one dispatch. The honest
+> exception moved from *"there is no real data"* to *"there is no real model
+> comparison"*, which is a smaller gap but not an absent one.
 >
 > The alternative was to re-run the whole assessment and restate it. That would
 > have produced a document that is current and unfalsifiable; this one is dated
@@ -35,15 +48,17 @@ The fixture is seeded and date-anchored, so the metrics come out byte-identical 
 this was verified by re-running the whole chain and diffing (`docs/REPRODUCE.md`
 §4: only timestamps and registry versions moved; both PNGs were unchanged).
 
-What they **cannot** reproduce is any statement about electricity demand, because
-there isn't one. There is no EIA API key, so the demand series is synthetic and
-every artifact says so. That is a gap in the *data*, not in the reproduction.
+What they **cannot** reproduce offline is the half that is now real: the demand
+leg needs a free EIA key, so `forecast/monitor/drift/pipeline.json` and both PNGs
+can be *read* by a stranger but not *regenerated* by one. Everything fixture-based
+still reproduces byte-for-byte with no key at all. That is a gap in the
+*credentials*, not in the reproduction.
 
 | | |
 |---|---|
 | **Reproduces exactly** | every MAE, MAPE, RMSE, bias, PSI, KS statistic, the retrain verdict, both PNGs, the full test suite, the lint result, the dashboard build |
 | **Reproduces but differs in detail** | MLflow run ids and model versions (each run registers a new one), wall-clock timings, `generated_at_utc`, and the Open-Meteo row counts — that leg is live, so it genuinely moves |
-| **Cannot be reproduced at all** | any real demand number, and any real drift episode |
+| **Needs a free EIA key to regenerate** | the real artifacts and the real drift episode. They are committed and readable; reproducing them means registering a key and re-running `pipeline.daily` |
 
 ### What a stranger actually needs
 
@@ -87,8 +102,8 @@ from the check that keeps live prose honest.*
 | `npm ci && npm run build` | exit 0 — `dist/` = 9 files, 885 KB |
 | `pipeline.daily` | exit 0, six stages, verdict WATCH |
 | `--require-eia-key` without a key | **exit 2, no directory created** |
-| Every `metrics/*.json` | `is_real: false`, warning present, no `is_real: true` anywhere |
-| README banner | in the **first 12 lines**, containing both "SYNTHETIC" and "benchmark" |
+| Every `metrics/*.json` | `is_real: false`, warning present, no `is_real: true` anywhere *(true at the time; four of the six flipped to `true` on 2026-08-01)* |
+| README banner | in the **first 12 lines** *(still enforced by `tests/test_artifacts.py`, but the guard now demands the banner name whatever part is **not** real, rather than the literal word "SYNTHETIC")* |
 | Publication scan | `SAFE TO PUBLISH: yes` — worktree **and** all 149 blobs across all 25 commits |
 
 Every `ci.yml` step was additionally executed locally against Windows paths, and
@@ -101,18 +116,32 @@ injected-shift alarm exited 1, and the no-key guard exited 2 writing nothing.
 
 Ordered by how likely they are to cause a raised eyebrow.
 
-### 1. Every number is synthetic — and that is the headline
+### 1. Half the numbers are real and half are fixture — and telling them apart is on the reader
 
-Unavoidable and deliberate, but it is the first thing a reviewer meets and it
-will shape everything after it. The mitigation is that it is stated before any
-number rather than discovered after one: a heading-sized banner in the README's
-first 12 lines, `"is_real": false` in all six artifacts, watermarks on both PNGs,
-a red `role="alert"` banner on the dashboard, and `tests/test_artifacts.py`
-failing the build if any artifact ever claims otherwise.
+*Rewritten 2026-08-01. This section used to read "every number is synthetic",
+which was the headline for the project's whole life until the key landed. It is
+now false, and leaving it would have been the exact failure the section warns
+about.*
 
-**A reviewer may still conclude the project is unfinished.** It is — the data leg
-is. What is on offer is the engineering, and the README's "if you are reviewing
-this in five minutes" table points each claim at both the code that enforces it
+The mixed state is harder to communicate than the uniform one was. Four artifacts
+plus both PNGs are real PJM measurements; `baseline.json` and `model.json` are
+still a seeded fixture. A reviewer who quotes the wrong one is not being careless
+— they are being failed by the writing.
+
+The mitigation is that provenance travels with each number rather than living in
+a caveat elsewhere: `is_real` in every artifact, tagged onto every MLflow run,
+returned in every `/forecast` response, read by the dashboard banner at render
+time, watermarked onto any PNG produced from a fixture, and checked by
+`tests/test_artifacts.py`, which fails the build if an artifact ever pairs
+`is_real: true` with synthetic provenance. The README's top banner names the
+split explicitly and a test keeps it from silently reverting to a purely positive
+claim.
+
+**A reviewer may still conclude the project is unfinished.** It is — no model has
+trained on real demand, so there is no forecast-quality claim yet, only a drift
+loop that works and has already fired. What is on offer is the engineering, and
+the README's "if you are reviewing this in five minutes" table points each claim
+at both the code that enforces it
 and the test that proves it.
 
 ### 2. ~~CI has never actually run~~ — resolved on publication

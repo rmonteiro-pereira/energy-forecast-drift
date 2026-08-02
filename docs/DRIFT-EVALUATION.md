@@ -26,10 +26,16 @@ uv run python scripts/drift_eval_real_weather.py
 ```
 
 > [!CAUTION]
-> **This does not make any other number in this repository real.** Temperature is
-> one model input. The demand series is still synthetic, the model is still
-> trained on fixtures, and every `metrics/*.json` still carries `is_real: false`.
-> What is evaluated here is the **detector**, on real data — not the forecaster.
+> **This evaluates the detector, not the forecaster.** Temperature is one model
+> input, and running the detectors over real weather says nothing about forecast
+> quality.
+>
+> *Updated 2026-08-01.* When this was written, the demand series was synthetic
+> too, so the caution read "no other number here is real". The demand leg has
+> since gone live and `forecast/monitor/drift/pipeline.json` now carry
+> `is_real: true`. What has **not** changed is the sentence that matters for this
+> document: no model has been trained on real demand, so `baseline.json` and
+> `model.json` are still fixture and the forecaster is still unevaluated.
 
 ## Method
 

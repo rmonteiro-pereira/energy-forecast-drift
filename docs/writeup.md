@@ -1,12 +1,22 @@
 # energy-forecast-drift — what this is, what is real, and what is not
 
-*Last updated: 2026-07-30. Milestones M0–M7 complete; the EIA API key is still
-pending, so every metric in the repo is fixture-derived.*
+*Last updated: 2026-08-01. Milestones M0–M7 complete. **The EIA key landed on
+2026-08-01**, so the demand leg is no longer a fixture and this document is no
+longer uniformly caveated.*
 
-> **⚠️ Before you quote anything from this document:** every MAE, MAPE, RMSE,
-> PSI, KS statistic and drift verdict below was computed on a **seeded synthetic
-> fixture**, not on EIA data. None of it is a benchmark and none of it says
-> anything about PJM. The engineering is real; the numbers are placeholders.
+> **⚠️ Before you quote anything from this document:** the numbers below are
+> **mixed**, and which is which matters.
+>
+> - **Real** — anything drawn from `metrics/forecast.json`, `monitor.json`,
+>   `drift.json` or `pipeline.json`. Those come from 17,520 hourly PJM rows
+>   covering 2024-08-01 → 2026-08-01 and carry `"is_real": true`.
+> - **Fixture** — anything drawn from `metrics/baseline.json` or `model.json`,
+>   including **every LightGBM-vs-baseline comparison in this document**. No
+>   model has been trained on real demand yet, so that delta is fixture against
+>   fixture and is not a benchmark.
+>
+> Sections written before 2026-08-01 are dated records and are marked where the
+> world moved under them rather than quietly rewritten.
 
 ---
 
@@ -20,12 +30,19 @@ weather, re-scores a frozen model against the actuals that arrived, computes fou
 kinds of drift, decides whether to retrain, and commits the numbers back to the
 repo. Drift accumulates in public, week after week, and can be pointed at.
 
-**None of the numbers in this repo are results yet.** The EIA API key has not been
-registered, so the demand series is a seeded synthetic fixture. Every artifact
-carries `"is_real": false`, the dashboard leads with a red banner, and the PNGs
-are watermarked. This document is explicit about which parts are real code
-running on real data, which parts are real code running on a fixture, and what
-will change on the day the key lands.
+**That loop now runs on real load.** The key was registered on 2026-08-01, two
+years of hourly PJM demand were backfilled, and the first real run published —
+and immediately produced something worth having: the drift monitor fired
+`R1_performance_alert`, with rolling MAE going 4,852 → 5,894 MWh and the bias
+flipping from −1,903 to +2,927. The model went from over-forecasting to
+under-forecasting. That is a real drift episode, which is the thing the whole
+repository was built to catch.
+
+**What is still not a result** is the forecast quality. No model has been trained
+on real demand, so there is no `@champion`, and the LightGBM-vs-baseline delta is
+still fixture against fixture. This document is explicit throughout about which
+parts are real code on real data, which are real code on a fixture, and what one
+dispatch of `train.yml` would change.
 
 ---
 
@@ -34,7 +51,7 @@ will change on the day the key lands.
 | Component | Status | Notes |
 |---|---|---|
 | **Open-Meteo ingestion** | ✅ **real data, running today** | No key needed. 744 hourly rows of Philadelphia temperature in the lake at the time of writing; the archive/forecast stitch and the revision re-pull both work against the live API. |
-| **EIA client** | ✅ **finished, not stubbed** | Pagination, the 5000-row cap, respondent discovery against the facet endpoint, retries, secret redaction — all implemented and tested against `httpx.MockTransport`. It has never made a real request, because there is no key. |
+| **EIA client** | ✅ **finished, and now proven against the live API** | Pagination, the 5000-row cap, respondent discovery against the facet endpoint, retries, secret redaction. On 2026-08-01 it pulled **17,520 hourly PJM rows** over a two-year window in four paged calls, with no missing hours. |
 | **Incremental + idempotent store** | ✅ real | Partitioned parquet, de-duplicated on `(entity, timestamp)` keeping the newest row, atomic temp-then-move writes. Re-running ingestion reports `+0 new rows`. |
 | **Feature builder** | ✅ real code | Origin-stamped design matrix; the no-leakage property is asserted by tests that poison the future and check no feature column moves. |
 | **Walk-forward backtest** | ✅ real code | 56 daily folds × 24 horizons, identical for every model. |
@@ -42,12 +59,18 @@ will change on the day the key lands.
 | **Drift suite** | ✅ real code | Own PSI and KS (checked against `scipy.stats.ks_2samp` to 1e-12 on the statistic), four drift types, structured retrain verdict, Evidently as a second opinion. |
 | **Daily pipeline + serving** | ✅ real code | `python -m pipeline.daily` runs end to end locally; `/forecast` serves the registry champion over HTTP. |
 | **Dashboard** | ✅ real code | Vite + React + ECharts reading `metrics/*.json`. The provenance banner is driven by the `is_real` field and has its own tests (`dashboard/src/components.test.tsx`) asserting that the same props with the flag flipped produce substantively different output. |
-| **Demand series** | ❌ **synthetic fixture** | `models/fixtures.py`, seed 20260728, 200 days ending 2026-07-28. |
-| **Every metric** | ❌ **fixture-derived** | `metrics/baseline.json`, `model.json`, `drift.json`, `monitor.json`, `forecast.json` — all `"is_real": false`. |
+| **Demand series** | ✅ **real** | 17,520 hourly PJM rows, 2024-08-01 → 2026-08-01, 0 missing hours. The fixture (`models/fixtures.py`, seed 20260728) is still the fallback when the lake is empty — a fresh clone with no key. |
+| **`forecast/monitor/drift/pipeline.json` + both PNGs** | ✅ **real** | `"is_real": true`, `"kind": "eia_api_v2"`. The PNGs carry no watermark because `pipeline/plots.py` only stamps a fixture. |
+| **`baseline.json` and `model.json`** | ❌ **still fixture-derived** | `"is_real": false`. **The LightGBM-vs-baseline delta is fixture against fixture** and is the largest gap left in the repository. |
+| **A promoted champion** | ❌ **does not exist** | `served_model.source` is `"none"`. Nothing has trained on real demand; `.github/workflows/train.yml` does it in one manual dispatch. |
 
-The dividing line is simple: **the code is real, the demand data is not.** Nothing
-is mocked, stubbed or faked in the pipeline; the only substitution is the input
-series, and it is substituted loudly.
+The dividing line moved on 2026-08-01 and is worth stating precisely, because it
+is no longer the simple one this section was written around. It used to be *the
+code is real, the data is not*. It is now: **the observation half is real, the
+model half is not.** Everything that measures what happened — ingestion, the
+panel, the rolling monitor, the four drift detectors, the retrain verdict — runs
+on PJM load. Everything that compares one model against another still runs on the
+fixture, because no training run has been made against the real lake yet.
 
 ---
 
@@ -255,23 +278,34 @@ because tuning a trend test against a fixture would be tuning it against nothing
 
 ## 8. Limits, honestly
 
-- **No real data.** Everything above about PJM is a prediction, not a finding.
+- **No model has been trained on real demand.** This replaces the old "no real
+  data" limit, which closed on 2026-08-01. The observation half is real; every
+  model-versus-model number here is still fixture, and stays that way until
+  `train.yml` is dispatched.
 - **The reference window is fixed, not adaptive.** 28 days, chosen because it
   covers four full weekly cycles. A production monitor would roll it forward as
   the model is retrained, and would keep several reference windows for different
   seasons. This one does not.
-- **Only past weather is used.** Open-Meteo publishes a forecast and the lake
-  already tags it `is_observed=False`. A production forecaster would legitimately
-  feed tomorrow's forecast temperature in; this one does not, because that would
-  make the "features use only data ≤ origin" claim depend on a second, unmodelled
-  forecast, and the point of this repo is that the rigour claims are testable.
-  Wiring it in is a later, explicit step.
+- **Forecast weather is in, and its value is unmeasured.** This limit used to read
+  "only past weather is used", and that closed on 2026-08-01: the model now takes
+  the archived day-before forecast for the target hour, from nine metros across
+  the footprint, masked out on any row where the run had not been published by the
+  origin. Using the *observed* temperature at the target would have been a perfect
+  forecast; the archived run carries genuine error, ~1.5 °C against what actually
+  happened. What is **not** known is whether it helps: `models.train` re-scores
+  without those columns and publishes the delta, and on the fixture that delta is
+  negative — correctly, because synthetic temperature is nearly implied by the
+  calendar. Only a run on real demand answers it.
 - **The KS p-value is asymptotic**, not the exact combinatorial form. Accurate to
   ~1e-3 at these window sizes and checked against scipy; it would be the wrong
   choice for windows of tens of rows.
-- **The retrain trigger has never been evaluated against a real episode.** Its
-  rules are defensible and tested against injected shifts of known size. That is
-  not the same as knowing the thresholds are right.
+- **The retrain trigger has now fired on real load, and the thresholds are still
+  unvalidated.** R1 fired on 2026-08-01 against real PJM history, which is more
+  than an injected shift — but a rule firing is not evidence the rule is right.
+  Nobody has yet confirmed that episode is drift rather than an artefact of a
+  monitoring model that was fitted on its own training window. `docs/DRIFT-
+  EVALUATION.md` already found one false positive in these thresholds against
+  ordinary autumn cooling, so the prior is not "they are fine".
 - **No alerting.** The verdict is written to a JSON file and drawn on a dashboard.
   Nothing pages anyone.
 - **The dashboard is not deployed.** It builds to a static `dist/`; where it goes
@@ -279,17 +313,26 @@ because tuning a trend test against a fixture would be tuning it against nothing
 
 ---
 
-## 9. When the key lands
+## 9. What is left
 
-1. `EIA_API_KEY` into `.env` locally and into repository secrets.
-2. `uv run python -m ingest --full-refresh` — two years of hourly PJM demand.
-3. `uv run python -m models.train --source real` — real baseline, real LightGBM
-   comparison, a champion trained on real data.
-4. `uv run python -m pipeline.daily --source real` — every artifact regenerates
-   with `"is_real": true`, the banner turns green, the watermark disappears.
-5. Uncomment the `schedule:` block in `daily.yml` and let it run.
+Steps 1, 2 and 4 of this section are **done** — the key is in repository secrets,
+two years of hourly PJM demand are in the lake, and `pipeline.daily` has published
+against them with `"is_real": true` and no watermark. What remains:
 
-Then the numbers in this document become results, and this section gets deleted.
+1. **Dispatch `.github/workflows/train.yml`.** This is the one that matters. It
+   trains on real demand, promotes to `@champion` only on a genuine win over the
+   seasonal naive, publishes the registry as a release asset, and measures what
+   the forecast-weather features are worth. Until it runs, `baseline.json` and
+   `model.json` stay fixture and this repository has no forecast-quality claim.
+2. **Uncomment the `schedule:` block in `daily.yml`** and let drift accumulate.
+   Deliberately after step 1: a cron freezing a model that was never promoted
+   would be publishing churn rather than a monitored champion.
+3. **Write up the first real drift episode end to end.** R1 already fired once on
+   real load (§8), so the candidate exists — what it needs is the diagnosis, not
+   the detection.
+
+Then the model numbers in this document become results too, and this section
+gets deleted.
 
 ---
 

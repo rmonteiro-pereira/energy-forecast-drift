@@ -3,6 +3,6 @@ contact_links:
   - name: Security vulnerability
     url: https://github.com/rmonteiro-pereira/energy-forecast-drift/security/advisories/new
     about: Report privately, not as a public issue. See SECURITY.md for scope.
-  - name: "Question: why is every number synthetic?"
+  - name: "Question: why are baseline.json and model.json still synthetic?"
     url: https://github.com/rmonteiro-pereira/energy-forecast-drift/blob/main/docs/BLOCKED.md
-    about: There is no EIA API key yet. This is documented, not a defect.
+    about: The demand data is real; no model has been trained on it yet. Documented, not a defect.

@@ -1,6 +1,16 @@
 # 0001 — Ship a labelled synthetic fixture rather than wait for the API key
 
-**Status:** Accepted · **Date:** 2026-07 · Supersedes nothing
+**Status:** Accepted, and **largely discharged on 2026-08-01** · **Date:** 2026-07
+· Supersedes nothing
+
+> The key was registered on 2026-08-01 and the demand leg is now real, so the
+> fixture is no longer the normal path — it is the fallback for a clone with no
+> key, which is still a path worth having and is why this decision is not
+> reversed. The one place the fixture remains load-bearing is
+> `metrics/baseline.json` and `metrics/model.json`: no model has been trained on
+> real demand yet. The labelling machinery this ADR argued for is what makes that
+> split legible today, so it earned its keep in a way the ADR did not anticipate —
+> it was written for a uniformly synthetic repo and is now doing harder work.
 
 ## Context
 

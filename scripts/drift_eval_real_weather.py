@@ -31,9 +31,11 @@ positives and no misses, which is weak evidence when every shift in them is
 enormous. That ordering is disclosed rather than smoothed over; see
 `docs/DRIFT-EVALUATION.md`.
 
-**This says nothing about the demand model.** Temperature is one input; the
-demand series is still synthetic and every `metrics/*.json` still carries
-`is_real: false`. What is evaluated here is the *detector*, on real data.
+**This says nothing about the demand model.** Temperature is one input, and what
+is evaluated here is the *detector*, on real data. The demand leg went live on
+2026-08-01, but no model has been trained on it, so `metrics/baseline.json` and
+`metrics/model.json` remain fixture-derived and the forecaster is still
+unevaluated.
 
     uv run python scripts/drift_eval_real_weather.py
 
