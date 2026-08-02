@@ -1,6 +1,5 @@
 # ============================================================================
-# DORMANT, NOT BROKEN — this is the M5 "live" cron. The repo is published, so
-# step 1 below is done; what is still missing is the key.
+# LIVE. The cron fires daily as of 2026-08-02.
 #
 # Behaviour without EIA_API_KEY: the preflight step below detects the missing
 # secret, emits a warning annotation, and the job ends GREEN having written and
@@ -8,28 +7,37 @@
 # is public: a red X on the only scheduled workflow reads as "this project is
 # broken", when the truth is "this project is waiting for a free API key" — and
 # the thing that actually must never happen (publishing fixture numbers as if
-# they were data) is prevented either way.
+# they were data) is prevented either way. That safety net is unchanged by
+# activation, and `--require-eia-key` still backs it.
 #
-# TO ACTIVATE (in order):
-#   [x] push the repo to GitHub (public => Actions minutes are free)
-#   [x] Settings > Secrets and variables > Actions > New repository secret:
-#         EIA_API_KEY = <your key from eia.gov/opendata/register.php>
-#         Done 2026-08-01T21:06Z.
-#   [~] Settings > Actions > General > Workflow permissions: NOT needed after all.
-#         The repo sits on "read" and run 30718525099 still reached the branch
+# ACTIVATION LOG — every precondition, and how it was checked:
+#   [x] repo public on GitHub (Actions minutes are free)
+#   [x] EIA_API_KEY registered, 2026-08-01T21:06Z
+#   [~] Settings > Actions > General > Workflow permissions: NOT needed. The
+#         repo sits on "read" and run 30718525099 still reached the branch
 #         protection hook, which only happens with a write token — the
 #         `permissions:` block below escalates on its own. A read-only token
-#         would have given 403, not GH006. Left here because this line used to
-#         claim the opposite.
-#   [ ] Settings > Actions > General: "Allow GitHub Actions to create and
-#         approve pull requests" — needed by the last step, which opens a PR
-#         rather than pushing at protected `main`. Without it the branch is
-#         still pushed and the step degrades to a warning with a link.
-#   [ ] uncomment the `schedule:` block below
-#   [x] run it once manually via the Actions tab to confirm it is green
-#         Run 30718525099, 2026-08-01: the pipeline itself went green against
-#         real EIA data; only the publish step failed, which is what the PR
-#         flow below fixes.
+#         would have given 403, not GH006. Kept because this line used to claim
+#         the opposite.
+#   [x] Settings > Actions > General: "Allow GitHub Actions to create and
+#         approve pull requests" — ON. Verified via the API:
+#         `can_approve_pull_request_reviews: true`. The last step opens a PR
+#         rather than pushing at protected `main`, and without this it degrades
+#         to a warning with a link instead of opening one.
+#   [x] Settings > General > "Allow auto-merge" — ON (`allow_auto_merge: true`).
+#         Without it the PR opens and waits for a human every morning.
+#   [x] ran manually and green: run 30718525099, 2026-08-01, against real EIA
+#         data; only the publish step failed, which the PR flow below fixes.
+#   [x] A CHAMPION EXISTS. This was the last gate and it is the one worth
+#         spelling out. Before run 30725157840 (train.yml, 2026-08-02) the
+#         registry was empty on every runner: `daily.yml` restores `mlflow.db`
+#         and `mlruns/` from a cache and never seeds them. A cron started then
+#         would have published a daily verdict about a model nobody had
+#         promoted — churn wearing the costume of monitoring. That run trained
+#         on two years of real PJM demand, beat the seasonal-naive baseline and
+#         promoted `energy-demand-forecaster` v1 to `@champion`. It also wrote
+#         the `lake-` cache this workflow restores from, so the first scheduled
+#         run finds the champion with no extra wiring.
 #
 # Note on scheduling: the EIA publishes ~2x/day, so a single daily run is the
 # right cadence to start. 06:20 UTC is deliberately off the hour — GitHub
@@ -44,8 +52,8 @@
 name: daily (ingest -> score -> drift -> commit metrics)
 
 on:
-  # schedule:
-  #   - cron: "20 6 * * *"
+  schedule:
+    - cron: "20 6 * * *"
   workflow_dispatch:
     inputs:
       full_refresh:

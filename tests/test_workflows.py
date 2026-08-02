@@ -4,8 +4,14 @@ A broken workflow is normally discovered by pushing a commit and watching a red
 tick, which is a slow feedback loop for a repo that has no remote yet. Parsing
 both files here catches a syntax error immediately, and the rest of the
 assertions pin down the properties that make the daily cron safe to leave
-scheduled: it stays inert until someone activates it, it refuses to run without
-a key, and it stages explicit paths only.
+scheduled: it fires once a day and off the hour, it stays runnable by hand, it
+refuses to run without a key, and it stages explicit paths only.
+
+Those first two replaced an earlier pair that held the cron *inert*. That was
+the right guard until run 30725157840 promoted a champion — a cron before then
+would have published a daily verdict about a model nobody had promoted. The
+guards were rewritten for the activated state rather than deleted, because a
+trigger nothing asserts on is how a `* * * * *` lands quietly.
 """
 
 from __future__ import annotations
@@ -97,21 +103,75 @@ def test_no_workflow_action_is_left_unpinned():
                     assert "@" in uses, f"{path.name}: `{uses}` is not pinned to a version"
 
 
-def test_the_daily_cron_is_still_inert():
-    """It must not start firing the moment the repo is pushed.
+def test_the_daily_cron_is_live_and_still_hand_runnable():
+    """Activated 2026-08-02, once a champion existed to monitor.
+
+    This replaces `test_the_daily_cron_is_still_inert`, which held the schedule
+    commented out. That guard was right until run 30725157840 promoted a
+    champion: before it, a cron published a daily verdict about a model nobody
+    had promoted. Deleting it outright would have left the trigger unguarded,
+    so what it protected is re-stated for the activated state.
 
     `on:` parses to the boolean `True` in YAML 1.1 — that is not a bug here,
     just PyYAML being faithful to the spec.
     """
     triggers = load(DAILY)[True]
-    assert "schedule" not in triggers, "the schedule must stay commented until activated"
-    assert "workflow_dispatch" in triggers, "there must be a way to run it by hand"
+    assert "schedule" in triggers, "the daily cron is meant to be live"
+    assert "workflow_dispatch" in triggers, (
+        "the manual trigger must survive activation — a scheduled job with no "
+        "hand-run path can only be debugged by waiting for tomorrow"
+    )
 
 
-def test_the_schedule_is_drafted_in_a_comment_ready_to_uncomment():
+def test_the_daily_cron_fires_once_a_day_and_off_the_hour():
+    """The cadence is a cost and a courtesy, and both are easy to lose in an edit.
+
+    Once a day: the EIA publishes about twice daily, so anything faster spends
+    API quota and Actions minutes to recompute windows that have not moved. An
+    accidental `* * * * *` would be green, quiet and expensive — nothing else
+    here would notice.
+
+    Off the hour: GitHub throttles the top-of-hour stampede and delays those
+    runs, so `20 6` is deliberate rather than decorative.
+    """
+    schedules = load(DAILY)[True]["schedule"]
+    assert len(schedules) == 1, f"expected exactly one cron entry, found {len(schedules)}"
+
+    minute, hour, dom, month, dow = schedules[0]["cron"].split()
+
+    assert minute.isdigit() and int(minute) != 0, (
+        f"minute is `{minute}`; it must be a fixed, non-zero minute so the run "
+        "does not land in the top-of-hour queue GitHub throttles"
+    )
+    assert hour.isdigit(), f"hour is `{hour}`; a wildcard hour runs this 24 times a day"
+    assert (dom, month, dow) == ("*", "*", "*"), (
+        f"expected a plain daily schedule, got day-of-month={dom} month={month} day-of-week={dow}"
+    )
+
+
+def test_the_activation_prose_does_not_still_ask_for_activation():
+    """Replaces `test_the_schedule_is_drafted_in_a_comment_ready_to_uncomment`.
+
+    That test asserted the header carried a `# schedule:` draft and a
+    `# TO ACTIVATE` checklist. Both were correct while the cron was dormant and
+    both became lies the moment it fired — and a header telling a reader to
+    uncomment a block that is already live is exactly the stale-prose failure
+    `test_doc_claims.py` exists to catch elsewhere. So the guard is inverted
+    rather than dropped: the instructions must be gone now that the state they
+    described is gone.
+    """
     text = DAILY.read_text(encoding="utf-8")
-    assert "# schedule:" in text
-    assert "# TO ACTIVATE" in text
+
+    assert "# TO ACTIVATE" not in text, (
+        "the header still carries the pre-activation checklist; the cron is live"
+    )
+    assert "# schedule:" not in text, (
+        "the header still carries a commented-out `schedule:` draft next to a "
+        "live one — a reader cannot tell which is in force"
+    )
+    assert "uncomment the `schedule:` block" not in text, (
+        "the header still tells a reader to uncomment a block that is already live"
+    )
 
 
 def test_the_daily_workflow_calls_exactly_the_pipeline_entrypoint():
