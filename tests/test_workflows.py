@@ -596,19 +596,72 @@ def test_training_hands_the_champion_to_the_daily_job():
     )
 
 
-def test_training_never_writes_to_the_repository():
-    """It publishes an artifact; it must not touch `main` or open PRs.
+def staged_paths(workflow: dict, job: str) -> set[str]:
+    """The explicit paths a job stages, read off its `git add` lines.
 
-    Two producers writing `metrics/` is the concurrency hazard that makes a
-    split-role setup go wrong. This job's output is a release asset and a cache
-    entry, nothing else.
+    Both publishers are required elsewhere to stage explicit paths rather than a
+    directory, which is what makes them readable this way at all.
     """
-    commands = run_commands(load(TRAIN), "train", strip_comments=True)
-    for forbidden in ("git push", "git commit", "gh pr create", "gh pr merge"):
-        assert forbidden not in commands, (
-            f"the training workflow runs `{forbidden}`; it must not be a second "
-            "writer of the repository"
+    paths: set[str] = set()
+    for line in run_commands(workflow, job, strip_comments=True).splitlines():
+        stripped = line.strip().removesuffix("\\").strip()
+        if stripped.startswith("git add "):
+            stripped = stripped.removeprefix("git add ").strip()
+        elif not stripped.startswith("metrics/"):
+            continue
+        paths.update(part for part in stripped.split() if part.startswith("metrics/"))
+    return paths
+
+
+def test_the_two_publishers_never_write_the_same_metric():
+    """Replaces `test_training_never_writes_to_the_repository`.
+
+    That test said the training job must not write the repository at all, to
+    keep `metrics/` to a single producer. The rule was too broad and it cost the
+    thing the repository exists to get right. Run 30725157840 measured the
+    forecast-weather ablation at -34.66% MAE on real demand, and `main` went on
+    publishing the fixture's `helped: false, +0.59%` — because the training job
+    was forbidden to publish and nothing else writes `metrics/model.json`. A
+    measurement that reaches only a release tarball is one a reader never sees.
+
+    What the old rule was actually protecting is two producers racing on the
+    same file, and that is what is asserted now: the paths are disjoint. Train
+    owns the model artifacts, daily owns the pipeline artifacts, and git merges
+    two PRs touching different files without a conflict.
+    """
+    train = staged_paths(load(TRAIN), "train")
+    daily = staged_paths(load(DAILY), "pipeline")
+
+    assert train, "the training job stages no metrics — the measurement reaches nobody"
+    assert daily, "the daily job stages no metrics"
+
+    overlap = train & daily
+    assert not overlap, (
+        f"both publishers stage {sorted(overlap)}. Two jobs writing one file is "
+        "the race the single-producer rule existed to prevent; keep the paths "
+        "disjoint instead of silencing one of them."
+    )
+
+    assert "metrics/model.json" in train, (
+        "the training job must publish the measurement it just made, or the "
+        "repository keeps quoting whatever model.json already held"
+    )
+
+
+def test_neither_publisher_pushes_straight_at_protected_main():
+    """A bot pushing at `main` is rejected with GH006 after a fully green run.
+
+    Measured, not assumed: run 30718525099 ingested two years of real demand,
+    scored, ran the drift check and then died on exactly that. Both jobs go
+    through a PR for this reason, so neither may regain a direct push.
+    """
+    for path, job in ((TRAIN, "train"), (DAILY, "pipeline")):
+        commands = run_commands(load(path), job, strip_comments=True)
+        assert "git push origin main" not in commands, (
+            f"{path.name} pushes directly at `main`; branch protection rejects "
+            "that, and the run goes green having published nothing"
         )
+        assert "HEAD:refs/heads/" in commands, f"{path.name} does not push to a run-scoped branch"
 
 
 def test_concurrency_stops_two_runs_writing_metrics_at_once():

@@ -44,6 +44,7 @@ on:
 
 permissions:
   contents: write # to publish the registry as a release asset
+  pull-requests: write # to open the PR that carries the measurement to main
 
 concurrency:
   # Never let two trainings race for the `@champion` alias.
@@ -165,6 +166,75 @@ jobs:
             registry.tar.gz registry-manifest.json \
             --title "MLflow registry — run ${GITHUB_RUN_ID}" \
             --notes "Trained from ${GITHUB_SHA} on \`${{ inputs.source }}\` data. Contains \`mlflow.db\` and \`mlruns/\`."
+
+      # ------------------------------------------------------------------
+      # The measurement has to reach the repository, or it did not happen.
+      #
+      # Run 30725157840 trained on real demand and measured the forecast-weather
+      # ablation at -34.66% MAE. None of that reached `main`: this workflow
+      # tarred the registry into a release and stopped, `daily.yml` republishes
+      # only forecast/monitor/drift/pipeline, and nothing else writes
+      # `metrics/model.json`. So the repository went on publishing the fixture
+      # result — `helped: false`, `+0.59%` — while the opposite had been
+      # measured, and every reader saw the fixture number as the model's number.
+      #
+      # A release asset does not fix that. It is a tarball a human must find,
+      # download and open; `metrics/model.json` is what the README quotes, what
+      # the dashboard serves, and what `test_doc_claims.py` checks prose against.
+      #
+      # Same PR shape as daily.yml, and for the same measured reason: `main`
+      # requires the `test` check, and a bot pushing straight at a protected
+      # branch is rejected with GH006 after a fully successful run. No
+      # skip-CI marker in the message either — a commit that skips CI can never
+      # satisfy a required check, so the PR would wait forever on a report that
+      # never comes.
+      # ------------------------------------------------------------------
+      - name: Open a PR with the measurement
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          # Explicit paths only. `mlflow.db`, `mlruns/` and the lake are
+          # gitignored, and a wildcard `git add metrics/` would be one
+          # .gitignore mistake away from committing them.
+          git add metrics/model.json metrics/model_table.md
+
+          if git diff --staged --quiet; then
+            echo "the measurement is unchanged — nothing to publish"
+            exit 0
+          fi
+
+          git commit -m "chore(metrics): measurement from training run ${GITHUB_RUN_ID}"
+
+          # Fresh branch per run, never reused and so never force-pushed — the
+          # reasoning is spelled out in daily.yml.
+          branch="metrics/train-${GITHUB_RUN_ID}"
+          git push origin "HEAD:refs/heads/${branch}"
+
+          # As in daily.yml, exactly one failure degrades to a warning: a
+          # `gh pr create` refused by the "Allow GitHub Actions to create and
+          # approve pull requests" setting. The branch is already pushed and all
+          # that is missing is one click. Everything else still fails the step,
+          # because a blanket `|| true` is how a publish step goes green having
+          # published nothing.
+          err="${RUNNER_TEMP}/pr-create.err"
+          if url=$(gh pr create --base main --head "$branch" \
+               --title "chore(metrics): measurement from training run ${GITHUB_RUN_ID}" \
+               --body "Champion trained by run ${GITHUB_RUN_ID}. Merging publishes the measured \`metrics/model.json\` — including the forecast-weather ablation — in place of whatever it currently carries." 2> "$err"); then
+            gh pr merge "${url##*/}" --auto --squash \
+              || echo "::warning title=Auto-merge not armed::The PR is open but will not merge itself; publish it by hand."
+          else
+            cat "$err" >&2
+            if grep -q "not allowed to create or approve pull requests" "$err"; then
+              echo "::warning title=Cannot open the PR::Branch ${branch} is pushed. Enable Settings > Actions > General > 'Allow GitHub Actions to create and approve pull requests', or open it by hand."
+            else
+              exit 1
+            fi
+          fi
 
       # Same key prefix daily.yml restores from, so the next daily run picks the
       # champion up without any wiring. Success-gated for the reason daily.yml
