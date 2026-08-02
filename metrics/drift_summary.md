@@ -1,16 +1,16 @@
 # M4 — drift report
 
-- generated: `2026-08-02T02:29:31+00:00`
+- generated: `2026-08-02T02:42:15+00:00`
 - source: `eia_api_v2`
 - reference: `2026-07-05T01:00:00+00:00` → `2026-07-19T01:00:00+00:00` (1,344 rows)
 - current: `2026-07-19T01:00:00+00:00` → `2026-08-02T01:00:00+00:00` (1,296 rows)
 
 
-## Verdict: 🔴 **RETRAIN** (`R3_multiple_distribution_alerts`)
+## Verdict: 🟡 **WATCH** (`R3b_distribution_without_measured_harm`)
 
-3 distribution signals are alerting (feature, target, prediction) — a regime the model was never fitted on. Acting before the errors confirm it is the point of monitoring.
+3 distribution signals are alerting (feature, target, prediction), but the frozen model's error was measured over the same windows and did not degrade. Inputs moved and the model tracked them: that is drift worth watching, not proof the champion needs refitting.
 
-Worst signal severity: `alert`. Retrain now? **yes**.
+Worst signal severity: `alert`. Retrain now? **no**.
 
 
 | Drift type | Severity | Summary |

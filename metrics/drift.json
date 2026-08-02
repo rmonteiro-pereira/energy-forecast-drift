@@ -1,14 +1,14 @@
 {
   "milestone": "M4",
-  "generated_at_utc": "2026-08-02T02:29:31+00:00",
+  "generated_at_utc": "2026-08-02T02:42:15+00:00",
   "is_real": true,
   "warning": null,
   "verdict": {
-    "should_retrain": true,
-    "action": "retrain",
+    "should_retrain": false,
+    "action": "watch",
     "severity": "alert",
-    "rule": "R3_multiple_distribution_alerts",
-    "rationale": "3 distribution signals are alerting (feature, target, prediction) \u2014 a regime the model was never fitted on. Acting before the errors confirm it is the point of monitoring.",
+    "rule": "R3b_distribution_without_measured_harm",
+    "rationale": "3 distribution signals are alerting (feature, target, prediction), but the frozen model's error was measured over the same windows and did not degrade. Inputs moved and the model tracked them: that is drift worth watching, not proof the champion needs refitting.",
     "signals": {
       "feature": "alert",
       "target": "alert",
@@ -41,7 +41,7 @@
         "detail": "forecast PSI 0.452, mean moved -8,905 MWh (label-free signal: available before the actuals arrive)"
       }
     ],
-    "evaluated_at_utc": "2026-08-02T02:29:27+00:00"
+    "evaluated_at_utc": "2026-08-02T02:42:09+00:00"
   },
   "thresholds": {
     "psi_warn": 0.1,
