@@ -141,7 +141,43 @@ class DriftThresholds:
 # "this is what we are monitoring". Reference and current are both *out of
 # sample* for the frozen booster, which is what makes the performance
 # comparison between them meaningful.
-DEFAULT_REFERENCE_DAYS = 28
+# Equal by requirement, not by coincidence. These were 28 and 14, and the
+# asymmetry was not cosmetic: PSI is computed over quantile bins of the
+# reference, so on a strongly seasonal, strongly autocorrelated series the bin
+# occupancy of a short window encodes *where in the season the window sits* as
+# much as it encodes the distribution. `docs/DRIFT-EVALUATION.md` measured that
+# directly — two matched fortnights a year apart, differing by 0.30 °C in the
+# mean, scored PSI 0.177 and warned, while whole months a year apart differing
+# by 0.04 °C scored 0.074 and stayed quiet. Halving the window sextupled the
+# score on essentially identical weather.
+#
+# So a fortnight was being scored against a month on the same threshold scale,
+# and that page names it: "This is the actual bug and it is not a threshold
+# question." Equalising is the fix for it.
+#
+# Equalised DOWNWARD, at a fortnight each, and that direction was measured
+# rather than assumed. The first attempt made both windows a month, reasoning
+# that the one control which came out clean in that document was month-long.
+# It made the synthetic fixture start alarming — `run_all` on an untouched
+# series went to ALERT on prediction and WARN on performance. The reason is
+# that the clean control was clean because it was *season-matched*, a year
+# apart, not because it was long. These two windows are adjacent, so
+# lengthening them pushes their midpoints further apart — adjacent months sit
+# 28 days apart in the season where adjacent fortnights sit 14 — and the
+# seasonal confound grows with the very change meant to reduce noise.
+#
+# A fortnight each keeps the midpoints as close as the design allows while
+# removing the scale mismatch, and both windows still carry ~1,300 rows against
+# a `min_samples` of 200.
+#
+# What this does NOT fix, and must not be mistaken for fixing: the reference is
+# still the period immediately before the current one, so an ordinary seasonal
+# transition is still compared against the season it just left. That is the
+# next change on that page's list — season-match the reference — and it is a
+# redesign rather than a constant, because `drift/windows.py` derives the train
+# slice from `reference_start` and the three windows are contiguous by
+# construction.
+DEFAULT_REFERENCE_DAYS = 14
 DEFAULT_CURRENT_DAYS = 14
 
 DEFAULT_THRESHOLDS = DriftThresholds()

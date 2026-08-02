@@ -34,7 +34,12 @@ import pandas as pd
 import pytest
 
 from drift import detectors
-from drift.config import DEFAULT_THRESHOLDS, Severity
+from drift.config import (
+    DEFAULT_CURRENT_DAYS,
+    DEFAULT_REFERENCE_DAYS,
+    DEFAULT_THRESHOLDS,
+    Severity,
+)
 from drift.windows import (
     ABS_ERROR_COLUMN,
     ABS_PCT_ERROR_COLUMN,
@@ -462,3 +467,25 @@ def test_performance_drift_is_insufficient_when_only_the_current_window_is_empty
     )
     assert section.severity is Severity.OK
     assert section.details["status"] == detectors.INSUFFICIENT_DATA
+
+
+def test_the_reference_and_current_windows_are_the_same_length():
+    """PSI is not comparable across window sizes, so the two must match.
+
+    `docs/DRIFT-EVALUATION.md` measured this rather than assumed it: matched
+    fortnights a year apart, 0.30 °C apart in the mean, scored PSI 0.177 and
+    warned; whole months a year apart, 0.04 °C apart, scored 0.074 and stayed
+    quiet. The bins come from the reference, so a short window encodes where in
+    the season it sits as much as it encodes the distribution.
+
+    The shipped geometry was 28 days of reference against 14 of current, which
+    put a fortnight and a month on one threshold scale. That page calls it "the
+    actual bug and it is not a threshold question", so it gets an assertion
+    rather than a paragraph.
+    """
+    assert DEFAULT_REFERENCE_DAYS == DEFAULT_CURRENT_DAYS, (
+        f"reference is {DEFAULT_REFERENCE_DAYS} days and current is "
+        f"{DEFAULT_CURRENT_DAYS}; PSI computed over reference quantile bins is "
+        "not comparable between windows of different length, and the shorter one "
+        "will score higher on identical data"
+    )
