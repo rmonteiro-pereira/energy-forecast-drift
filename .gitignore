@@ -31,6 +31,9 @@ mutants/
 .ipynb_checkpoints/
 # uv.lock IS committed on purpose: reproducible CI runs.
 
+# --- vercel: local project link (project id + org id), not a published artifact ---
+.vercel/
+
 # --- os / editors ---
 .DS_Store
 Thumbs.db
