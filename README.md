@@ -1,51 +1,60 @@
 # energy-forecast-drift
 
-> [!CAUTION]
-> # ⚠️ THE DRIFT NUMBERS ARE REAL. THE MODEL COMPARISON IS NOT.
+> [!WARNING]
+> # The numbers here are measured on real PJM load. One artifact is not.
 >
-> ### The EIA key landed on 2026-08-01, so this repository is now half real and half fixture. Quoting one as the other is the mistake this box exists to prevent — check the `is_real` flag on anything before you repeat it.
+> ### Check the `is_real` flag on anything before you repeat it. It is written into every artifact rather than asserted here, so this box can go stale and the flag cannot.
 >
-> **Real, from the EIA API:** 17,520 hourly PJM demand records covering
-> 2024-08-01 → 2026-08-01 with **no missing hours**, and everything derived from
+> **Real, from the EIA API:** 17,524 hourly PJM demand records covering
+> 2024-08-01 → 2026-08-02 with **no missing hours**, and everything derived from
 > them — [`metrics/forecast.json`](metrics/forecast.json),
-> [`monitor.json`](metrics/monitor.json), [`drift.json`](metrics/drift.json) and
-> [`pipeline.json`](metrics/pipeline.json), each carrying `"is_real": true`. Both
+> [`monitor.json`](metrics/monitor.json), [`drift.json`](metrics/drift.json),
+> [`pipeline.json`](metrics/pipeline.json) and
+> [`model.json`](metrics/model.json), each carrying `"is_real": true`. Both
 > committed PNGs are real too, and are no longer watermarked because they no
-> longer need to be. The retrain verdict below is a finding about actual load:
-> rolling MAE **4,852 → 5,894 MWh**, MAPE **4.05% → 5.46%**, and a bias that
-> flipped sign from **−1,903 to +2,927 MWh** — the model is now short where it
-> used to be long.
+> longer need to be.
 >
-> **Still synthetic:** [`metrics/baseline.json`](metrics/baseline.json) and
-> [`metrics/model.json`](metrics/model.json). That matters more than the count
-> suggests: **the LightGBM-vs-seasonal-naive delta is still fixture against
-> fixture, and is still not evidence of anything.** No model has been trained on
-> real demand yet. `.github/workflows/train.yml` exists to do exactly that and
-> **has not been run**, so the registry has no champion, `served_model.source` is
-> `"none"`, and the monitor falls back to a model fitted on its own training
-> window rather than a promoted one.
+> **The forecast, measured:** **2.72% MAPE** over 8 weeks and 55 walk-forward
+> refits, against **11.73%** for a seasonal-naive baseline on identical folds —
+> **77% less absolute error**, winning **24 of 24 horizons**. Removing the
+> archived weather *forecasts* and refitting costs **41%** of that, which is the
+> measurement that justifies the publication-masked forecast features rather
+> than an argument for them. A champion (`v3`) is registered, promoted through
+> the gate, and served.
 >
-> **So the honest summary is:** the drift loop is real and is already saying
-> something; the *forecast quality* claim does not exist yet, because nothing has
-> measured this model against a baseline on real load. One dispatch of
-> `train.yml` is what closes that gap. Steps:
-> **[docs/BLOCKED.md](docs/BLOCKED.md)**.
+> **Still synthetic:** [`metrics/baseline.json`](metrics/baseline.json) alone.
+> It is the M1 seasonal-naive artifact and it predates the key; the same
+> baseline computed on real load, on the same folds, is inside `model.json` and
+> is the one quoted above. The stale file is tracked as an open item rather than
+> quietly deleted.
+>
+> **What this is not:** eight summer weeks is a short evidence base, and no
+> winter peak has been forecast. Large ISOs publish day-ahead errors in the 2–3%
+> band, so the figure is in a plausible place — on the easier half of the year.
 
 ---
 
 Hourly **electricity demand forecasting** for a US balancing authority (PJM),
 built around a live data feed **so that model drift is observed rather than
-simulated.** As of 2026-08-01 it is observed: the drift numbers in this
-repository come from two years of real PJM load, not from a fixture.
+simulated.** It is observed: the drift numbers in this repository come from two
+years of real PJM load, not from a fixture.
 
-The point of the project is not the forecast. It is the loop around it, and the
-loop both exists and has run: one command chains ingest → features → score →
-rolling-MAE monitor → drift → artifacts, and `daily.yml` calls exactly that
-command. It has executed end to end against the live API and published its
-metrics once, by pull request. What it does *not* yet do is run **on a
-schedule** — the `schedule:` block is still commented out, deliberately, until
-a champion exists to freeze and the PR it opens can merge unattended. When that
-lands, drift accumulates in public week after week and can be pointed at.
+The point of the project is not the forecast — though the forecast is now
+measured, and beats its baseline at every horizon. It is the loop around it,
+and the loop both exists and runs on its own: one command chains ingest →
+features → score → rolling-MAE monitor → drift → artifacts, `daily.yml` calls
+exactly that command, and **it is scheduled** — 06:20 UTC, every day, publishing
+by pull request. Drift now accumulates in public week after week and can be
+pointed at.
+
+Drift is measured from the moment training ended, not from the wall clock. That
+distinction is load-bearing and was got wrong first: with sliding windows a
+model retrained this morning was compared against two windows lying inside its
+own training data, and the verdict read "a regime the model was never fitted on"
+about data it had been fitted on. Anchored on the champion's
+`train_data_end_utc`, drift starts at zero on every retrain by construction, and
+a run with nothing on the far side of that boundary publishes
+`R0_champion_is_current` instead of inventing a verdict.
 
 ## What is real, and what is not
 
@@ -54,11 +63,12 @@ lands, drift accumulates in public week after week and can be pointed at.
 | **The code** | ✅ real, complete, tested | 384 Python tests + 7 dashboard tests, no network. Every path below runs today, and [`docs/REPRODUCE.md`](docs/REPRODUCE.md) has the transcripts. The tests are themselves measured — see [mutation testing](docs/MUTATION-TESTING.md). |
 | **EIA hourly demand** | ✅ **real** | 17,520 hourly PJM rows, 2024-08-01 → 2026-08-01, **0 missing hours**, pulled by the finished client the day the key landed. |
 | **Open-Meteo weather** | ✅ **real, and it now reaches the model** | It always reached [`docs/DRIFT-EVALUATION.md`](docs/DRIFT-EVALUATION.md) — real Philadelphia ERA5, derived results committed, raw series cached under gitignored `reports/`. It could not reach the *model* while `resolve_panel` fell back to the fixture as a whole; with real demand in the lake it no longer does. **Caveat on the committed artifacts:** they were produced on 2026-08-01 and record `"weather_site": "philadelphia_pa"`, i.e. one city. The nine-metro blend and the archived day-ahead forecast landed *after* them; no published run has used those yet. |
-| **`forecast.json`, `monitor.json`, `drift.json`, `pipeline.json`** | ✅ **real** | `"is_real": true`, `"kind": "eia_api_v2"`. The rolling MAE, the MAPE, the bias flip, the PSI/KS signals and the **retrain** verdict are all measurements of PJM load. |
+| **`forecast.json`, `monitor.json`, `drift.json`, `pipeline.json`** | ✅ **real** | `"is_real": true`, `"kind": "eia_api_v2"`. The rolling MAE, the MAPE, the bias, the PSI/KS signals and the retrain verdict are all measurements of PJM load. |
 | **Both committed PNGs** | ✅ **real** | Regenerated by the first real daily run. `pipeline/plots.py` watermarks only when `is_real` is false, so the absence of the stamp is itself the flag. |
-| **`baseline.json` and `model.json`** | ❌ **seeded synthetic fixture** | `models/fixtures.py`, seed `20260728`. **The LightGBM-vs-baseline delta is fixture against fixture** and is not evidence about PJM. This is the single largest gap left. |
-| **The served model** | ❌ **there isn't one** | `served_model.source` is `"none"`: nothing has trained on real demand, so the registry has no `@champion`. The monitor uses a model fitted on its own training window — honest, and stated in the artifact, but not a promoted model. `train.yml` fixes this in one dispatch. |
-| **The MLflow registry** | ⚠️ real machinery, never yet fed real data | Real tracking, real gated promotion — exercised only on the fixture so far. |
+| **`model.json`** | ✅ **real** | The walk-forward backtest on real load: 2.72% MAPE against 11.73% for the baseline, 24/24 horizons, and the forecast-weather ablation. Both models run identical folds and horizons, so the delta is a comparison rather than two separate runs put side by side. |
+| **`baseline.json`** | ❌ **seeded synthetic fixture** | `models/fixtures.py`, seed `20260728`. It predates the key and was never regenerated. Nothing reads it — the real seasonal-naive baseline, on the same folds, is `model.json → metrics.baseline`, which is what the comparison above uses. It is stale rather than misleading, and it is tracked as open rather than deleted to make the gap visible. |
+| **The served model** | ✅ **real, promoted** | `served_model.source` is `"mlflow_registry"`, champion `v3`, trained on real demand and tagged with the last hour it learned from. That tag is what the drift monitor anchors on, and what stops it scoring the champion on its own training window. |
+| **The MLflow registry** | ✅ **real, and the gate has bitten** | Real tracking, real gated promotion: a model is only aliased `@champion` if it beats the baseline on the same backtest. |
 
 The `is_real` flag is not a comment. It is written into every artifact, tagged
 onto every MLflow run, checked by `/forecast` before it answers, and read by the
@@ -144,7 +154,7 @@ flowchart LR
     DRIFT -->|"retrain verdict"| REG
     REG --> SERVE["serving/<br/>FastAPI <b>/forecast</b><br/>loads @champion"]
 
-    CRON["daily.yml<br/><i>runs on dispatch; schedule still commented</i>"] --> PIPE["pipeline.daily<br/>one entrypoint,<br/>six stages"]
+    CRON["daily.yml<br/><i>06:20 UTC daily + dispatch</i>"] --> PIPE["pipeline.daily<br/>one entrypoint,<br/>six stages"]
     PIPE --> ING
     METRICS --> DASH["dashboard/<br/>Vite · React · ECharts<br/>banner driven by <b>is_real</b>"]
 ```
@@ -718,24 +728,23 @@ docs/       adr/      7 decision records, each with the rejected alternative
             PUBLICATION-READY.md (what a reviewer will trip on, and what is thin)
             DRIFT-EVALUATION.md (the detectors vs real weather) · BLOCKED.md
 .github/    ci.yml (runs on every push and PR) · mutation.yml (mutation score,
-            gated by a floor) · daily.yml (has run against the live API; the
-            schedule: block stays commented until a champion exists — see
-            docs/adr/0006) · train.yml (registers that champion, manual only)
+            gated by a floor) · daily.yml (scheduled 06:20 UTC, publishes by PR — see
+            docs/adr/0006) · train.yml (registers the champion, manual only)
 mlruns/     MLflow artifacts — gitignored, never committed (nor is mlflow.db)
 reports/    Evidently HTML (~5MB of inlined plotly) — gitignored
 ```
 
 ## What is left
 
-Not "real data" any more — that arrived. What is left is **one training run on
-it**, and the schedule. No code is waiting to be written.
+Not "real data", not "a training run", not "the schedule" — all three arrived.
+What is left is **time**, and one stale file.
 
 | | |
 |---|---|
 | **done, 2026-08-01** | the key landed; two years of hourly PJM demand backfilled; `pipeline.daily` ran against it and published. `forecast/monitor/drift/pipeline.json` and both PNGs are real |
-| **next — the one that matters** | dispatch `.github/workflows/train.yml`. Nothing has trained on real demand, so there is no `@champion`, and **the LightGBM-vs-baseline delta is still fixture against fixture.** Until that runs, this repo has a real drift loop and no real forecast-quality claim |
-| **then** | uncomment the `schedule:` block in `daily.yml` and let drift accumulate in public, day after day |
-| **then** | one real drift episode, captured end to end, appended to the writeup. R1 already fired once on real load — see M4 above — so the first candidate exists |
+| **done, 2026-08-02** | `train.yml` dispatched: champion `v3` trained on real demand, promoted through the gate, served. `model.json` carries the measured comparison — 2.72% vs 11.73% MAPE, 24/24 horizons — and the forecast-weather ablation. The `schedule:` block is uncommented and the cron publishes by PR. Drift is anchored on `train_data_end_utc` rather than the wall clock |
+| **next** | regenerate `metrics/baseline.json` on real load. It is the last synthetic artifact, nothing reads it, and the real numbers already exist inside `model.json` — so this is tidying a visible gap, not closing a claim |
+| **then** | one real drift episode, captured end to end, appended to the writeup. This is the one that needs **time** rather than work: the champion was trained through the end of the data, so drift genuinely starts at zero and has to accumulate. That is the point of the anchoring, and it is also why there is nothing to show yet |
 
 The steps to unblock it are in [`docs/BLOCKED.md`](docs/BLOCKED.md); what will
 change, and what a real episode is predicted to look like, is in

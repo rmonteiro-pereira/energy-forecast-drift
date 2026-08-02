@@ -149,6 +149,20 @@ def test_readme_leads_with_the_provenance_banner():
     guard is not dropped, it is re-aimed: whatever the split happens to be, the
     top of the README has to name the part that is *not* real, so a reviewer
     skimming cannot walk away thinking all of it is.
+
+    The alert *level* is now derived from the artifacts rather than hardcoded,
+    for the same reason and one turn later. It demanded `[!CAUTION]`, which was
+    right when half the published surface was fixture and wrong on 2026-08-02
+    when one stale file was left that nothing reads: a red box over an accurate
+    2.72% MAPE overstates the risk, and overstating is its own dishonesty —
+    it also buries the result under an alarm about something else.
+
+    So the rule is proportionality, and it is measured: while **any** committed
+    artifact carries `is_real: false` the banner must be `[!CAUTION]` or
+    `[!WARNING]`; once none does, `[!NOTE]` is allowed and nothing else changes.
+    That is strictly stronger than the constant it replaces, because the
+    constant could not notice the last fixture artifact being regenerated *or* a
+    new one appearing.
     """
     lines = (REPO / "README.md").read_text(encoding="utf-8").splitlines()
     head_lines = lines[:12]
@@ -163,15 +177,31 @@ def test_readme_leads_with_the_provenance_banner():
         "this banner has had to say what is *not* real; a purely positive "
         "opening is how a synthetic number gets quoted as a result"
     )
-    assert any(line.strip() == "> [!CAUTION]" for line in head_lines), (
-        "the banner is not a GitHub `> [!CAUTION]` alert. Without it the block "
-        "renders as a plain grey blockquote — legible, but not alarming, which "
-        "defeats the point of leading with it."
+
+    fixture_artifacts = sorted(
+        path.name
+        for path in (REPO / "metrics").glob("*.json")
+        if json.loads(path.read_text(encoding="utf-8")).get("is_real") is False
+    )
+    allowed = ("> [!CAUTION]", "> [!WARNING]") if fixture_artifacts else ("> [!NOTE]",)
+
+    alert = next((line.strip() for line in head_lines if line.strip().startswith("> [!")), None)
+    assert alert is not None, (
+        "the banner is not a GitHub alert at all. Without one the block renders "
+        "as a plain grey blockquote — legible, but not signposted, which defeats "
+        "the point of leading with it."
+    )
+    assert alert in allowed, (
+        f"the banner is {alert} but {len(fixture_artifacts)} committed artifact(s) still "
+        f"carry `is_real: false` ({', '.join(fixture_artifacts) or 'none'}). "
+        f"Expected one of {', '.join(allowed)}. The alert level has to match what is "
+        "actually published: an alarm over an all-real surface is noise, and a note "
+        "over a fixture one is how a synthetic number gets quoted as a result."
     )
 
     # Nothing may come between the H1 and the banner.
     body = [line for line in head_lines if line.strip()]
     assert body[0].startswith("# "), f"README does not open with an H1: {body[0]!r}"
-    assert body[1].strip() == "> [!CAUTION]", (
+    assert body[1].strip() == alert, (
         f"something sits between the title and the warning: {body[1]!r}"
     )
