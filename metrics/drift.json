@@ -1,10 +1,10 @@
 {
   "milestone": "M4",
-  "generated_at_utc": "2026-08-02T08:39:05+00:00",
+  "generated_at_utc": "2026-08-03T10:08:27+00:00",
   "is_real": true,
   "warning": null,
   "measurable": false,
-  "reason": "only 4 scored row(s) have arrived since the champion stopped learning at 2026-08-02T00:00:00+00:00; 200 are needed to measure drift.",
+  "reason": "only 100 scored row(s) have arrived since the champion stopped learning at 2026-08-02T00:00:00+00:00; 200 are needed to measure drift.",
   "verdict": {
     "should_retrain": false,
     "action": "none",
@@ -48,9 +48,9 @@
     "has_weather_forecast": true,
     "warning": null,
     "panel": {
-      "rows": 17531,
+      "rows": 17557,
       "start_utc": "2024-08-01T21:00:00+00:00",
-      "end_utc": "2026-08-02T07:00:00+00:00",
+      "end_utc": "2026-08-03T09:00:00+00:00",
       "missing_demand_hours": 0,
       "has_temperature": true,
       "has_weather_forecast": true
@@ -58,7 +58,7 @@
   },
   "monitoring_model": {
     "source": "fitted_on_train_window",
-    "reason": "the champion was trained on data up to 2026-08-02T00:00:00+00:00, which covers the reference window opening at 2026-07-05T07:00:00+00:00; scoring it there would be in-sample",
+    "reason": "the champion was trained on data up to 2026-08-02T00:00:00+00:00, which covers the reference window opening at 2026-07-06T09:00:00+00:00; scoring it there would be in-sample",
     "champion_version": "3",
     "champion_train_data_end_utc": "2026-08-02T00:00:00+00:00"
   },
@@ -77,9 +77,9 @@
   "windows": {
     "strategy": "time-ordered train / reference / current; the booster is fitted on the train window only, so both scored windows are out of sample",
     "panel_start_utc": "2024-08-01T21:00:00+00:00",
-    "panel_end_utc": "2026-08-02T07:00:00+00:00",
-    "reference_start_utc": "2026-07-05T07:00:00+00:00",
-    "current_start_utc": "2026-07-19T07:00:00+00:00",
+    "panel_end_utc": "2026-08-03T09:00:00+00:00",
+    "reference_start_utc": "2026-07-06T09:00:00+00:00",
+    "current_start_utc": "2026-07-20T09:00:00+00:00",
     "reference_days": 14,
     "current_days": 14,
     "horizons_h": [
@@ -110,9 +110,9 @@
     ],
     "origin_stride_hours": 6,
     "rows": {
-      "train": 64704,
+      "train": 64808,
       "reference": 1344,
-      "current": 1296
+      "current": 1312
     },
     "booster_source": "fitted_on_train_window"
   },
