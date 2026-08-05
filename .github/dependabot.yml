@@ -26,6 +26,17 @@ updates:
     groups:
       dashboard-minor-and-patch:
         update-types: ["minor", "patch"]
+    ignore:
+      # React 19 breaks the dashboard build (PR #23); held at 18 on purpose
+      # until the interface is reworked. Remove when that lands.
+      - dependency-name: "react"
+        update-types: ["version-update:semver-major"]
+      - dependency-name: "react-dom"
+        update-types: ["version-update:semver-major"]
+      - dependency-name: "@types/react"
+        update-types: ["version-update:semver-major"]
+      - dependency-name: "@types/react-dom"
+        update-types: ["version-update:semver-major"]
     commit-message:
       prefix: "chore(deps)"
 
