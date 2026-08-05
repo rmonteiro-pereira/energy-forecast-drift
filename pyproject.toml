@@ -29,7 +29,7 @@ dev = [
     "pandas-stubs>=3.0.5.260730",
     "pytest>=8.0",
     "pyyaml>=6.0.3",
-    "ruff>=0.6",
+    "ruff>=0.16.1",
     "types-pyyaml>=6.0.12.20260724",
 ]
 
