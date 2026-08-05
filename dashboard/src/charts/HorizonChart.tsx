@@ -22,7 +22,16 @@ import type { ModelArtifact } from "../types";
 
 type Metric = "MAE" | "MAPE";
 
-export function HorizonChart({ model, tokens }: { model: ModelArtifact; tokens: Tokens }) {
+export function HorizonChart({
+  model,
+  tokens,
+  mini = false,
+}: {
+  model: ModelArtifact;
+  tokens: Tokens;
+  /** Overview variant: MAPE only, no toolbar, no table twin, grid-sized. */
+  mini?: boolean;
+}) {
   const [metric, setMetric] = useState<Metric>("MAPE");
 
   const baseline = model.metrics.baseline.by_horizon ?? [];
@@ -37,7 +46,9 @@ export function HorizonChart({ model, tokens }: { model: ModelArtifact; tokens: 
 
     return {
       ...baseOption(tokens),
-      grid: { left: 62, right: 24, top: 46, bottom: 44, containLabel: false },
+      grid: mini
+        ? { left: 46, right: 8, top: 36, bottom: 34, containLabel: false }
+        : { left: 62, right: 24, top: 46, bottom: 44, containLabel: false },
       legend: {
         ...baseOption(tokens).legend,
         data: ["model (LightGBM)", "baseline (seasonal-naive)"],
@@ -103,7 +114,18 @@ export function HorizonChart({ model, tokens }: { model: ModelArtifact; tokens: 
         },
       ],
     };
-  }, [baseline, champion, deltas, metric, tokens]);
+  }, [baseline, champion, deltas, metric, mini, tokens]);
+
+  if (mini) {
+    if (!baseline.length || !champion.length) return null;
+    return (
+      <Chart
+        option={option}
+        className="chart chart-mini2"
+        label="Grouped bar chart of MAPE per forecast horizon, model against seasonal-naive baseline. The model section below has the full version with a MAE toggle and a table view."
+      />
+    );
+  }
 
   if (!baseline.length || !champion.length) {
     return (

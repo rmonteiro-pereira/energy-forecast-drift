@@ -226,36 +226,46 @@ code {
   height: 7px;
 }
 
-/* --- hero ----------------------------------------------------------------- */
+/* --- hero / overview grid -------------------------------------------------- */
+/*
+  One viewport, the whole dashboard: title + KPIs + verdict on the first two
+  rows, then the four mini panels. The deep-dive sections below carry the
+  toolbars and table views the minis deliberately do not.
+*/
 .hero {
   display: grid;
-  grid-template-columns: minmax(0, 1.55fr) minmax(340px, 1fr);
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) minmax(340px, 400px);
   grid-template-areas:
-    "title verdict"
-    "kpis verdict";
-  gap: 18px 22px;
-  padding: 26px 0 10px;
-  align-items: start;
+    "title title verdict"
+    "kpis kpis verdict"
+    "ovforecast ovforecast ovmonitor"
+    "ovhorizon ovhorizon ovloop";
+  gap: 10px 14px;
+  padding: 12px 0 6px;
+  align-items: stretch;
 }
 
 .hero-title {
   grid-area: title;
+  align-self: center;
 }
 
 .hero-title h1 {
   margin: 0;
-  font-size: clamp(26px, 3.2vw, 38px);
-  line-height: 1.05;
-  letter-spacing: -0.025em;
+  font-size: clamp(22px, 2vw, 27px);
+  line-height: 1.1;
+  letter-spacing: -0.02em;
   font-weight: 700;
+  display: inline;
+  margin-right: 12px;
 }
 
 .hero-thesis {
-  margin: 10px 0 0;
-  font-size: clamp(15px, 1.5vw, 17px);
+  margin: 4px 0 0;
+  font-size: 14px;
   line-height: 1.45;
   color: var(--text-secondary);
-  max-width: 52ch;
+  max-width: 78ch;
 }
 
 .hero-thesis em {
@@ -267,7 +277,137 @@ code {
   display: flex;
   flex-wrap: wrap;
   gap: 8px;
-  margin-top: 14px;
+  margin-top: 8px;
+}
+
+.ov-panel {
+  background: var(--surface-1);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 11px 14px 5px;
+  min-width: 0;
+}
+
+.ov-forecast {
+  grid-area: ovforecast;
+}
+.ov-monitor {
+  grid-area: ovmonitor;
+}
+.ov-horizon {
+  grid-area: ovhorizon;
+}
+.ov-loop {
+  grid-area: ovloop;
+}
+
+.ov-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 2px;
+}
+
+.ov-title {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 650;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+}
+
+.ov-link {
+  font-size: 12px;
+  font-family: var(--mono);
+  color: var(--text-secondary);
+  text-decoration: none;
+  white-space: nowrap;
+}
+
+.ov-link:hover {
+  color: var(--text-primary);
+  text-decoration: underline;
+}
+
+.ov-foot {
+  margin: 2px 0 6px;
+  font-size: 12px;
+  font-family: var(--mono);
+  color: var(--text-secondary);
+}
+
+/* Overview chart sizes — row 3 pair, then the shorter row 4. Doubled class
+   so these win over the base .chart height regardless of source order. */
+.chart.chart-mini {
+  height: 222px;
+}
+
+.chart.chart-mini2 {
+  height: 156px;
+}
+
+/* In the overview the loop is a compact roster — all six steps visible,
+   no horizontal scroll, no rail. The full strip lives in section 04. */
+.ov-loop .loop-strip {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 3px 14px;
+  padding: 4px 0 6px;
+  overflow: visible;
+}
+
+.ov-loop .loop-step {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  padding: 2px 0;
+}
+
+.ov-loop .loop-step::before {
+  display: none;
+}
+
+.ov-loop .loop-step-dot {
+  width: 16px;
+  height: 16px;
+  font-size: 10px;
+  border-width: 1px;
+}
+
+.ov-loop .loop-step-name {
+  margin-top: 0;
+  font-size: 12px;
+}
+
+.ov-loop .loop-step-time {
+  margin-top: 0;
+  margin-left: auto;
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+/* --- the deep-dive divider ------------------------------------------------- */
+.deepdive {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin: 26px 0 -18px;
+  color: var(--text-secondary);
+  font-family: var(--mono);
+  font-size: 11.5px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+
+.deepdive::before,
+.deepdive::after {
+  content: "";
+  flex: 1;
+  border-top: 1px dashed var(--axis);
 }
 
 /* --- KPI tiles ------------------------------------------------------------ */
@@ -283,7 +423,7 @@ code {
   background: var(--surface-1);
   border: 1px solid var(--border);
   border-radius: var(--radius);
-  padding: 14px 16px 12px;
+  padding: 12px 14px 10px;
   position: relative;
   overflow: hidden;
 }
@@ -310,7 +450,7 @@ code {
 .kpi-value {
   font-family: var(--mono);
   font-weight: 600;
-  font-size: clamp(26px, 2.6vw, 34px);
+  font-size: clamp(24px, 2.1vw, 29px);
   letter-spacing: -0.03em;
   line-height: 1.15;
   margin-top: 4px;
@@ -333,6 +473,7 @@ code {
 /* --- the verdict, first-class --------------------------------------------- */
 .verdict-panel {
   grid-area: verdict;
+  align-self: stretch;
   background: var(--surface-1);
   border: 1px solid var(--border);
   border-radius: var(--radius);
@@ -363,6 +504,15 @@ code {
   display: flex;
   flex-direction: column;
   gap: 10px;
+}
+
+/* The rationale must not stretch the overview rows; the full text lives in
+   the drift section (and in the artifact itself). */
+.verdict-panel .card-note {
+  display: -webkit-box;
+  -webkit-line-clamp: 8;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
 }
 
 .verdict-headline {
@@ -422,7 +572,7 @@ code {
 .banner {
   border-radius: var(--radius);
   padding: 16px 18px;
-  margin: 14px 0 0;
+  margin: 8px 0 0;
   display: flex;
   gap: 14px;
   align-items: flex-start;
@@ -437,7 +587,7 @@ code {
 .banner-real {
   background: color-mix(in srgb, var(--status-good) 7%, var(--surface-1));
   border: 1px solid color-mix(in srgb, var(--status-good) 30%, transparent);
-  padding: 8px 14px;
+  padding: 6px 14px;
   align-items: center;
   gap: 10px;
 }

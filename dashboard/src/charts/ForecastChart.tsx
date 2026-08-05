@@ -37,9 +37,17 @@ type RangeLabel = (typeof RANGES)[number]["label"];
 export function ForecastChart({
   forecast,
   tokens,
+  mini = false,
 }: {
   forecast: ForecastArtifact;
   tokens: Tokens;
+  /**
+   * The overview variant: no toolbar, no table twin, no slider strip —
+   * inside-zoom only, sized for the single-viewport grid. The deep-dive
+   * section below renders the full version, which is where the table
+   * (the non-colour path to every value) lives.
+   */
+  mini?: boolean;
 }) {
   const [range, setRange] = useState<RangeLabel>("7d");
 
@@ -72,7 +80,9 @@ export function ForecastChart({
 
     return {
       ...baseOption(tokens),
-      grid: { left: 62, right: 24, top: 46, bottom: 78, containLabel: false },
+      grid: mini
+        ? { left: 54, right: 12, top: 38, bottom: 24, containLabel: false }
+        : { left: 62, right: 24, top: 46, bottom: 78, containLabel: false },
       legend: {
         ...baseOption(tokens).legend,
         data: ["actual", "forecast (scored)", "forecast (live, no actual yet)"],
@@ -87,30 +97,34 @@ export function ForecastChart({
           zoomOnMouseWheel: true,
           moveOnMouseMove: true,
         },
-        {
-          type: "slider",
-          startValue,
-          endValue: endMs,
-          height: 22,
-          bottom: 8,
-          borderColor: tokens.axis,
-          backgroundColor: "transparent",
-          fillerColor:
-            tokens["surface-1"].toLowerCase() === "#fcfcfb"
-              ? "rgba(11,11,11,0.06)"
-              : "rgba(255,255,255,0.08)",
-          dataBackground: {
-            lineStyle: { color: tokens.axis, width: 1 },
-            areaStyle: { color: tokens.grid, opacity: 0.6 },
-          },
-          selectedDataBackground: {
-            lineStyle: { color: tokens["series-1"], width: 1 },
-            areaStyle: { color: tokens["series-1"], opacity: 0.12 },
-          },
-          moveHandleSize: 5,
-          handleSize: 24,
-          textStyle: { color: tokens["text-muted"], fontSize: 10 },
-        },
+        ...(mini
+          ? []
+          : [
+              {
+                type: "slider" as const,
+                startValue,
+                endValue: endMs,
+                height: 22,
+                bottom: 8,
+                borderColor: tokens.axis,
+                backgroundColor: "transparent",
+                fillerColor:
+                  tokens["surface-1"].toLowerCase() === "#fcfcfb"
+                    ? "rgba(11,11,11,0.06)"
+                    : "rgba(255,255,255,0.08)",
+                dataBackground: {
+                  lineStyle: { color: tokens.axis, width: 1 },
+                  areaStyle: { color: tokens.grid, opacity: 0.6 },
+                },
+                selectedDataBackground: {
+                  lineStyle: { color: tokens["series-1"], width: 1 },
+                  areaStyle: { color: tokens["series-1"], opacity: 0.12 },
+                },
+                moveHandleSize: 5,
+                handleSize: 24,
+                textStyle: { color: tokens["text-muted"], fontSize: 10 },
+              },
+            ]),
       ],
       tooltip: {
         ...baseOption(tokens).tooltip,
@@ -194,7 +208,11 @@ export function ForecastChart({
                   },
                   data: [
                     [
-                      { xAxis: last.target_utc, name: "forecast horizon — no actual yet" },
+                      {
+                        xAxis: last.target_utc,
+                        // The mini panel is too narrow for the full phrase.
+                        name: mini ? "live" : "forecast horizon — no actual yet",
+                      },
                       { xAxis: lastForward.target_utc },
                     ],
                   ],
@@ -203,12 +221,22 @@ export function ForecastChart({
         },
       ],
     };
-  }, [forecast, range, tokens]);
+  }, [forecast, mini, range, tokens]);
 
   const rows = [
     ...forecast.history.map((p) => ({ ...p, kind: "scored" as const })),
     ...forecast.forward.map((p) => ({ ...p, kind: "live" as const })),
   ].slice(-400);
+
+  if (mini) {
+    return (
+      <Chart
+        option={option}
+        className="chart chart-mini"
+        label="Line chart of actual demand against the day-ahead forecast, with the live forecast dashed and shaded at the right edge. The forecast section below has the full explorable version with a table view."
+      />
+    );
+  }
 
   return (
     <>

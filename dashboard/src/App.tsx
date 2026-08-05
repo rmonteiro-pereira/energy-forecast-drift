@@ -15,7 +15,7 @@
  * `measurable`) drive the UI; nothing here overrides them.
  */
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 
 import { DriftTimelineChart } from "./charts/DriftTimelineChart";
 import { FeaturePsiChart } from "./charts/FeaturePsiChart";
@@ -90,6 +90,24 @@ export function App() {
   );
 }
 
+/**
+ * True at desktop widths, where the overview grid renders its mini panels.
+ * A hook rather than CSS `display:none` so the hidden charts are never
+ * mounted at zero size on phones.
+ */
+function useDesktop(): boolean {
+  const [wide, setWide] = useState(
+    () => typeof window !== "undefined" && window.matchMedia("(min-width: 1100px)").matches,
+  );
+  useEffect(() => {
+    const media = window.matchMedia("(min-width: 1100px)");
+    const onChange = () => setWide(media.matches);
+    media.addEventListener("change", onChange);
+    return () => media.removeEventListener("change", onChange);
+  }, []);
+  return wide;
+}
+
 /** A tiny load waveform, drawn inline so it inherits the current colour. */
 function Wordmark() {
   return (
@@ -119,6 +137,7 @@ function Dashboard({
   const { forecast, monitor, drift, pipeline, model } = metrics;
   const served = pipeline.served_model ?? forecast.served_model;
   const trainEnd = served?.train_data_end_utc ?? drift.served_model?.train_data_end_utc ?? null;
+  const desktop = useDesktop();
 
   return (
     <>
@@ -190,7 +209,69 @@ function Dashboard({
           </div>
           <VerdictCard drift={drift} />
         </aside>
+
+        {/* The overview minis — the dashboard, one viewport. Each panel links to
+            its deep-dive section, which carries the toolbar and the table view. */}
+        {desktop ? (
+          <>
+            <div className="ov-panel ov-forecast">
+              <div className="ov-head">
+                <h2 className="ov-title">Actual vs forecast</h2>
+                <a className="ov-link" href="#forecast">
+                  explore →
+                </a>
+              </div>
+              <ForecastChart forecast={forecast} tokens={tokens} mini />
+            </div>
+
+            <div className="ov-panel ov-monitor">
+              <div className="ov-head">
+                <h2 className="ov-title">
+                  Rolling error <StatusDot severity={monitor.severity} />
+                </h2>
+                <a className="ov-link" href="#drift">
+                  drift →
+                </a>
+              </div>
+              <MaeTrendChart monitor={monitor} tokens={tokens} mini />
+            </div>
+
+            <div className="ov-panel ov-horizon">
+              <div className="ov-head">
+                <h2 className="ov-title">
+                  MAPE by horizon — model vs baseline,{" "}
+                  {model.metrics.comparison.horizons_won}/
+                  {model.metrics.comparison.horizons_total} won
+                </h2>
+                <a className="ov-link" href="#model">
+                  backtest →
+                </a>
+              </div>
+              <HorizonChart model={model} tokens={tokens} mini />
+            </div>
+
+            <div className="ov-panel ov-loop">
+              <div className="ov-head">
+                <h2 className="ov-title">
+                  The daily loop — {pipeline.status} · {pipeline.seconds.toFixed(1)}s
+                </h2>
+                <a className="ov-link" href="#loop">
+                  runs →
+                </a>
+              </div>
+              <LoopStrip steps={pipeline.steps} />
+              <p className="ov-foot">
+                daily 06:20 UTC · republished by pull request
+              </p>
+            </div>
+          </>
+        ) : null}
       </header>
+
+      {/* Everything below is the long version — secondary by design. */}
+      <div className="deepdive" aria-hidden="true">
+        <span>deep dive</span>
+      </div>
 
       <section className="section" id="forecast">
         <div className="section-head">

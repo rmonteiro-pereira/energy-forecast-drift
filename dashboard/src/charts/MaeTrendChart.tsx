@@ -26,7 +26,16 @@ import { ChartWithTable } from "../components";
 import type { Tokens } from "../theme";
 import type { MonitorArtifact } from "../types";
 
-export function MaeTrendChart({ monitor, tokens }: { monitor: MonitorArtifact; tokens: Tokens }) {
+export function MaeTrendChart({
+  monitor,
+  tokens,
+  mini = false,
+}: {
+  monitor: MonitorArtifact;
+  tokens: Tokens;
+  /** Overview variant: no table twin, grid-sized. The drift section keeps the full one. */
+  mini?: boolean;
+}) {
   const option = useMemo<EChartsOption>(() => {
     const days = monitor.daily;
     const current = days.filter((d) => d.window === "current");
@@ -58,6 +67,9 @@ export function MaeTrendChart({ monitor, tokens }: { monitor: MonitorArtifact; t
 
     return {
       ...baseOption(tokens),
+      grid: mini
+        ? { left: 50, right: 8, top: 36, bottom: 24, containLabel: false }
+        : baseOption(tokens).grid,
       legend: { ...baseOption(tokens).legend, data: ["daily MAE", "rolling mean"] },
       xAxis: timeAxis(tokens),
       yAxis: valueAxis(tokens, "MAE (MWh)", { min: 0 }),
@@ -123,7 +135,17 @@ export function MaeTrendChart({ monitor, tokens }: { monitor: MonitorArtifact; t
         },
       ],
     };
-  }, [monitor, tokens]);
+  }, [mini, monitor, tokens]);
+
+  if (mini) {
+    return (
+      <Chart
+        option={option}
+        className="chart chart-mini"
+        label="Bar and line chart of daily forecast MAE against the reference level and the retrain threshold. The drift section below has the full version with a table view."
+      />
+    );
+  }
 
   return (
     <ChartWithTable
