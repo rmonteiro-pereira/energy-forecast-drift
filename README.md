@@ -115,7 +115,9 @@ its resolved items are marked in place).
 baseline, a global LightGBM on the same walk-forward folds, MLflow tracking +
 registry, the four-way drift suite with its retrain trigger, the single-command
 daily pipeline behind `daily.yml`, a FastAPI `/forecast` from the registry
-alias, the React dashboard, and the writeup. The only thing missing is data.
+alias, the React dashboard, and the writeup. The data is no longer missing:
+two years of real PJM load are in the lake, the served champion was trained on
+them, and the daily cron measures drift against them in public.
 
 ---
 
