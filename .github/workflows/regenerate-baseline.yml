@@ -1,0 +1,102 @@
+# ============================================================================
+# One-purpose, dispatch-only: regenerate `metrics/baseline.json` on real data.
+#
+# Why this exists: baseline.json is the M1 seasonal-naive artifact. It predates
+# the EIA key and is the LAST committed artifact still carrying
+# `"is_real": false`. Nothing reads it — the real baseline, on the same folds,
+# lives inside `model.json -> metrics.baseline` — but its existence is what
+# pins the README banner at `[!WARNING]`:
+# `test_readme_leads_with_the_provenance_banner` derives the allowed alert
+# level from the artifacts, and one fixture artifact means the alarm stays.
+# Regenerating it on real demand retires the fixture era completely and lets
+# the banner drop to `[!NOTE]` without weakening the guard.
+#
+# Shape copied from daily.yml, minus what this job does not need: there is no
+# ingest step. The `lake-` cache written by the daily run already holds the
+# full demand lake; a baseline backtest against a lake that is at most a day
+# stale is indistinguishable from one against this morning's. If the cache is
+# missing (evicted), `--source real` raises NoRealDataError and the job goes
+# red — visible failure, nothing published, which is the contract.
+# ============================================================================
+
+name: regenerate baseline (one-off, real data)
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write # to push the baseline branch
+  pull-requests: write # to open the PR that carries it to main
+
+concurrency:
+  group: daily-pipeline # share the daily lock: never race a run writing metrics/
+  cancel-in-progress: false
+
+jobs:
+  baseline:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v7
+        with:
+          enable-cache: true
+
+      - name: Install dependencies
+        run: uv sync --extra dev --frozen
+
+      - name: Restore the data lake
+        uses: actions/cache/restore@v6
+        with:
+          path: |
+            data
+            mlflow.db
+            mlruns
+          key: lake-${{ github.run_id }}
+          restore-keys: lake-
+
+      # `--source real`, never auto: if the cache restore came up empty this
+      # must fail loudly, not fall back to the fixture it exists to retire.
+      - name: Backtest the seasonal-naive baseline on real demand
+        run: uv run python -m models --source real
+
+      - name: Assert the artifact is real
+        run: |
+          uv run python - <<'PY'
+          import json, sys
+          artifact = json.load(open("metrics/baseline.json", encoding="utf-8"))
+          if artifact.get("is_real") is not True:
+              sys.exit("baseline.json still carries is_real != true; refusing to publish")
+          print("baseline.json is_real:", artifact["is_real"])
+          PY
+
+      - name: Open a PR with the regenerated baseline
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          # Explicit paths only, same rule as daily.yml.
+          git add metrics/baseline.json metrics/baseline_table.md
+
+          if git diff --staged --quiet; then
+            echo "baseline unchanged — nothing to commit"
+            exit 0
+          fi
+
+          git commit -m "chore(baseline): the last fixture artifact becomes real"
+
+          branch="baseline/regen-${GITHUB_RUN_ID}"
+          git push origin "HEAD:refs/heads/${branch}"
+
+          url=$(gh pr create --base main --head "$branch" \
+            --title "chore(baseline): the last fixture artifact becomes real" \
+            --body "Regenerates \`metrics/baseline.json\` on the real demand lake (run ${GITHUB_RUN_ID}). This retires the final \`is_real: false\` artifact; once merged, the README banner is allowed to drop from [!WARNING] to [!NOTE] by \`test_readme_leads_with_the_provenance_banner\`.")
+
+          gh pr merge "${url##*/}" --auto --squash \
+            || echo "::warning title=Auto-merge not armed::The PR is open but will not merge itself; publish it by hand."
