@@ -142,9 +142,17 @@ function Dashboard({
   return (
     <>
       <nav className="topbar" aria-label="Page">
+        {/* Mock-1 format: the title and its one-line subtitle live in the top
+            bar, so the grid below opens straight onto the numbers. */}
         <a className="wordmark" href="#top">
           <Wordmark />
-          energy-forecast-drift
+          <span className="wordmark-text">
+            <span className="wordmark-name">energy-forecast-drift</span>
+            <span className="wordmark-sub">
+              Hourly {model.data.respondent ?? "PJM"} demand forecasting · drift watched daily,
+              in public
+            </span>
+          </span>
         </a>
         <div className="topnav">
           <a href="#forecast">Forecast</a>
@@ -165,40 +173,53 @@ function Dashboard({
         </div>
       </nav>
 
-      <ProvenanceBanner
-        isReal={drift.is_real}
-        warning={drift.warning}
-        dataKind={drift.data.kind}
-        generatedAt={drift.generated_at_utc}
-      />
+      {/* When the data is synthetic the banner still shouts before anything
+          else. The quiet real-data banner moved below the overview — above the
+          fold that state is carried by the pill in the top bar. */}
+      {!drift.is_real ? (
+        <ProvenanceBanner
+          isReal={drift.is_real}
+          warning={drift.warning}
+          dataKind={drift.data.kind}
+          generatedAt={drift.generated_at_utc}
+        />
+      ) : null}
 
       <main>
       <header className="hero" id="top">
-        <div className="hero-title">
-          <h1>energy-forecast-drift</h1>
-          <p className="hero-thesis">
-            Hourly demand forecasting for {model.data.respondent ?? "PJM"}, the largest grid
-            operator in the US — <em>the point is not the forecast, it&rsquo;s the loop around
-            it</em>: the drift monitor that decides, in public and every day, whether the model
-            is still trustworthy.
-          </p>
-          <div className="hero-meta">
-            {model.data.panel ? (
-              <span className="tag tag-mono">
-                {/* "real" is earned from the flag, never asserted by copy. */}
-                {compact.format(model.data.panel.rows)} h of{" "}
-                {model.is_real ? "real demand" : "fixture demand"}
-              </span>
-            ) : null}
-            {model.data.weather_sites?.length ? (
-              <span className="tag tag-mono">{model.data.weather_sites.length} weather sites</span>
-            ) : null}
-            <span className="tag tag-mono">{forecast.horizon_shown_h} h ahead, hourly</span>
-            {served?.version ? (
-              <span className="tag tag-mono">champion v{served.version}</span>
-            ) : null}
+        {/* Mock-1 format on desktop: no hero title block — the top bar carries
+            it — so the grid opens straight onto KPIs and the verdict. The
+            stacked phone layout keeps the title, where there is no room in the
+            bar for a subtitle. */}
+        {!desktop ? (
+          <div className="hero-title">
+            <h1>energy-forecast-drift</h1>
+            <p className="hero-thesis">
+              Hourly demand forecasting for {model.data.respondent ?? "PJM"}, the largest grid
+              operator in the US — <em>the point is not the forecast, it&rsquo;s the loop around
+              it</em>: the drift monitor that decides, in public and every day, whether the
+              model is still trustworthy.
+            </p>
+            <div className="hero-meta">
+              {model.data.panel ? (
+                <span className="tag tag-mono">
+                  {/* "real" is earned from the flag, never asserted by copy. */}
+                  {compact.format(model.data.panel.rows)} h of{" "}
+                  {model.is_real ? "real demand" : "fixture demand"}
+                </span>
+              ) : null}
+              {model.data.weather_sites?.length ? (
+                <span className="tag tag-mono">
+                  {model.data.weather_sites.length} weather sites
+                </span>
+              ) : null}
+              <span className="tag tag-mono">{forecast.horizon_shown_h} h ahead, hourly</span>
+              {served?.version ? (
+                <span className="tag tag-mono">champion v{served.version}</span>
+              ) : null}
+            </div>
           </div>
-        </div>
+        ) : null}
 
         <KpiRow model={model} />
 
@@ -272,6 +293,17 @@ function Dashboard({
       <div className="deepdive" aria-hidden="true">
         <span>deep dive</span>
       </div>
+
+      {/* The quiet full-sentence provenance note opens the long version; the
+          loud synthetic banner, when it applies, already fired at the top. */}
+      {drift.is_real ? (
+        <ProvenanceBanner
+          isReal={drift.is_real}
+          warning={drift.warning}
+          dataKind={drift.data.kind}
+          generatedAt={drift.generated_at_utc}
+        />
+      ) : null}
 
       <section className="section" id="forecast">
         <div className="section-head">
