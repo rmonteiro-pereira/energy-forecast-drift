@@ -46,12 +46,18 @@ class Rule:
     reason: str
     #: Matched against the *source line* the mutant was generated from.
     pattern: re.Pattern[str] | None = None
-    #: Or matched against an exact (file, line) location, for the named gaps.
-    locations: frozenset[tuple[str, int]] = frozenset()
+    #: Or matched against an exact (file, line, snippet) location. The snippet
+    #: must appear in the source line, so a location whose line number drifted
+    #: fails to match and its survivor comes back UNADJUDICATED — loudly.
+    #: A bare (file, line) pair once kept matching after an edit shifted the
+    #: file by +25 lines: three rules quietly unhooked and one GAP fell into a
+    #: broad ACCEPTED pattern. Content has to agree with the coordinate now.
+    locations: frozenset[tuple[str, int, str]] = frozenset()
 
     def matches(self, filename: str, line_no: int, source: str) -> bool:
-        if self.locations and (filename, line_no) in self.locations:
-            return True
+        for loc_file, loc_line, snippet in self.locations:
+            if filename == loc_file and line_no == loc_line and snippet in source:
+                return True
         return bool(self.pattern and self.pattern.search(source))
 
 
@@ -78,12 +84,14 @@ RULES: list[Rule] = [
         "`make_cutoffs`' `window_start`/`start` decide which folds the backtest "
         "scores, and `span_days` sets the rolling-error window; the tests assert "
         "fold counts for the default configuration but never pin these "
-        "expressions, so a mutation shifts the evaluated period undetected.",
+        "expressions, so a mutation shifts the evaluated period undetected. "
+        "(The `window_start` half of the original gap is closed: its mutants "
+        "are killed since the cutoff-hour move, so only `start` and `span_days` "
+        "remain here.)",
         locations=frozenset(
             {
-                ("models/backtest.py", 74),
-                ("models/backtest.py", 77),
-                ("drift/detectors.py", 354),
+                ("models/backtest.py", 102, "max(window_start, first_usable"),
+                ("drift/detectors.py", 354, "max(1, window_hours // 24)"),
             }
         ),
     ),
@@ -95,12 +103,12 @@ RULES: list[Rule] = [
     # if the test were reverted the mutants would come back UNADJUDICATED and
     # fail --check, which is the behaviour we want.
     # -----------------------------------------------------------------------
-    # Two mutants that are ACCEPTED because they are *provably equivalent*, not
+    # Mutants that are ACCEPTED because they are *provably equivalent*, not
     # because asserting them would be inconvenient. Each carries the reachability
     # argument, because "equivalent" without one is just a nicer word for
-    # unexamined. Both were predicted to survive before the run that confirmed
-    # they did; the other nineteen named gaps were killed and their rules are
-    # gone, so a regression brings the mutant back UNADJUDICATED and fails
+    # unexamined. Every one was predicted to survive before the run that
+    # confirmed it did; the other nineteen named gaps were killed and their rules
+    # are gone, so a regression brings the mutant back UNADJUDICATED and fails
     # `--check` rather than landing back on a comfortable label.
     # -----------------------------------------------------------------------
     Rule(
@@ -111,7 +119,7 @@ RULES: list[Rule] = [
         "branches -- 0 on the nothing-eligible path and `len(scored)` on the "
         "other -- so the key is always present and the fallback is never "
         "evaluated. No input can distinguish the two defaults.",
-        locations=frozenset({("drift/detectors.py", 210)}),
+        locations=frozenset({("drift/detectors.py", 210, 'rollup.get("columns_scored", 0)')}),
     ),
     Rule(
         "accepted:equivalent-first-increment-from-zero",
@@ -122,7 +130,19 @@ RULES: list[Rule] = [
         "very first cutoff has empty history and it is reached on iteration one "
         "with `skipped == 0`. The sibling `-= 1` and `+= 2` mutants at this line "
         "are killed by the exact-count assertion; only this one is equivalent.",
-        locations=frozenset({("models/backtest.py", 119)}),
+        locations=frozenset({("models/backtest.py", 144, "skipped += 1")}),
+    ),
+    Rule(
+        "accepted:equivalent-every-boundary",
+        ACCEPTED,
+        "`every > 1` -> `every >= 1` in `markdown_table`'s row filter. Equivalent "
+        "by cases: with `every == 1` the mutated branch filters on "
+        "`horizon_h % 1 == 0`, which keeps every row, so the rendered string is "
+        "byte-identical to the else branch; with `every > 1` both versions take "
+        "the same branch. The five sibling mutants at this line are killed by "
+        "the `every=6`/`every=2` tests in tests/test_backtest.py; this boundary "
+        "alone has no observable side.",
+        locations=frozenset({("models/backtest.py", 230, "if every > 1 else by_horizon")}),
     ),
     # -----------------------------------------------------------------------
     # Accepted categories.
@@ -135,7 +155,7 @@ RULES: list[Rule] = [
         "reaches the same verdict for all three severities (ALERT via "
         "share >= alert; WARN via `or warning`; OK via the else). The branch is a "
         "readability shortcut, not a behavioural fork.",
-        locations=frozenset({("drift/detectors.py", 161)}),
+        locations=frozenset({("drift/detectors.py", 161, "if len(scored) == 1")}),
     ),
     Rule(
         "accepted:redundant-payload-label",
@@ -169,16 +189,16 @@ RULES: list[Rule] = [
         "The all-None dict returned for an empty scoring window. Its only "
         "consumer is the insufficient-data guard, which is itself tested; the "
         "individual sentinel values are never read as numbers.",
-        locations=frozenset({("drift/detectors.py", 315)}),
+        locations=frozenset({("drift/detectors.py", 315, '"mae": None, "mape_pct": None')}),
     ),
-    Rule(
-        "accepted:table-rendering",
-        ACCEPTED,
-        "Markdown table rendering for the human-readable report — row selection "
-        "and line joining. Presentation only; the numbers it formats come from "
-        "the artifact, which is asserted directly.",
-        locations=frozenset({("models/backtest.py", 205), ("models/backtest.py", 215)}),
-    ),
+    # `accepted:table-rendering` used to live here, covering the row-selection
+    # and line-joining mutants of `markdown_table` at models/backtest.py 205/215.
+    # It is gone because "presentation only" was doing the work a test should do:
+    # six of its seven mutants are now killed by the `every=6`/`every=2` and
+    # pipe-delimiter tests in tests/test_backtest.py, and the seventh — the
+    # `every >= 1` boundary — is genuinely equivalent and argued above under
+    # `accepted:equivalent-every-boundary`. If those tests were reverted the
+    # mutants would come back UNADJUDICATED and fail --check.
     Rule(
         "accepted:syntax-continuation",
         ACCEPTED,
@@ -292,7 +312,9 @@ RULES: list[Rule] = [
         "sequences are built from the same `horizons` tuple one line apart, so "
         "they are equal length by construction. `strict=True` documents that "
         "invariant rather than enforcing a reachable one.",
-        locations=frozenset({("models/backtest.py", 134)}),
+        locations=frozenset(
+            {("models/backtest.py", 159, "zip(horizons, target_times, strict=True)")}
+        ),
     ),
     Rule(
         "accepted:local-alias-or-unpack",

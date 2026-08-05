@@ -98,3 +98,67 @@ def test_markdown_table_renders_every_horizon():
 
     assert table.count("\n") == 2 + 24 - 1
     assert "| Horizon (h) |" in table
+
+
+def _by_horizon_for_table() -> pd.DataFrame:
+    """A hand-built per-horizon frame, so the table tests cost nothing under mutmut."""
+    h = np.arange(1, 25)
+    return pd.DataFrame(
+        {
+            "horizon_h": h,
+            "mae": 100.0 + h,
+            "mape_pct": 1.0 + h / 100.0,
+            "rmse": 120.0 + h,
+            "bias": h - 12.0,
+            "n": np.full(24, 28),
+        }
+    )
+
+
+def _first_cells(table: str) -> list[str]:
+    """The horizon column of the data rows — the rows `every` decided to keep."""
+    return [line.split("|")[1].strip() for line in table.splitlines()[2:]]
+
+
+def test_markdown_table_every_6_keeps_exactly_the_multiples_of_6():
+    """`every` thins the table to `horizon_h % every == 0`, and nothing drove it.
+
+    Every earlier test called `markdown_table` with the default `every=1`, which
+    takes the *else* branch — so the filter expression itself had never executed
+    under the suite. Six mutants of that expression survived on that evidence:
+    the column name, `%` -> `/`, `==` -> `!=`, `== 0` -> `== 1`, `> 1` -> `>= 1`
+    and `> 1` -> `> 2`. Pinning the exact surviving horizons kills four of them
+    outright (the boundary flip `>= 1` is provably equivalent and is adjudicated
+    as such in scripts/mutation_survivors.py).
+    """
+    table = backtest.markdown_table(_by_horizon_for_table(), every=6)
+
+    assert _first_cells(table) == ["6", "12", "18", "24"]
+
+
+def test_markdown_table_every_2_pins_the_threshold_of_the_filter_branch():
+    """`every > 1` -> `every > 2` flips exactly one input: `every=2` itself.
+
+    With the mutation, `every=2` falls into the else branch and renders all 24
+    horizons instead of the 12 even ones, so this is the one call that can tell
+    the two comparisons apart.
+    """
+    table = backtest.markdown_table(_by_horizon_for_table(), every=2)
+
+    assert _first_cells(table) == [str(h) for h in range(2, 25, 2)]
+
+
+def test_markdown_table_rows_are_pipe_delimited_lines_not_a_decorated_blob():
+    """Every rendered line must begin and end with a `|` cell delimiter.
+
+    Counting newlines is not enough: mutating the joiner `"\\n"` to `"XX\\nXX"`
+    keeps the newline *count* identical while gluing `XX` onto the edges of
+    every row, which is exactly why the count-only assertion above never caught
+    it. The property that actually matters — each line parses as a table row —
+    is the one asserted here.
+    """
+    table = backtest.markdown_table(_by_horizon_for_table())
+    rows = table.splitlines()
+
+    assert len(rows) == 2 + 24
+    assert all(line.startswith("|") and line.endswith("|") for line in rows)
