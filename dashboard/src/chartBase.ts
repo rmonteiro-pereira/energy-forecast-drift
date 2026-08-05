@@ -34,7 +34,7 @@ export function baseOption(tokens: Tokens): EChartsOption {
     backgroundColor: "transparent",
     animationDuration: 260,
     textStyle: {
-      fontFamily: 'system-ui, -apple-system, "Segoe UI", sans-serif',
+      fontFamily: '"IBM Plex Sans", system-ui, -apple-system, "Segoe UI", sans-serif',
       color: tokens["text-secondary"],
     },
     grid: { left: 62, right: 24, top: 46, bottom: 52, containLabel: false },

@@ -55,6 +55,24 @@ export interface ErrorSummary {
   bias: number | null;
 }
 
+/** One backtest row per horizon, as `models.train` writes them. */
+export interface HorizonMetric {
+  horizon_h: number;
+  mae: number;
+  mape_pct: number;
+  rmse: number;
+  bias: number;
+  n: number;
+}
+
+export interface HorizonComparison {
+  horizon_h: number;
+  baseline_mae: number;
+  model_mae: number;
+  mae_delta: number;
+  mae_delta_pct: number;
+}
+
 export interface MonitorDay {
   day_utc: string;
   window: "reference" | "current";
@@ -208,19 +226,24 @@ export interface ModelArtifact extends Provenance {
     last_cutoff_utc: string;
   };
   metrics: {
-    baseline: { overall: ErrorSummary };
-    lightgbm: { overall: ErrorSummary };
+    baseline: { overall: ErrorSummary; by_horizon?: HorizonMetric[] };
+    lightgbm: { overall: ErrorSummary; by_horizon?: HorizonMetric[] };
     comparison: {
       mae_delta: number;
       mae_delta_pct: number;
       mape_delta_pct_points: number;
       horizons_won: number;
       horizons_total: number;
+      by_horizon?: HorizonComparison[];
     };
   };
   ablation?: {
     forecast_weather?: {
       measured: boolean;
+      removed?: string[];
+      protocol?: string;
+      mae_without_forecast_weather?: number | null;
+      mae_with_forecast_weather?: number | null;
       mae_delta_pct: number | null;
       helped: boolean;
       warning: string | null;

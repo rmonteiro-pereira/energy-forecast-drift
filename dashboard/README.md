@@ -18,30 +18,43 @@ npx serve dist
 
 ## What it shows
 
-The order is the argument, and it used to be wrong. The page opened on the
-retrain verdict, which is the last question a first-time reader has and the
-first one the author has. Someone landing cold does not know what is being forecast,
-whether it works, or how it was built, and a page that answers "should the model
-be retrained?" before any of those is answering into a vacuum. So:
+v2 is a dashboard first and a writeup second. The first screen answers, without
+scrolling, the three questions a cold visitor actually has — is the data real
+(the pill and the banner), does it beat the baseline and by how much (the KPI
+row), and what is today's drift verdict (the panel beside them). Everything
+below is exploration, one anchored section per question:
 
 | Section | Reads |
 |---|---|
-| What this is / what it runs on | `model.json` → `data`, `models.challenger` |
+| Top bar: live/synthetic pill + refresh stamp | `drift.json` → `is_real`, `pipeline.json` → `generated_at_utc` |
 | Provenance banner | `is_real` — see below |
-| What it delivers | `model.json` → `metrics.*`, `ablation`, `backtest` |
-| How it was made, six stages | `model.json` → `backtest`, `models`, `data` |
-| The forecast, against what happened | `forecast.json` → `history` (scored) and `forward` (live) |
-| Retrain verdict + signal chips | `drift.json` → `verdict`, `drift.*.severity` |
-| Monitoring stats | `monitor.json`, `drift.json` → `thresholds` |
-| Drift over time | `drift.json` → `timeline.points` |
-| Rolling forecast error | `monitor.json` → `daily` |
-| Feature drift right now | `drift.json` → `drift.feature.columns` |
+| Hero KPIs (MAPE, vs baseline, horizons, ablation) | `model.json` → `metrics.*`, `ablation` |
+| Today's drift verdict, first-class | `drift.json` → `verdict`, `measurable`, `reason` |
+| 01 Forecast explorer (zoom/brush, "now" divider) | `forecast.json` → `history` (scored) and `forward` (live) |
+| 02 Drift: monitoring stats | `monitor.json`, `drift.json` → `thresholds` |
+| 02 Drift by feature / drift over time | `drift.json` → `drift.feature.columns`, `timeline.points` |
+| 02 Rolling forecast error | `monitor.json` → `daily` |
+| 03 Error by horizon (MAPE/MAE toggle) | `model.json` → `metrics.*.by_horizon`, `comparison.by_horizon` |
+| 03 Ablation + feature importance | `model.json` → `ablation`, `feature_importance_gain_pct` |
+| 04 The loop: latest run stepper | `pipeline.json` → `steps`, `status`, `seconds` |
+| Provenance footer | `model.json` → `data.panel`, `drift.json` → `windows`, served model |
+
+There is deliberately **no horizon selector on the forecast explorer**:
+`forecast.json` publishes one day-ahead series, not one per horizon, and the
+card says so instead of faking a control. Per-horizon error lives in section 03,
+where the backtest actually measured it. The same rule governs every gap — the
+artifact for a run history, KPI sparklines or forecast quantile bands does not
+exist, so those mockup elements do not either; where a measurement is absent
+(`measurable: false`, an empty `timeline`) the section renders the artifact's
+own `reason` instead of a plausible placeholder.
 
 `model.json` is the fifth artifact and the only one not refreshed daily: it is
 written by `models.train` and changes only when a model is retrained. It carries
 the walk-forward backtest, which answers "is this any good?" as none of the four
-daily artifacts do, and which this page did not read at all until the
-sections above were added.
+daily artifacts do.
+
+`?theme=light` / `?theme=dark` pins the initial theme (the toggle still wins);
+the default follows `prefers-color-scheme`.
 
 ## The verdict card has two shapes
 

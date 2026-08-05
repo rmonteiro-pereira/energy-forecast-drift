@@ -61,7 +61,7 @@ export function FeaturePsiChart({ drift, tokens }: { drift: DriftArtifact; token
         axisLabel: {
           color: tokens["text-muted"],
           fontSize: AXIS_FONT,
-          fontFamily: "ui-monospace, SFMono-Regular, Menlo, Consolas, monospace",
+          fontFamily: '"IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace',
           width: 210,
           overflow: "truncate",
         },

@@ -1,14 +1,19 @@
 /*
- * Every colour the dashboard and its charts use is declared here as a custom
- * property, and read back at render time by `useThemeTokens` — ECharts needs
- * literal hex, so the alternative is a second copy of the palette in TypeScript
- * that silently drifts from this one.
+ * v2 — a control-room ledger, not an article.
+ *
+ * Every colour is a custom property declared here and read back at render time
+ * by `useThemeTokens`; ECharts needs literal hex, and a second copy of the
+ * palette in TypeScript would silently drift from this one.
  *
  * The categorical slots and the status palette come from a validated set
  * (adjacent CVD ΔE >= 8, normal-vision ΔE >= 15, checked in both modes against
  * these two surfaces). Aqua sits below 3:1 on the light surface, so every chart
  * that uses it carries a legend, direct labels and a table view — colour never
  * carries meaning alone here.
+ *
+ * Type: IBM Plex Sans for prose and chrome, IBM Plex Mono for figures,
+ * timestamps and anything that names a file or a field — the instrument-panel
+ * register this page is written in. Both are bundled, not fetched from a CDN.
  */
 
 :root {
@@ -22,20 +27,23 @@
   --grid: #e1e0d9;
   --axis: #c3c2b7;
   --border: rgba(11, 11, 11, 0.1);
+  --wash: rgba(11, 11, 11, 0.035);
 
-  --series-1: #2a78d6; /* blue   — actual / daily MAE / feature PSI */
-  --series-2: #eb6834; /* orange — forecast / rolling mean / target PSI */
+  --series-1: #2a78d6; /* blue   — actual demand */
+  --series-2: #eb6834; /* orange — the model's forecast */
   --series-3: #1baf7a; /* aqua   — prediction PSI */
+  --neutral-series: #898781; /* the baseline: the reference entity, kept recessive */
 
   /* Status is reserved: it only ever means good/warning/serious/critical. */
   --status-good: #0ca30c;
   --status-warning: #fab219;
   --status-serious: #ec835a;
   --status-critical: #d03b3b;
+  --delta-good-text: #006300;
 
   --radius: 10px;
-  --font: system-ui, -apple-system, "Segoe UI", sans-serif;
-  --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+  --font: "IBM Plex Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --mono: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
 }
 
 @media (prefers-color-scheme: dark) {
@@ -49,9 +57,11 @@
     --grid: #2c2c2a;
     --axis: #383835;
     --border: rgba(255, 255, 255, 0.1);
+    --wash: rgba(255, 255, 255, 0.04);
     --series-1: #3987e5;
     --series-2: #d95926;
     --series-3: #199e70;
+    --delta-good-text: #0ca30c;
   }
 }
 
@@ -65,17 +75,35 @@
   --grid: #2c2c2a;
   --axis: #383835;
   --border: rgba(255, 255, 255, 0.1);
+  --wash: rgba(255, 255, 255, 0.04);
   --series-1: #3987e5;
   --series-2: #d95926;
   --series-3: #199e70;
+  --delta-good-text: #0ca30c;
 }
 
 * {
   box-sizing: border-box;
 }
 
+html {
+  scroll-behavior: smooth;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  html {
+    scroll-behavior: auto;
+  }
+  * {
+    animation: none !important;
+    transition: none !important;
+  }
+}
+
 body {
   margin: 0;
+  /* Wide content scrolls inside its own container; the body never does. */
+  overflow-x: clip;
   background: var(--page);
   color: var(--text-primary);
   font-family: var(--font);
@@ -93,46 +121,476 @@ code {
   font-size: 0.9em;
 }
 
-.page {
-  max-width: 1180px;
-  margin: 0 auto;
-  padding: 24px 20px 72px;
+:focus-visible {
+  outline: 2px solid var(--series-1);
+  outline-offset: 2px;
+  border-radius: 4px;
 }
 
-/* --- header ------------------------------------------------------------- */
-.masthead {
+.page {
+  max-width: 1280px;
+  margin: 0 auto;
+  padding: 0 24px 72px;
+}
+
+/* --- top bar -------------------------------------------------------------- */
+.topbar {
+  position: sticky;
+  top: 0;
+  z-index: 20;
+  display: flex;
+  align-items: center;
+  gap: 18px;
+  padding: 10px 0;
+  margin: 0 -24px;
+  padding-left: 24px;
+  padding-right: 24px;
+  background: color-mix(in srgb, var(--page) 86%, transparent);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+  border-bottom: 1px solid var(--border);
+}
+
+.wordmark {
+  font-family: var(--mono);
+  font-weight: 600;
+  font-size: 14px;
+  letter-spacing: -0.01em;
+  text-decoration: none;
+  white-space: nowrap;
+  display: flex;
+  align-items: center;
+  gap: 9px;
+}
+
+.wordmark-pulse {
+  width: 20px;
+  height: 20px;
+  flex: none;
+  color: var(--series-1);
+}
+
+.wordmark-text {
+  display: flex;
+  flex-direction: column;
+  line-height: 1.25;
+}
+
+.wordmark-name {
+  font-size: 14.5px;
+}
+
+.wordmark-sub {
+  font-family: var(--font);
+  font-weight: 400;
+  font-size: 11.5px;
+  color: var(--text-secondary);
+}
+
+.topnav {
+  display: flex;
+  gap: 2px;
+  margin-left: 6px;
+}
+
+.topnav a {
+  font-size: 13px;
+  color: var(--text-secondary);
+  text-decoration: none;
+  padding: 4px 10px;
+  border-radius: 6px;
+}
+
+.topnav a:hover {
+  color: var(--text-primary);
+  background: var(--wash);
+}
+
+.topbar-actions {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+/* The live/synthetic pill — driven by `is_real`, nothing else. */
+.live-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 12.5px;
+  font-weight: 600;
+  font-family: var(--mono);
+  border-radius: 999px;
+  padding: 3px 12px;
+  white-space: nowrap;
+}
+
+.live-pill-real {
+  color: var(--delta-good-text);
+  border: 1px solid color-mix(in srgb, var(--status-good) 45%, transparent);
+  background: color-mix(in srgb, var(--status-good) 9%, var(--surface-1));
+}
+
+.live-pill-synthetic {
+  color: var(--status-critical);
+  border: 1px solid color-mix(in srgb, var(--status-critical) 50%, transparent);
+  background: color-mix(in srgb, var(--status-critical) 10%, var(--surface-1));
+}
+
+.live-pill .dot {
+  width: 7px;
+  height: 7px;
+}
+
+/* --- hero / overview grid -------------------------------------------------- */
+/*
+  One viewport, the whole dashboard: title + KPIs + verdict on the first two
+  rows, then the four mini panels. The deep-dive sections below carry the
+  toolbars and table views the minis deliberately do not.
+*/
+.hero {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) minmax(340px, 400px);
+  grid-template-areas:
+    "kpis kpis verdict"
+    "ovforecast ovforecast ovmonitor"
+    "ovhorizon ovhorizon ovloop";
+  gap: 10px 14px;
+  padding: 12px 0 6px;
+  align-items: stretch;
+}
+
+.hero-title {
+  grid-area: title;
+  align-self: center;
+}
+
+.hero-title h1 {
+  margin: 0;
+  font-size: clamp(22px, 2vw, 27px);
+  line-height: 1.1;
+  letter-spacing: -0.02em;
+  font-weight: 700;
+  display: inline;
+  margin-right: 12px;
+}
+
+.hero-thesis {
+  margin: 4px 0 0;
+  font-size: 14px;
+  line-height: 1.45;
+  color: var(--text-secondary);
+  max-width: 78ch;
+}
+
+.hero-thesis em {
+  color: var(--text-primary);
+  font-style: italic;
+}
+
+.hero-meta {
   display: flex;
   flex-wrap: wrap;
-  gap: 16px;
-  align-items: flex-start;
-  justify-content: space-between;
-  padding: 8px 0 20px;
-}
-
-.masthead h1 {
-  margin: 0;
-  font-size: 22px;
-  letter-spacing: -0.01em;
-}
-
-.masthead p {
-  margin: 4px 0 0;
-  color: var(--text-secondary);
-  font-size: 14px;
-  max-width: 62ch;
-}
-
-.masthead-actions {
-  display: flex;
   gap: 8px;
+  margin-top: 8px;
+}
+
+.ov-panel {
+  background: var(--surface-1);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 11px 14px 5px;
+  min-width: 0;
+}
+
+.ov-forecast {
+  grid-area: ovforecast;
+}
+.ov-monitor {
+  grid-area: ovmonitor;
+}
+.ov-horizon {
+  grid-area: ovhorizon;
+}
+.ov-loop {
+  grid-area: ovloop;
+}
+
+.ov-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 2px;
+}
+
+.ov-title {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 650;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+}
+
+.ov-link {
+  font-size: 12px;
+  font-family: var(--mono);
+  color: var(--text-secondary);
+  text-decoration: none;
+  white-space: nowrap;
+}
+
+.ov-link:hover {
+  color: var(--text-primary);
+  text-decoration: underline;
+}
+
+.ov-foot {
+  margin: 2px 0 6px;
+  font-size: 12px;
+  font-family: var(--mono);
+  color: var(--text-secondary);
+}
+
+/* Overview chart sizes — row 3 pair, then the shorter row 4. Doubled class
+   so these win over the base .chart height regardless of source order. */
+.chart.chart-mini {
+  height: 205px;
+}
+
+.chart.chart-mini2 {
+  height: 148px;
+}
+
+/* In the overview the loop is a compact roster — all six steps visible,
+   no horizontal scroll, no rail. The full strip lives in section 04. */
+.ov-loop .loop-strip {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 3px 14px;
+  padding: 4px 0 6px;
+  overflow: visible;
+}
+
+.ov-loop .loop-step {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  padding: 2px 0;
+}
+
+.ov-loop .loop-step::before {
+  display: none;
+}
+
+.ov-loop .loop-step-dot {
+  width: 16px;
+  height: 16px;
+  font-size: 10px;
+  border-width: 1px;
+}
+
+.ov-loop .loop-step-name {
+  margin-top: 0;
+  font-size: 12px;
+}
+
+.ov-loop .loop-step-time {
+  margin-top: 0;
+  margin-left: auto;
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+/* --- the deep-dive divider ------------------------------------------------- */
+.deepdive {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin: 26px 0 0;
+  color: var(--text-secondary);
+  font-family: var(--mono);
+  font-size: 11.5px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+
+.deepdive::before,
+.deepdive::after {
+  content: "";
+  flex: 1;
+  border-top: 1px dashed var(--axis);
+}
+
+/* --- KPI tiles ------------------------------------------------------------ */
+.kpis {
+  grid-area: kpis;
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 12px;
+  align-self: stretch;
+}
+
+.kpi {
+  display: flex;
+  flex-direction: column;
+  background: var(--surface-1);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 12px 14px 10px;
+  position: relative;
+  overflow: hidden;
+}
+
+/* A 2px instrument tick along the top edge, wearing the entity's colour. */
+.kpi::before {
+  content: "";
+  position: absolute;
+  inset: 0 auto auto 0;
+  width: 100%;
+  height: 2px;
+  background: var(--kpi-accent, var(--series-1));
+  opacity: 0.85;
+}
+
+.kpi-label {
+  font-size: 11.5px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+  color: var(--text-secondary);
+}
+
+.kpi-value {
+  font-family: var(--mono);
+  font-weight: 600;
+  font-size: clamp(24px, 2.1vw, 29px);
+  letter-spacing: -0.03em;
+  line-height: 1.15;
+  margin-top: 4px;
+}
+
+.kpi-unit {
+  font-size: 0.55em;
+  font-weight: 500;
+  color: var(--text-secondary);
+  margin-left: 2px;
+}
+
+.kpi-sub {
+  font-size: 12px;
+  line-height: 1.4;
+  color: var(--text-secondary);
+  margin-top: 4px;
+}
+
+/* --- the verdict, first-class --------------------------------------------- */
+.verdict-panel {
+  grid-area: verdict;
+  align-self: stretch;
+  background: var(--surface-1);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 16px 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-height: 100%;
+}
+
+.verdict-panel-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.verdict-panel-head h2 {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+  color: var(--text-secondary);
+}
+
+.verdict {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+/* The rationale must not stretch the overview rows; the full text lives in
+   the drift section (and in the artifact itself). */
+.verdict-panel .card-note {
+  display: -webkit-box;
+  -webkit-line-clamp: 4;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.verdict-headline {
+  display: flex;
+  gap: 12px;
   align-items: center;
 }
 
-/* --- the honesty banner -------------------------------------------------- */
+.verdict-figure {
+  font-size: clamp(22px, 2.2vw, 28px);
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  line-height: 1.1;
+}
+
+.verdict-rule {
+  font-family: var(--mono);
+  font-size: 11.5px;
+  color: var(--text-secondary);
+  margin-top: 2px;
+}
+
+.signals {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+  margin-top: 4px;
+}
+
+.signal {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 8px 10px;
+  background: var(--page);
+}
+
+.signal-head {
+  display: flex;
+  gap: 7px;
+  align-items: center;
+  font-size: 12.5px;
+  font-weight: 600;
+  text-transform: capitalize;
+}
+
+.signal-detail {
+  margin: 4px 0 0;
+  font-size: 11.5px;
+  color: var(--text-secondary);
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+/* --- honesty banner (tested: classes and roles must survive) -------------- */
 .banner {
   border-radius: var(--radius);
   padding: 16px 18px;
-  margin-bottom: 24px;
+  margin: 8px 0 0;
   display: flex;
   gap: 14px;
   align-items: flex-start;
@@ -143,13 +601,35 @@ code {
   border: 1px solid color-mix(in srgb, var(--status-critical) 45%, transparent);
 }
 
+/* When the data is real the banner is one quiet line, not a hero element. */
 .banner-real {
-  background: color-mix(in srgb, var(--status-good) 10%, var(--surface-1));
-  border: 1px solid color-mix(in srgb, var(--status-good) 40%, transparent);
+  background: color-mix(in srgb, var(--status-good) 7%, var(--surface-1));
+  border: 1px solid color-mix(in srgb, var(--status-good) 30%, transparent);
+  padding: 6px 14px;
+  align-items: center;
+  gap: 10px;
+}
+
+.banner-real h2 {
+  font-size: 13px;
+  margin: 0;
+  display: inline;
+}
+
+.banner-real p {
+  display: inline;
+  margin-left: 8px;
+}
+
+.banner-real > div {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  column-gap: 8px;
 }
 
 .banner-icon {
-  font-size: 22px;
+  font-size: 18px;
   line-height: 1.2;
 }
 
@@ -161,7 +641,7 @@ code {
 
 .banner p {
   margin: 0;
-  font-size: 14px;
+  font-size: 13.5px;
   color: var(--text-secondary);
 }
 
@@ -169,13 +649,57 @@ code {
   margin-top: 6px;
 }
 
-/* --- cards --------------------------------------------------------------- */
+/* --- sections ------------------------------------------------------------- */
+.section {
+  margin-top: 40px;
+  scroll-margin-top: 64px;
+}
+
+.section-head {
+  display: flex;
+  align-items: baseline;
+  gap: 14px;
+  margin-bottom: 4px;
+}
+
+.section-kicker {
+  font-family: var(--mono);
+  font-size: 11.5px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-secondary);
+  white-space: nowrap;
+}
+
+.section-head h2 {
+  margin: 0;
+  font-size: 21px;
+  letter-spacing: -0.015em;
+}
+
+.section-head::after {
+  content: "";
+  flex: 1;
+  border-top: 1px solid var(--border);
+  transform: translateY(-4px);
+}
+
+.section-note {
+  margin: 4px 0 16px;
+  font-size: 14px;
+  line-height: 1.6;
+  color: var(--text-secondary);
+  max-width: 82ch;
+}
+
+/* --- cards ---------------------------------------------------------------- */
 .card {
   background: var(--surface-1);
   border: 1px solid var(--border);
   border-radius: var(--radius);
   padding: 18px 18px 12px;
-  margin-bottom: 20px;
+  margin-bottom: 18px;
 }
 
 .card-head {
@@ -197,67 +721,61 @@ code {
   margin: 4px 0 12px;
   font-size: 13px;
   color: var(--text-secondary);
-  max-width: 80ch;
+  max-width: 84ch;
 }
 
-/* --- verdict ------------------------------------------------------------- */
-.verdict {
+.card-foot {
   display: flex;
   flex-wrap: wrap;
-  gap: 20px;
+  gap: 8px 18px;
   align-items: center;
-  justify-content: space-between;
-}
-
-.verdict-headline {
-  display: flex;
-  gap: 14px;
-  align-items: center;
-}
-
-.verdict-figure {
-  font-size: 30px;
-  font-weight: 700;
-  letter-spacing: -0.02em;
-  line-height: 1.1;
-}
-
-.verdict-rule {
-  font-family: var(--mono);
-  font-size: 12px;
-  color: var(--text-muted);
-}
-
-.signals {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
-  gap: 10px;
-  margin-top: 16px;
-}
-
-.signal {
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  padding: 10px 12px;
-  background: var(--page);
-}
-
-.signal-head {
-  display: flex;
-  gap: 7px;
-  align-items: center;
-  font-size: 13px;
-  font-weight: 600;
-  text-transform: capitalize;
-}
-
-.signal-detail {
-  margin: 5px 0 0;
+  border-top: 1px solid var(--grid);
+  margin-top: 8px;
+  padding: 8px 0 2px;
   font-size: 12px;
   color: var(--text-secondary);
 }
 
-/* Status is always icon + label + colour, never colour alone. */
+.card-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+  gap: 18px;
+  align-items: start;
+}
+
+.card-grid > .card {
+  margin-bottom: 0;
+}
+
+/* --- honest empty state --------------------------------------------------- */
+.empty-panel {
+  border: 1px dashed var(--axis);
+  border-radius: 8px;
+  padding: 22px 20px;
+  background: var(--wash);
+  max-width: none;
+}
+
+.empty-panel-title {
+  font-weight: 650;
+  font-size: 14px;
+  margin: 0 0 6px;
+}
+
+.empty-panel p {
+  margin: 0;
+  font-size: 13.5px;
+  line-height: 1.6;
+  color: var(--text-secondary);
+  max-width: 76ch;
+}
+
+.empty-panel .mono-note {
+  display: block;
+  margin-top: 8px;
+}
+
+/* --- status dots ----------------------------------------------------------- */
 .dot {
   width: 9px;
   height: 9px;
@@ -308,37 +826,48 @@ code {
   white-space: nowrap;
 }
 
-/* --- stat strip ---------------------------------------------------------- */
+.tag code {
+  font-size: 11px;
+}
+
+.tag-mono {
+  font-family: var(--mono);
+  font-size: 11.5px;
+}
+
+/* --- secondary stat strip -------------------------------------------------- */
 .stats {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
-  gap: 14px;
-  margin-bottom: 20px;
+  gap: 12px;
+  margin-bottom: 18px;
 }
 
 .stat {
   background: var(--surface-1);
   border: 1px solid var(--border);
   border-radius: var(--radius);
-  padding: 14px 16px;
+  padding: 12px 16px;
 }
 
 .stat-label {
-  font-size: 12px;
+  font-size: 11.5px;
   text-transform: uppercase;
   letter-spacing: 0.06em;
-  color: var(--text-muted);
+  color: var(--text-secondary);
+  font-weight: 600;
 }
 
 .stat-value {
-  font-size: 26px;
-  font-weight: 680;
+  font-family: var(--mono);
+  font-size: 23px;
+  font-weight: 600;
   letter-spacing: -0.02em;
   margin-top: 2px;
 }
 
 .stat-unit {
-  font-size: 14px;
+  font-size: 13px;
   font-weight: 500;
   color: var(--text-secondary);
   margin-left: 4px;
@@ -350,23 +879,31 @@ code {
   margin-top: 3px;
 }
 
-/* --- charts -------------------------------------------------------------- */
+/* --- charts ---------------------------------------------------------------- */
 .chart {
   width: 100%;
   /* Sized to include the x-axis band, so the card never grows a nested scroll. */
-  height: 340px;
+  height: 360px;
 }
 
 .chart-tall {
-  /* 20 feature rows plus the axis band — sized to fit, so the card never grows
-     a nested vertical scroll. */
+  /* 20 feature rows plus the axis band — sized to fit without inner scroll. */
   height: 520px;
 }
 
-/* --- buttons + table view ------------------------------------------------ */
+.chart-zoomable {
+  /* Extra room for the dataZoom slider strip under the axis. */
+  height: 420px;
+}
+
+.chart-short {
+  height: 300px;
+}
+
+/* --- buttons, segmented control, table view -------------------------------- */
 button {
   font: inherit;
-  font-size: 12px;
+  font-size: 12.5px;
   color: var(--text-secondary);
   background: var(--page);
   border: 1px solid var(--border);
@@ -387,9 +924,46 @@ button[aria-pressed="true"] {
   background: var(--surface-1);
 }
 
+.seg {
+  display: inline-flex;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  overflow: hidden;
+  background: var(--page);
+}
+
+.seg button {
+  border: none;
+  border-radius: 0;
+  min-height: 26px;
+  padding: 3px 12px;
+  background: transparent;
+  font-family: var(--mono);
+  font-size: 12px;
+}
+
+.seg button + button {
+  border-left: 1px solid var(--border);
+}
+
+.seg button[aria-pressed="true"] {
+  background: var(--surface-1);
+  color: var(--text-primary);
+  font-weight: 600;
+}
+
+.chart-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  justify-content: flex-end;
+  align-items: center;
+  margin-bottom: 6px;
+}
+
 .table-wrap {
   overflow-x: auto;
-  max-height: 340px;
+  max-height: 360px;
   overflow-y: auto;
   border: 1px solid var(--border);
   border-radius: 8px;
@@ -427,9 +1001,134 @@ tbody tr:last-child td {
   border-bottom: none;
 }
 
-/* --- footer -------------------------------------------------------------- */
+/* --- the loop -------------------------------------------------------------- */
+.loop-strip {
+  list-style: none;
+  margin: 0;
+  display: flex;
+  align-items: stretch;
+  gap: 0;
+  overflow-x: auto;
+  padding: 6px 0 10px;
+}
+
+.loop-step {
+  flex: 1 1 0;
+  min-width: 118px;
+  position: relative;
+  padding: 10px 14px 8px;
+}
+
+/* The rail that carries the eye from step to step. */
+.loop-step::before {
+  content: "";
+  position: absolute;
+  top: 21px;
+  left: 0;
+  right: 0;
+  border-top: 1px solid var(--axis);
+}
+
+.loop-step:first-child::before {
+  left: 14px;
+}
+
+.loop-step:last-child::before {
+  right: auto;
+  width: 14px;
+}
+
+.loop-step-dot {
+  position: relative;
+  z-index: 1;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--surface-1);
+  border: 1.5px solid var(--status-good);
+  color: var(--delta-good-text);
+  font-size: 12px;
+  line-height: 1;
+}
+
+.loop-step-dot.loop-step-failed {
+  border-color: var(--status-critical);
+  color: var(--status-critical);
+}
+
+.loop-step-name {
+  font-family: var(--mono);
+  font-size: 12.5px;
+  font-weight: 600;
+  margin-top: 8px;
+}
+
+.loop-step-time {
+  font-family: var(--mono);
+  font-size: 11.5px;
+  color: var(--text-secondary);
+  margin-top: 1px;
+}
+
+/* --- how it was made, condensed -------------------------------------------- */
+.stages {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+  gap: 14px;
+}
+
+.stage {
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface-1);
+  padding: 13px 15px;
+}
+
+.stage-mark {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+}
+
+.stage-index {
+  font-family: var(--mono);
+  font-variant-numeric: tabular-nums;
+  font-size: 11.5px;
+  color: var(--text-secondary);
+}
+
+.stage-step {
+  font-family: var(--mono);
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--text-secondary);
+}
+
+.stage-body h3 {
+  margin: 6px 0 4px;
+  font-size: 14px;
+  font-weight: 640;
+  letter-spacing: -0.005em;
+}
+
+.stage-body p {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.55;
+  color: var(--text-secondary);
+}
+
+/* --- footer ----------------------------------------------------------------- */
 .footer {
-  margin-top: 32px;
+  margin-top: 44px;
   padding-top: 18px;
   border-top: 1px solid var(--border);
   font-size: 13px;
@@ -438,6 +1137,27 @@ tbody tr:last-child td {
 
 .footer code {
   color: var(--text-primary);
+}
+
+.footer-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: 18px 28px;
+  margin-bottom: 14px;
+}
+
+.footer-grid h3 {
+  margin: 0 0 6px;
+  font-size: 11.5px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+  color: var(--text-secondary);
+}
+
+.footer-grid p {
+  margin: 0 0 6px;
+  line-height: 1.55;
 }
 
 .state {
@@ -452,175 +1172,106 @@ tbody tr:last-child td {
   transition: opacity 120ms ease-out;
 }
 
-/* --- the explanatory layer ----------------------------------------------- */
-/*
-  Prose, not chrome. A reader who has never seen this repository needs to be
-  told what is being forecast before being shown how well — so these sections
-  are typeset to be read (measure capped near 68 characters, generous leading)
-  rather than scanned like the stat strip below them.
-*/
-.masthead-lede {
-  margin: 6px 0 0;
-  color: var(--text-secondary);
-  font-size: 15px;
-  line-height: 1.5;
-  max-width: 62ch;
-}
-
-.explainer {
-  display: grid;
-  grid-template-columns: minmax(0, 1.35fr) minmax(0, 1fr);
-  gap: 28px;
-  padding: 4px 0 26px;
-  border-bottom: 1px solid var(--border);
-  margin-bottom: 26px;
-}
-
-.explainer-block h2 {
-  margin: 0 0 10px;
-  font-size: 13px;
-  text-transform: uppercase;
-  letter-spacing: 0.08em;
-  color: var(--text-muted);
-  font-weight: 620;
-}
-
-.explainer-block p {
-  margin: 0 0 12px;
-  font-size: 15px;
-  line-height: 1.62;
-  color: var(--text-primary);
-  max-width: 68ch;
-}
-
-.explainer-block p:last-child {
-  margin-bottom: 0;
-}
-
-.fact-list {
-  margin: 0;
-  padding: 0;
-  list-style: none;
-  display: grid;
-  gap: 10px;
-}
-
-.fact-list li {
-  font-size: 14px;
-  line-height: 1.5;
-  color: var(--text-secondary);
-  padding-left: 16px;
-  position: relative;
-}
-
-.fact-list li::before {
-  content: "";
-  position: absolute;
-  left: 0;
-  top: 8px;
-  width: 6px;
-  height: 6px;
-  border-radius: 50%;
-  background: var(--border);
-}
-
-.section-heading {
-  margin: 30px 0 6px;
-  font-size: 19px;
-  letter-spacing: -0.01em;
-}
-
-.section-note {
-  margin: 0 0 18px;
-  font-size: 14px;
-  line-height: 1.62;
-  color: var(--text-secondary);
-  max-width: 78ch;
-}
-
 .mono-note {
-  font-family: ui-monospace, "SF Mono", "Cascadia Mono", Menlo, monospace;
+  font-family: var(--mono);
   font-size: 12px;
-  color: var(--text-muted);
-}
-
-/* --- how it was made ----------------------------------------------------- */
-/*
-  Numbered because the order is the argument: each stage exists to close a hole
-  the one before it opened. The rail on the left is a single border rather than
-  per-item connectors, so it stays continuous when an item wraps.
-*/
-.stages {
-  list-style: none;
-  margin: 0 0 26px;
-  padding: 0 0 0 4px;
-  display: grid;
-  gap: 2px;
-}
-
-.stage {
-  display: grid;
-  grid-template-columns: 132px minmax(0, 1fr);
-  gap: 18px;
-  padding: 16px 0;
-  border-top: 1px solid var(--border);
-}
-
-.stage:last-child {
-  border-bottom: 1px solid var(--border);
-}
-
-.stage-mark {
-  display: flex;
-  align-items: baseline;
-  gap: 8px;
-}
-
-.stage-index {
-  font-variant-numeric: tabular-nums;
-  font-size: 12px;
-  color: var(--text-muted);
-  min-width: 14px;
-}
-
-.stage-step {
-  font-size: 13px;
-  font-weight: 640;
-  letter-spacing: 0.02em;
-  color: var(--text-primary);
-}
-
-.stage-body h3 {
-  margin: 0 0 6px;
-  font-size: 15px;
-  font-weight: 620;
-  letter-spacing: -0.005em;
-}
-
-.stage-body p {
-  margin: 0;
-  font-size: 14px;
-  line-height: 1.62;
   color: var(--text-secondary);
-  max-width: 74ch;
 }
 
-@media (max-width: 860px) {
-  .explainer {
-    grid-template-columns: minmax(0, 1fr);
-    gap: 22px;
+/* --- responsive ------------------------------------------------------------- */
+/* The nav links go first when the bar tightens; the pill and toggle stay. */
+@media (max-width: 1200px) {
+  .topnav {
+    display: none;
   }
-  .stage {
+}
+
+@media (max-width: 1100px) {
+  .kpis {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 1100px) {
+  .hero {
     grid-template-columns: minmax(0, 1fr);
-    gap: 8px;
+    grid-template-areas:
+      "title"
+      "verdict"
+      "kpis";
+    padding-top: 18px;
+  }
+  .verdict-panel {
+    min-height: 0;
+  }
+  .signal-detail {
+    -webkit-line-clamp: 2;
   }
 }
 
 @media (max-width: 640px) {
-  .chart {
-    height: 300px;
+  .page {
+    padding: 0 14px 56px;
+  }
+  .topbar {
+    margin: 0 -14px;
+    padding-left: 14px;
+    padding-right: 14px;
+    gap: 10px;
+  }
+  .wordmark-sub {
+    display: none;
+  }
+  .wordmark-name {
+    font-size: 13px;
+  }
+  .wordmark-pulse {
+    width: 16px;
+    height: 16px;
+  }
+  .wordmark {
+    gap: 7px;
+  }
+  .live-pill {
+    font-size: 11.5px;
+    padding: 2px 9px;
+  }
+  .topbar button {
+    padding: 3px 8px;
+    min-height: 26px;
+  }
+  .chart,
+  .chart-short {
+    height: 280px;
+  }
+  .chart-zoomable {
+    height: 340px;
+  }
+  .chart-tall {
+    height: 460px;
+  }
+  .kpi {
+    padding: 10px 12px 9px;
+  }
+  .kpi-value {
+    font-size: 22px;
+  }
+  .kpi-sub {
+    display: none;
   }
   .verdict-figure {
-    font-size: 24px;
+    font-size: 20px;
+  }
+  .signals {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .signal-detail {
+    display: none;
+  }
+  .hero-meta {
+    display: none;
+  }
+  .refreshed-tag {
+    display: none;
   }
 }
