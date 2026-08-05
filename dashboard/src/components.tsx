@@ -9,9 +9,9 @@
  * it changes shape (not just wording) between the two states.
  */
 
-import { useState, type ReactNode } from "react";
+import { useState, type CSSProperties, type ReactNode } from "react";
 
-import type { DriftArtifact, Severity, VerdictAction } from "./types";
+import type { DriftArtifact, PipelineStep, Severity, VerdictAction } from "./types";
 
 const SEVERITY_CLASS: Record<Severity, string> = {
   ok: "status-ok",
@@ -309,5 +309,104 @@ export function Stat({
       </div>
       {sub ? <div className="stat-sub">{sub}</div> : null}
     </div>
+  );
+}
+
+/**
+ * A hero KPI tile. Same contract as `Stat` — value arrives already formatted
+ * from the artifact, never computed here — plus an accent colour for the 2px
+ * tick along the top edge, which names the entity the number belongs to.
+ */
+export function Kpi({
+  label,
+  value,
+  unit,
+  sub,
+  accent,
+}: {
+  label: string;
+  value: string;
+  unit?: string;
+  sub?: ReactNode;
+  accent?: string;
+}) {
+  return (
+    <div className="kpi" style={accent ? ({ "--kpi-accent": accent } as CSSProperties) : undefined}>
+      <div className="kpi-label">{label}</div>
+      <div className="kpi-value">
+        {value}
+        {unit ? <span className="kpi-unit">{unit}</span> : null}
+      </div>
+      {sub ? <div className="kpi-sub">{sub}</div> : null}
+    </div>
+  );
+}
+
+/**
+ * The compact provenance pill in the top bar. Like the banner it is driven by
+ * `is_real` and by nothing else; unlike the banner it is glanceable — the full
+ * explanation stays in `ProvenanceBanner`, which this never replaces.
+ */
+export function LiveBadge({ isReal }: { isReal: boolean }) {
+  return (
+    <span className={`live-pill ${isReal ? "live-pill-real" : "live-pill-synthetic"}`}>
+      <span
+        className={`dot ${isReal ? "status-ok" : "status-alert"}`}
+        aria-hidden="true"
+      />
+      {isReal ? "Live data" : "Synthetic data"}
+    </span>
+  );
+}
+
+/**
+ * The honest degraded state. When an artifact says a measurement does not
+ * exist yet, the section renders this — the artifact's own `reason` quoted
+ * verbatim — rather than a plausible placeholder chart.
+ */
+export function EmptyPanel({
+  title,
+  children,
+  reason,
+}: {
+  title: string;
+  children: ReactNode;
+  reason?: string | null;
+}) {
+  return (
+    <div className="empty-panel">
+      <p className="empty-panel-title">{title}</p>
+      <p>{children}</p>
+      {reason ? <span className="mono-note">{reason}</span> : null}
+    </div>
+  );
+}
+
+/**
+ * The daily loop, drawn from `pipeline.json`'s step list. Only what the
+ * artifact records is shown: step name, status, duration. The artifact carries
+ * no per-step timestamps and no run history, so neither is invented.
+ */
+export function LoopStrip({ steps }: { steps: PipelineStep[] }) {
+  return (
+    <ol className="loop-strip">
+      {steps.map((step) => {
+        const ok = step.status === "ok";
+        return (
+          <li className="loop-step" key={step.step}>
+            <span
+              className={`loop-step-dot${ok ? "" : " loop-step-failed"}`}
+              aria-hidden="true"
+            >
+              {ok ? "✓" : "✕"}
+            </span>
+            <div className="loop-step-name">{step.step}</div>
+            <div className="loop-step-time">
+              {step.seconds.toFixed(1)}s · <span className="sr-label">{ok ? "ok" : step.status}</span>
+            </div>
+          </li>
+        );
+      })}
+    </ol>
   );
 }
