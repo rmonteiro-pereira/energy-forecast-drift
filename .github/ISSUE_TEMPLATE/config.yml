@@ -3,6 +3,6 @@ contact_links:
   - name: Security vulnerability
     url: https://github.com/rmonteiro-pereira/energy-forecast-drift/security/advisories/new
     about: Report privately, not as a public issue. See SECURITY.md for scope.
-  - name: "Question: why are baseline.json and model.json still synthetic?"
-    url: https://github.com/rmonteiro-pereira/energy-forecast-drift/blob/main/docs/BLOCKED.md
-    about: The demand data is real; no model has been trained on it yet. Documented, not a defect.
+  - name: "Question: which numbers are real?"
+    url: https://github.com/rmonteiro-pereira/energy-forecast-drift/blob/main/README.md#what-is-real-and-what-is-not
+    about: All of them, since 2026-08-05 — every committed artifact carries is_real true. The flag, not prose, is the authority.
