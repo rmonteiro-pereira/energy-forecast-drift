@@ -36,8 +36,14 @@ const PRODUCER: Record<string, string> = {
   "model.json": "uv run python -m models.train",
 };
 
+/**
+ * Default cache mode, not `no-store`: freshness is enforced by response
+ * headers (the dev plugin sends `Cache-Control: no-store`; Vercel serves
+ * statics with `must-revalidate`), and a `no-store` request would refuse to
+ * reuse the `<link rel="preload">` in index.html, downloading everything twice.
+ */
 async function fetchJson<T>(name: string): Promise<T> {
-  const response = await fetch(`${BASE}/${name}`, { cache: "no-store" });
+  const response = await fetch(`${BASE}/${name}`);
   if (!response.ok) {
     const command = PRODUCER[name] ?? "uv run python -m pipeline.daily";
     throw new Error(`${name}: HTTP ${response.status}. Run \`${command}\` first.`);

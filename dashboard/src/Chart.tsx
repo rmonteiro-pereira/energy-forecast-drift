@@ -12,6 +12,8 @@
 
 import { BarChart, LineChart, ScatterChart } from "echarts/charts";
 import {
+  DataZoomInsideComponent,
+  DataZoomSliderComponent,
   GridComponent,
   LegendComponent,
   MarkAreaComponent,
@@ -39,6 +41,8 @@ echarts.use([
   LegendComponent,
   MarkLineComponent,
   MarkAreaComponent,
+  DataZoomInsideComponent,
+  DataZoomSliderComponent,
   CanvasRenderer,
 ]);
 

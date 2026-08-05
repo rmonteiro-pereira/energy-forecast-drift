@@ -8,9 +8,20 @@
       content="Hourly electricity demand forecast with live drift monitoring — forecast vs actual, drift over time, rolling MAE and the retrain verdict."
     />
     <title>energy-forecast-drift — monitoring</title>
+    <!--
+      The artifacts are fetched at runtime (never bundled — see vite.config.ts).
+      Preloading lets the JSON download in parallel with the JavaScript instead
+      of waiting behind it. Relative hrefs so BASE_URL subpaths keep working.
+    -->
+    <link rel="preload" href="./data/forecast.json" as="fetch" crossorigin="anonymous" />
+    <link rel="preload" href="./data/monitor.json" as="fetch" crossorigin="anonymous" />
+    <link rel="preload" href="./data/drift.json" as="fetch" crossorigin="anonymous" />
+    <link rel="preload" href="./data/pipeline.json" as="fetch" crossorigin="anonymous" />
+    <link rel="preload" href="./data/model.json" as="fetch" crossorigin="anonymous" />
   </head>
   <body>
-    <div id="root"></div>
+    <!-- A static first paint; React replaces it on mount. -->
+    <div id="root"><div style="padding:48px 20px;text-align:center;color:#898781;font-family:system-ui,sans-serif">Loading metrics…</div></div>
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>
