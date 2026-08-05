@@ -24,7 +24,7 @@ dependencies = [
 # laptop produces a red build.
 dev = [
     "evidently>=0.7.21",
-    "mutmut>=2.4,<3",
+    "mutmut>=3.7.0,<4",
     "mypy>=2.3.0",
     "pandas-stubs>=3.0.5.260730",
     "pytest>=8.0",
