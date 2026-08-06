@@ -61,7 +61,7 @@ a run with nothing on the far side of that boundary publishes
 
 | | Status | Notes |
 |---|---|---|
-| **The code** | ✅ real, complete, tested | 387 Python tests + 7 dashboard tests, no network. Every path below runs today, and [`docs/REPRODUCE.md`](docs/REPRODUCE.md) has the transcripts. The tests are themselves measured — see [mutation testing](docs/MUTATION-TESTING.md). |
+| **The code** | ✅ real, complete, tested | 493 Python tests + 7 dashboard tests, no network. Every path below runs today, and [`docs/REPRODUCE.md`](docs/REPRODUCE.md) has the transcripts. The tests are themselves measured — see [mutation testing](docs/MUTATION-TESTING.md). |
 | **EIA hourly demand** | ✅ **real** | 17,520 hourly PJM rows, 2024-08-01 → 2026-08-01, **0 missing hours**, pulled by the finished client the day the key landed. |
 | **Open-Meteo weather** | ✅ **real, and it now reaches the model** | It always reached [`docs/DRIFT-EVALUATION.md`](docs/DRIFT-EVALUATION.md) — real Philadelphia ERA5, derived results committed, raw series cached under gitignored `reports/`. It could not reach the *model* while `resolve_panel` fell back to the fixture as a whole; with real demand in the lake it no longer does. **Caveat on the committed artifacts:** they were produced on 2026-08-01 and record `"weather_site": "philadelphia_pa"`, i.e. one city. The nine-metro blend and the archived day-ahead forecast landed *after* them; no published run has used those yet. |
 | **`forecast.json`, `monitor.json`, `drift.json`, `pipeline.json`** | ✅ **real** | `"is_real": true`, `"kind": "eia_api_v2"`. The rolling MAE, the MAPE, the bias, the PSI/KS signals and the retrain verdict are all measurements of PJM load. |
@@ -179,7 +179,7 @@ uv run python -m drift.run --out metrics/drift.json   # M4: 4 drift types + retr
 uv run python -m pipeline.daily  # M5: the whole loop -> metrics/*.json + PNGs
 uv run python -m serving         # M5: FastAPI on :8000, /forecast from @champion
 
-uv run pytest -v               # 387 tests, no network
+uv run pytest -v               # 493 tests, no network
 
 cd dashboard && npm ci && npm test && npm run build   # M6: static dist/ over metrics/*.json
 ```
@@ -189,8 +189,8 @@ Every command above is captured verbatim, with its real output and exit code, in
 
 `python -m models.train` is the train/eval entrypoint: it scores **both** models
 on the same folds, logs the run to MLflow, registers the refit LightGBM and
-writes `metrics/model.json` + `metrics/model_table.md`. It takes ~1 min on the
-fixture (56 refits), plus a one-off ~40 s the first time it creates `mlflow.db`.
+writes `metrics/model.json` + `metrics/model_table.md`. It takes ~100 s on the
+fixture (55 refits), plus a one-off ~40 s the first time it creates `mlflow.db`.
 
 Useful flags:
 
@@ -217,7 +217,7 @@ one week earlier. For an hourly load series this single lag captures the daily
 shape *and* the weekday/weekend split, which makes it a genuinely hard trivial
 benchmark, and a much fairer one than a 24 h naive.
 
-**Protocol:** walk-forward, 56 daily folds over the last 8 weeks. At each fold
+**Protocol:** walk-forward, 55 daily folds over the last 8 weeks. At each fold
 cutoff `T0` the model sees the series strictly before `T0` and forecasts
 `T0+1 … T0+24`. Metrics are computed per horizon, then pooled.
 
@@ -293,9 +293,9 @@ population — a public, checkable proxy for load share, not a PJM zonal figure.
 `fcst_temperature_spread_c` carries what the blend throws away: 18 °C everywhere,
 against 8 °C in Chicago and 28 °C in Richmond, are not the same load.
 
-**Refit cadence:** the model is **retrained at every one of the 56 fold
+**Refit cadence:** the model is **retrained at every one of the 55 fold
 cutoffs**, on exactly the rows whose target hour had already happened at that
-instant. Fold 56's model never sees anything fold 1's model could not have seen.
+instant. Fold 55's model never sees anything fold 1's model could not have seen.
 
 <details>
 <summary><b>⚠️ FIXTURE-ERA OUTPUT (historical) — not a result, not a benchmark. Click only if you accept that.</b></summary>
@@ -728,7 +728,7 @@ metrics/    committed artifacts: baseline.json, model.json, drift.json,
             forecast.json, monitor.json, pipeline.json + tables + 2 PNGs
 dashboard/  Vite + React + ECharts over metrics/*.json — no deploy step here
             components.test.tsx  the banner tests (vitest)
-tests/      387 Python tests: idempotency, leakage (backtest *and* features),
+tests/      493 Python tests: idempotency, leakage (backtest *and* features),
             retries, secret redaction, registry wiring, PSI/KS vs scipy, drift
             injection, threshold boundaries, the daily chain, the HTTP surface,
             both workflow YAMLs, and the artifacts' own honesty contract
@@ -775,8 +775,9 @@ the dashboard is a static `dist/`. No server stays on.
   PR, and the house rules that exist for a reason.
 - **[SECURITY.md](SECURITY.md)** — how to report something privately, and exactly
   how the one secret in this project is handled.
-- **[MIT](LICENSE)** — the code is yours to use. The numbers are not results, so
-  there is nothing there to cite.
+- **[MIT](LICENSE)** — the code is yours to use. The numbers in `metrics/` are
+  measurements of PJM load and carry `"is_real": true`; cite them by pointing at
+  the artifact and the commit, because the daily cron moves them.
 
 - **Upstream data.** Weather data by [Open-Meteo.com](https://open-meteo.com/),
   licensed **[CC BY 4.0](https://creativecommons.org/licenses/by/4.0/)**, derived

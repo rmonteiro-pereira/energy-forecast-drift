@@ -33,12 +33,35 @@ dev = [
     "types-pyyaml>=6.0.12.20260724",
 ]
 
+# The foundation-model lane. Deliberately NOT installed by CI: `ci.yml` syncs
+# `--extra dev` and nothing else, so torch never reaches the `test` job. The
+# smallest usable Chronos-Bolt checkpoint is 34,622,352 bytes -- 6.6x the 5 MiB
+# ceiling -- so nothing here can be vendored either. `foundation.tsfm.load`
+# fetches at dispatch time; CI runs the lane against `foundation.stub`.
+foundation = [
+    "torch>=2.4",
+    "chronos-forecasting>=1.5",
+]
+
+# Torch from the CPU index, and this is not a preference. Resolving `torch` from
+# PyPI pulled eighteen NVIDIA/CUDA packages into `uv.lock` -- several gigabytes of
+# wheels for hardware the implementer is not assumed to have, on a lane whose
+# whole premise is "no GPU guaranteed". `explicit = true` keeps the index scoped
+# to torch instead of shadowing every other resolution.
+[[tool.uv.index]]
+name = "pytorch-cpu"
+url = "https://download.pytorch.org/whl/cpu"
+explicit = true
+
+[tool.uv.sources]
+torch = [{ index = "pytorch-cpu" }]
+
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
-packages = ["ingest", "features", "models", "drift"]
+packages = ["ingest", "features", "models", "drift", "foundation"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
@@ -71,7 +94,7 @@ select = ["E", "F", "I", "UP", "B", "SIM", "RUF"]
 # ---------------------------------------------------------------------------
 [tool.mypy]
 python_version = "3.11"
-files = ["ingest", "features", "models", "drift", "pipeline", "serving"]
+files = ["ingest", "features", "models", "drift", "pipeline", "serving", "foundation"]
 ignore_missing_imports = true      # lightgbm, mlflow and evidently ship no stubs
 warn_unused_configs = true
 warn_redundant_casts = true
@@ -107,6 +130,12 @@ module = [
     "features.panel",
     "ingest.eia",
     "ingest.store",
+    # Same reason as the rest of this list, not a new exemption: `guard_contiguity`
+    # is index arithmetic on a DatetimeIndex, and pandas-stubs rejects
+    # `pd.DatetimeIndex(Sequence[Timestamp])` and `Index.difference(Index)` as
+    # arg-type errors that no correct code can satisfy. `foundation.tsfm` and
+    # `foundation.stub` stay in the strict tier, where they belong.
+    "foundation.guards",
     "models.backtest",
     "models.lgbm",
     "models.train",
@@ -143,4 +172,4 @@ disable_error_code = ["operator", "arg-type", "union-attr", "index", "call-overl
 [tool.mutmut]
 paths_to_mutate = "drift/detectors.py,models/backtest.py"
 tests_dir = "tests/"
-runner = "python -m pytest -x -q -p no:warnings --no-header tests/test_drift_detectors.py tests/test_drift_boundaries.py tests/test_drift_timeline.py tests/test_drift_trigger.py tests/test_backtest.py tests/test_backtest_accounting.py tests/test_baseline.py"
+runner = "python -m pytest -x -q -p no:warnings --no-header tests/test_drift_detectors.py tests/test_drift_boundaries.py tests/test_drift_timeline.py tests/test_drift_trigger.py tests/test_backtest.py tests/test_backtest_accounting.py tests/test_baseline.py tests/test_fold_identity.py"

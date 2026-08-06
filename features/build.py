@@ -55,6 +55,8 @@ on any row where that is not true — see `FORECAST_PUBLISHED_HOUR_UTC`.
 
 from __future__ import annotations
 
+from collections.abc import Sequence
+
 import numpy as np
 import pandas as pd
 from pandas.api.typing import Rolling
@@ -203,16 +205,78 @@ def training_origins(
     return pd.date_range(first.ceil("h"), last, freq=f"{stride_hours}h")
 
 
+def blank_features(design: pd.DataFrame, names: Sequence[str]) -> pd.DataFrame:
+    """Make the named features carry no information, keeping the layout intact.
+
+    Why this exists rather than dropping columns: the ablation already in the
+    repo (`models.train.ablate_forecast_weather`) removes *panel* columns, and
+    that has a hard floor at 17 informative features — the calendar features are
+    not panel columns at all. `hour`, `dayofweek`, `month`, `is_weekend` and
+    `is_holiday` are computed here from the target timestamp, so no amount of
+    dropping panel columns can reach them. An arm that sees demand and nothing
+    else is unreachable by the existing mechanism, and that arm is the only
+    honest floor for a univariate model.
+
+    Blanking rather than dropping keeps the design at its full width, so every
+    arm has the same layout and `features_informative` is a property of the
+    data, not of the frame's shape.
+
+    Continuous features are blanked to NaN, which LightGBM consumes natively.
+    The three categoricals are blanked to a **constant** instead, because
+    `feature_frame` casts them to `int16` and an all-NaN integer cast raises. A
+    constant column is equally uninformative — a tree cannot split on it — and
+    it keeps the categorical contract intact.
+    """
+    unknown = sorted(set(names) - set(FEATURE_COLUMNS))
+    if unknown:
+        raise ValueError(f"Not features of this design: {unknown}")
+    if "horizon_h" in names:
+        raise ValueError(
+            "`horizon_h` is the key of the direct multi-horizon design, not an "
+            "ablatable feature; blanking it would merge 24 problems into one."
+        )
+
+    out = design.copy()
+    for name in names:
+        if name in CATEGORICAL_FEATURES:
+            out[name] = np.zeros(len(out), dtype="int16")
+        else:
+            out[name] = np.nan
+    return out
+
+
+def informative_features(design: pd.DataFrame) -> list[str]:
+    """The features that could actually inform a split: not all-null, not constant.
+
+    This is what the artifact reports, and it is deliberately measured from the
+    frame rather than declared by the caller — a caller that says "12 features"
+    while handing the model 13 is exactly the failure the arm-composition gate
+    exists to catch.
+    """
+    return [
+        name
+        for name in FEATURE_COLUMNS
+        if design[name].notna().any() and design[name].nunique(dropna=True) > 1
+    ]
+
+
 def build_design_matrix(
     panel: pd.DataFrame,
     origins: pd.DatetimeIndex,
     horizons: tuple[int, ...] = tuple(range(1, 25)),
+    drop_features: Sequence[str] = (),
 ) -> pd.DataFrame:
     """One row per (origin, horizon): features known at `origin`, label at `target`.
 
     `panel` must be the gapless hourly panel from `features.panel.build_panel`.
     The label column `y` is the actual demand at `target_utc`, left NaN when the
     hour has not happened yet — callers drop those rows before fitting.
+
+    `drop_features` blanks the named features after they are computed, via
+    `blank_features`. It has to be applied identically when training and when
+    predicting, or the model is asked at inference for information it never saw
+    while fitting; `models.lgbm.WalkForwardLightGBM` carries one value and uses
+    it in both places for exactly that reason.
     """
     origins = pd.DatetimeIndex(origins)
     horizons = tuple(sorted(horizons))
@@ -295,7 +359,8 @@ def build_design_matrix(
     out[FORECAST_ANOMALY_FEATURE] = out["temp_fcst_target"] - out["temp_lag_168h"]
 
     out[TARGET_COLUMN] = demand.reindex(target_col).to_numpy(dtype="float64")
-    return out[list(DESIGN_COLUMNS)]
+    out = out[list(DESIGN_COLUMNS)]
+    return blank_features(out, drop_features) if drop_features else out
 
 
 def feature_frame(design: pd.DataFrame) -> pd.DataFrame:

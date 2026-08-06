@@ -97,6 +97,16 @@ class WalkForwardLightGBM:
     params: dict = field(default_factory=dict)
     num_boost_round: int = DEFAULT_NUM_BOOST_ROUND
     train_stride_hours: int = 6
+    #: Features blanked in *both* the training and the prediction design. One
+    #: value, used in both places, because applying an ablation to only one of
+    #: them asks the model at inference for information it never fitted on.
+    drop_features: tuple[str, ...] = ()
+    #: When set, fit **once** on the rows observable at this instant and reuse
+    #: that booster for every fold — the refit cadence of a zero-shot model,
+    #: which refits never. It is pinned rather than inferred because the anchor
+    #: is otherwise a free parameter sitting under the comparison: moving it
+    #: moves this arm's MAE by roughly 3x.
+    freeze_at: pd.Timestamp | None = None
 
     train_design: pd.DataFrame = field(init=False, repr=False)
     fits: int = field(init=False, default=0)
@@ -109,7 +119,9 @@ class WalkForwardLightGBM:
             stride_hours=self.train_stride_hours,
             max_horizon=max(self.horizons),
         )
-        self.train_design = build_mod.build_design_matrix(self.panel, origins, self.horizons)
+        self.train_design = build_mod.build_design_matrix(
+            self.panel, origins, self.horizons, drop_features=self.drop_features
+        )
         log.info(
             "LightGBM design matrix: %d row(s) from %d origin(s), %d feature(s)",
             len(self.train_design),
@@ -130,17 +142,26 @@ class WalkForwardLightGBM:
                 f"before the fold cutoff {cutoff}"
             )
 
-        train = self.training_slice(cutoff)
-        if train.empty:
-            raise ValueError(f"No training rows available before {cutoff}.")
-
-        booster = train_booster(train, self.params, self.num_boost_round)
-        self.fits += 1
-        self.last_booster = booster
-        self.last_train_rows = len(train)
+        # A frozen arm fits once, at the pinned anchor, and reuses that booster.
+        # `self.freeze_at` rather than "the first cutoff we happen to see"
+        # because the caller knows the candidate list and this object does not.
+        fit_at = self.freeze_at if self.freeze_at is not None else cutoff
+        if self.last_booster is not None and self.freeze_at is not None:
+            booster = self.last_booster
+        else:
+            train = self.training_slice(fit_at)
+            if train.empty:
+                raise ValueError(f"No training rows available before {fit_at}.")
+            booster = train_booster(train, self.params, self.num_boost_round)
+            self.fits += 1
+            self.last_booster = booster
+            self.last_train_rows = len(train)
 
         design = build_mod.build_design_matrix(
-            self.panel, pd.DatetimeIndex([cutoff]), self.horizons
+            self.panel,
+            pd.DatetimeIndex([cutoff]),
+            self.horizons,
+            drop_features=self.drop_features,
         )
         design = design[design["target_utc"].isin(target_times)]
         preds = booster.predict(build_mod.feature_frame(design))

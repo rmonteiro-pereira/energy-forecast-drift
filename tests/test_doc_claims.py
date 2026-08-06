@@ -15,6 +15,7 @@ fails here, with both values, instead of silently going stale.
 
 from __future__ import annotations
 
+import json
 import re
 import subprocess
 import sys
@@ -47,6 +48,90 @@ def test_the_documented_python_test_count_is_the_collected_one():
             assert int(claim) == collected, (
                 f"{name} claims {claim} tests; pytest collects {collected}"
             )
+
+
+def _live_prose(path: Path) -> str:
+    """The file with its `<details>` blocks removed.
+
+    Collapsed blocks in the README are dated records of the fixture era, labelled
+    as history. Prose stating the *current* protocol is a live claim; a
+    quarantined table of old numbers is not, and a test that cannot tell them
+    apart would force the history to be falsified.
+    """
+    text = path.read_text(encoding="utf-8")
+    return re.sub(r"<details>.*?</details>", "", text, flags=re.DOTALL)
+
+
+def test_the_documented_fold_count_is_the_one_in_the_artifact():
+    """Four live sentences said 56; the artifact says 55, and so did the banner.
+
+    Nothing compared them. The count had been right for a fixture scored at a
+    midnight origin, and stayed in the prose after `DEFAULT_CUTOFF_HOUR` moved to
+    midday and the answer became 55 — on the real panel *and* on the fixture.
+    """
+    folds = json.loads((REPO / "metrics" / "model.json").read_text(encoding="utf-8"))["backtest"][
+        "folds"
+    ]
+
+    for name in ("README.md", "docs/writeup.md"):
+        prose = _live_prose(REPO / name)
+        claims = re.findall(r"(\d{2}) (?:daily folds|fold\b|refits|walk-forward refits)", prose)
+        assert claims, f"{name} no longer states a fold count in live prose"
+        for claim in claims:
+            assert int(claim) == folds, (
+                f"{name} claims {claim} folds; metrics/model.json records {folds}"
+            )
+
+
+def test_the_three_statements_of_the_test_runtime_agree():
+    """They disagreed with each other and all three were wrong.
+
+    README and CONTRIBUTING said `~20 s`, `docs/PUBLICATION-READY.md` said
+    `~16 s`, and three consecutive runs measured 25-27 s. The absolute number is
+    machine-dependent and pinning it would make this test flaky on a slower
+    runner — but *three files stating three different numbers* is not
+    machine-dependent, and that is the defect this catches.
+    """
+    seen = {}
+    for name in ("CONTRIBUTING.md", "docs/PUBLICATION-READY.md"):
+        text = (REPO / name).read_text(encoding="utf-8")
+        found = re.findall(r"uv run pytest[^\n]*?~(\d+) s", text)
+        assert found, f"{name} no longer states a runtime for `uv run pytest`"
+        seen[name] = set(found)
+
+    values = set().union(*seen.values())
+    assert len(values) == 1, f"the pytest runtime is stated inconsistently: {seen}"
+
+
+def test_any_lane_number_in_prose_is_read_from_an_artifact():
+    """Armed before there is anything to arm it against, and that is the point.
+
+    `metrics/foundation.json` does not exist until the dispatch run, so a pin
+    written as "every lane number matches the artifact" is **vacuously green**
+    today and stays green until the day someone writes the first sentence about
+    the lane — which is exactly when nobody is looking at this test.
+
+    So the assertion is conditional and fires on the *prose*: the moment the
+    README names a foundation-lane arm, a published artifact has to exist for the
+    number to have come from. Until then it records, in a runnable place, that the
+    obligation is outstanding.
+    """
+    readme = _live_prose(REPO / "README.md")
+    arm_names = ("chronos_bolt", "lgbm_17_demand_only", "lgbm_12_no_calendar", "lgbm_12_frozen")
+    mentions = [name for name in arm_names if name in readme]
+    if not mentions:
+        return
+
+    published = REPO / "metrics" / "foundation.json"
+    assert published.exists(), (
+        f"README names lane arm(s) {mentions} but metrics/foundation.json does not "
+        "exist — the numbers beside them cannot have come from a published artifact"
+    )
+    payload = json.loads(published.read_text(encoding="utf-8"))
+    assert payload["is_real"] is True
+    assert payload["failed_gate"] is None, (
+        f"the lane artifact was refused by {payload['failed_gate']}; its numbers must not be quoted"
+    )
 
 
 def test_the_documented_feature_count_is_the_real_one():

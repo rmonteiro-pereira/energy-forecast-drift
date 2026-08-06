@@ -81,11 +81,98 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     return p.parse_args(argv)
 
 
+class FoldIdentityError(RuntimeError):
+    """Two arms were compared without having scored the same folds."""
+
+
+def _fold_key(result: backtest.BacktestResult) -> tuple[str, ...]:
+    return tuple(t.isoformat() for t in result.folds)
+
+
+def align_arms(
+    arms: dict[str, backtest.BacktestResult],
+) -> tuple[dict[str, backtest.BacktestResult], dict]:
+    """Put every arm on one fold set, and say out loud what that cost.
+
+    `cutoffs=` pins the candidate origins; it cannot pin the folds actually
+    used, because a fold is dropped whole when any horizon is unscorable and
+    that depends on what the model returned. So arms handed the same candidates
+    can still finish on different fold sets, and comparing them then is
+    comparing two experiments.
+
+    The fix is not to abort — an arm that fails a horizon on ten days is a
+    result, not a crash. Every arm is re-scored onto the intersection, and the
+    two ways an arm can lose a fold are reported **separately**, because they
+    are different facts:
+
+    * `unscorable_by_own_failure` — folds this arm could not score itself.
+    * `folds_dropped_vs_intersection` — folds this arm scored fine and lost
+      because *another* arm failed there.
+
+    One counter cannot carry both. A baseline with `skipped_folds == 0` still
+    loses ten folds when the challenger fails on them, and reporting that as
+    "the baseline could not score ten folds" is simply false.
+
+    The intersection is survivorship filtering and this does not undo it: an arm
+    that fails exactly on the hardest days is then scored on the easier
+    remainder. That is why the counters are mandatory rather than a footnote —
+    they are the only thing that makes the filtering visible downstream.
+    """
+    if not arms:
+        raise FoldIdentityError("No arms to align.")
+
+    sets = {name: set(result.folds) for name, result in arms.items()}
+    intersection = set.intersection(*sets.values())
+    if not intersection:
+        raise FoldIdentityError(
+            "The arms share no fold at all, so nothing about them is comparable: "
+            + ", ".join(f"{name}={len(folds)} fold(s)" for name, folds in sorted(sets.items()))
+        )
+
+    aligned = {name: backtest.rescore(result, intersection) for name, result in arms.items()}
+
+    counts = {result.overall["n"] for result in aligned.values()}
+    if len(counts) != 1:  # pragma: no cover - guard; rescore makes this unreachable
+        raise FoldIdentityError(f"Re-scoring left the arms with different n: {counts}")
+
+    record = {
+        "folds_intersected": sorted(t.isoformat() for t in intersection),
+        "n_per_arm": next(iter(counts)),
+        "arms": {
+            name: {
+                "folds_scored": len(sets[name]),
+                "unscorable_by_own_failure": arms[name].skipped_folds,
+                "folds_dropped_vs_intersection": sorted(
+                    t.isoformat() for t in sets[name] - intersection
+                ),
+            }
+            for name in sorted(arms)
+        },
+    }
+    return aligned, record
+
+
 def compare(
     base: backtest.BacktestResult,
     challenger: backtest.BacktestResult,
 ) -> dict:
-    """Head-to-head on identical folds: overall delta plus a per-horizon column."""
+    """Head-to-head on identical folds: overall delta plus a per-horizon column.
+
+    This docstring said "identical folds" and nothing checked it. Merging on
+    `horizon_h` alone happily produced a headline for two arms scored on 55 and
+    45 folds — `mae_delta_pct: 518.68`, `horizons_won: 0/24`, no error, no
+    warning, and no `n` anywhere in the output. It never bit because both models
+    here are deterministic and never return NaN; the first model that can fail a
+    horizon would have published a comparison between two different experiments.
+    Callers whose arms may diverge run `align_arms` first.
+    """
+    if _fold_key(base) != _fold_key(challenger):
+        raise FoldIdentityError(
+            "Refusing to compare arms scored on different folds "
+            f"({len(base.folds)} vs {len(challenger.folds)}); "
+            "run models.train.align_arms first."
+        )
+
     merged = base.by_horizon.merge(
         challenger.by_horizon, on="horizon_h", suffixes=("_baseline", "_model")
     )
@@ -95,6 +182,10 @@ def compare(
     base_mae = base.overall["mae"]
     model_mae = challenger.overall["mae"]
     return {
+        # `n` is emitted because its absence is what let a comparison over two
+        # different fold sets look like a comparison at all.
+        "n": int(base.overall["n"]),
+        "folds": len(base.folds),
         "mae_delta": round(model_mae - base_mae, 2),
         "mae_delta_pct": round(100.0 * (model_mae - base_mae) / base_mae, 2),
         "mape_delta_pct_points": round(
@@ -254,11 +345,22 @@ def build_artifact(
         "data": {**provenance, "panel": panel_mod.describe_panel(panel)},
         "backtest": {
             "protocol": "walk-forward, daily cutoffs, no temporal leakage",
-            "note": "identical folds and horizons for both models (models.backtest)",
+            # This used to be the fixed string "identical folds and horizons for
+            # both models", stamped whether or not it was true, and only the
+            # challenger's fold count was recorded — so the claim could not be
+            # checked against the artifact even in principle. Both arms now
+            # report, and `models.train.compare` refuses to run when they differ.
+            "note": (
+                "identical folds and horizons for both models, enforced by "
+                "models.train.compare (raises FoldIdentityError otherwise)"
+            ),
             "weeks": args.weeks,
             "cutoff_hour_utc": args.cutoff_hour,
             "folds": len(challenger.folds),
+            "folds_baseline": len(base.folds),
+            "folds_identical": _fold_key(base) == _fold_key(challenger),
             "skipped_folds": challenger.skipped_folds,
+            "skipped_folds_baseline": base.skipped_folds,
             "horizons_h": [int(h) for h in challenger.by_horizon["horizon_h"]],
             "first_cutoff_utc": challenger.folds[0].isoformat() if challenger.folds else None,
             "last_cutoff_utc": challenger.folds[-1].isoformat() if challenger.folds else None,

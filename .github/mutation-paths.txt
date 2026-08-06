@@ -34,6 +34,7 @@ tests/test_drift_trigger.py
 tests/test_backtest.py
 tests/test_backtest_accounting.py
 tests/test_baseline.py
+tests/test_fold_identity.py
 
 # Every first-party module those nine files import, directly or transitively.
 # The first version of this filter omitted all of them and was wrong:

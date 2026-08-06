@@ -65,7 +65,7 @@ still reproduces byte-for-byte with no key at all. That is a gap in the
 ```bash
 git clone <repo> && cd energy-forecast-drift
 uv sync --extra dev                 # Python 3.11+, pinned in uv.lock
-uv run pytest                       # ~16 s
+uv run pytest                       # ~26 s
 uv run python -m pipeline.daily     # ~6 s, produces metrics/ + 2 PNGs
 cd dashboard && npm ci && npm test && npm run build
 ```

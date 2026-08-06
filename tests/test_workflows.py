@@ -16,6 +16,7 @@ trigger nothing asserts on is how a `* * * * *` lands quietly.
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 import pytest
@@ -688,3 +689,93 @@ def test_ci_guards_the_things_that_must_never_be_committed():
     commands = run_commands(load(CI), "test")
     assert "mlruns" in commands
     assert "5M" in commands, "the metrics/ size guard is what keeps the repo small"
+
+
+# ---------------------------------------------------------------------------
+# The foundation lane's gates. Asserting the steps EXIST, not that nothing
+# changed: the phase that added them was originally accepted by "the existing
+# guards still pass", which is the assertion that nothing happened.
+# ---------------------------------------------------------------------------
+def test_ci_proves_torch_never_reaches_the_test_job():
+    commands = run_commands(load(CI), "test")
+    assert "import torch" in commands, (
+        "no step checks torch isolation, so the `foundation` extra could grow "
+        "into the test job unnoticed"
+    )
+    assert "foundation.tsfm" in commands, (
+        "the only condition with a reachable red state is the lazy import; "
+        "checking pyproject alone passes on a repo with no lane in it"
+    )
+    # Per *sync line*, not over the whole blob: this file already knows that a
+    # test hunting a dangerous string must not match the sentence warning against
+    # it (see `strip_comments`), and the G5 step's own error message names the
+    # extra it is refusing.
+    syncs = [line for line in commands.splitlines() if "uv sync" in line]
+    assert syncs, "the test job no longer syncs anything"
+    for line in syncs:
+        assert "--extra foundation" not in line, f"CI installs the lane extra: {line.strip()}"
+
+
+def test_ci_measures_the_size_ceiling_against_committed_objects():
+    commands = run_commands(load(CI), "test")
+    assert "5242880" in commands, (
+        "the ceiling has to be stated in bytes: `find -size +5M` rounds to 1 MiB "
+        "blocks and lets a 5,242,880-byte file through"
+    )
+    assert "git ls-tree" in commands, (
+        "the repo-wide guard must read committed objects; `find` reads the "
+        "working tree and answers a different question"
+    )
+
+
+def test_ci_forbids_the_lane_from_skipping():
+    commands = run_commands(load(CI), "test")
+    assert "-o addopts=" in commands, (
+        "pyproject sets addopts = -q, so a second -q gives -qq and pytest prints "
+        "no summary at all — a skip counter reading that output is always green"
+    )
+    assert "skipped" in commands
+
+
+def test_the_lane_step_derives_its_file_list_instead_of_naming_them():
+    """A hand-kept list of test files rots, and this one rotted immediately.
+
+    The step originally named three lane test files. The lane reached six within
+    the same session and the three newest were silently outside the no-skip gate.
+    `.github/mutation-paths.txt` already states the principle — "two lists that
+    must agree by hand is the failure mode this file designs out" — so the step
+    greps for the lane's imports, and this recomputes the same set and compares.
+    """
+    commands = run_commands(load(CI), "test")
+    assert "grep -rlE" in commands, "the lane step names files by hand again"
+
+    tests_dir = WORKFLOWS.parent.parent / "tests"
+    expected = {
+        path.name
+        for path in tests_dir.glob("test_*.py")
+        if re.search(
+            r"^(from foundation|import foundation|from models import .*\barms\b|from models\.arms)",
+            path.read_text(encoding="utf-8"),
+            re.MULTILINE,
+        )
+    }
+    assert expected, "no test file imports the lane; the derived list would be empty"
+    assert len(expected) >= 5, (
+        f"only {len(expected)} lane test file(s) match the step's pattern: {sorted(expected)}. "
+        "A lane test that the pattern misses is outside the no-skip gate."
+    )
+
+
+def test_every_uv_run_in_the_test_job_reads_the_lock():
+    """`uv run` without `--frozen` re-resolves and rewrites `uv.lock`.
+
+    Measured, on a developer machine: adding one optional extra and then running
+    `uv run` moved the lockfile from 152 to 185 packages, eighteen of them CUDA
+    wheels, with no `uv lock` ever typed. `--frozen` on the sync step alone does
+    not cover the eight `uv run` steps that follow it.
+    """
+    job = load(CI)["jobs"]["test"]
+    assert job.get("env", {}).get("UV_FROZEN") == "1", (
+        "the test job does not set UV_FROZEN, so every `uv run` step may "
+        "silently re-resolve against pyproject.toml instead of uv.lock"
+    )

@@ -1,0 +1,247 @@
+{
+  "is_real": false,
+  "warning": "SYNTHETIC FIXTURE, NOT a benchmark. Schema subject for the lane's gates; the numbers are a smoke test.",
+  "data": {
+    "kind": "synthetic_fixture",
+    "is_real": false
+  },
+  "failed_gate": null,
+  "cutoff_candidates": [
+    "2026-07-14T12:00:00+00:00",
+    "2026-07-15T12:00:00+00:00",
+    "2026-07-16T12:00:00+00:00",
+    "2026-07-17T12:00:00+00:00",
+    "2026-07-18T12:00:00+00:00",
+    "2026-07-19T12:00:00+00:00",
+    "2026-07-20T12:00:00+00:00",
+    "2026-07-21T12:00:00+00:00",
+    "2026-07-22T12:00:00+00:00",
+    "2026-07-23T12:00:00+00:00",
+    "2026-07-24T12:00:00+00:00",
+    "2026-07-25T12:00:00+00:00",
+    "2026-07-26T12:00:00+00:00"
+  ],
+  "folds_intersected": [
+    "2026-07-14T12:00:00+00:00",
+    "2026-07-15T12:00:00+00:00",
+    "2026-07-16T12:00:00+00:00",
+    "2026-07-17T12:00:00+00:00",
+    "2026-07-18T12:00:00+00:00",
+    "2026-07-19T12:00:00+00:00",
+    "2026-07-20T12:00:00+00:00",
+    "2026-07-21T12:00:00+00:00",
+    "2026-07-22T12:00:00+00:00",
+    "2026-07-23T12:00:00+00:00",
+    "2026-07-24T12:00:00+00:00",
+    "2026-07-25T12:00:00+00:00",
+    "2026-07-26T12:00:00+00:00"
+  ],
+  "contiguity": {
+    "imputed_hours": 0,
+    "imputed_runs": 0,
+    "longest_imputed_run": 0,
+    "grid_hours": 2124,
+    "actuals_untouched_from": "2026-07-26T11:00:00+00:00"
+  },
+  "reference_arm": "lgbm_17_demand_only",
+  "hardware": {
+    "cpu_model": "AMD64 Family 25 Model 97 Stepping 2, AuthenticAMD",
+    "n_threads": 1,
+    "omp_num_threads": "1",
+    "ram_gb": 63.14,
+    "device": "cpu",
+    "platform": "Windows-10-10.0.26200-SP0",
+    "python": "3.11.12"
+  },
+  "arms": [
+    {
+      "id": "lgbm_17_demand_only",
+      "name": "lgbm_17_demand_only",
+      "n": 312,
+      "mae": 3345.1519,
+      "mape_pct": 4.3227,
+      "rmse": 4367.9749,
+      "bias": 1349.2576,
+      "features": [
+        "horizon_h",
+        "hour",
+        "dayofweek",
+        "month",
+        "is_weekend",
+        "is_holiday",
+        "demand_lag_24h",
+        "demand_lag_48h",
+        "demand_lag_168h",
+        "demand_lag_336h",
+        "demand_same_hour_of_week_mean_4w",
+        "demand_last_1h",
+        "demand_roll_mean_24h",
+        "demand_roll_std_24h",
+        "demand_roll_min_24h",
+        "demand_roll_max_24h",
+        "demand_roll_mean_168h"
+      ],
+      "features_informative": 17,
+      "refits": 13,
+      "fit_anchor_utc": null,
+      "params": {
+        "objective": "l1",
+        "metric": "l1",
+        "learning_rate": 0.05,
+        "num_leaves": 63,
+        "min_data_in_leaf": 40,
+        "feature_fraction": 0.9,
+        "bagging_fraction": 0.9,
+        "bagging_freq": 1,
+        "lambda_l2": 1.0,
+        "num_threads": 1,
+        "verbose": -1,
+        "seed": 20260728,
+        "deterministic": true,
+        "force_row_wise": true
+      },
+      "context_hours": null,
+      "feature_reach_hours": 671,
+      "in_domain_training_hours": 2161,
+      "unscorable_by_own_failure": 0,
+      "folds_dropped_vs_intersection": [],
+      "weights": null,
+      "fit_cpu_s": 0.1719,
+      "infer_cpu_s": 0.2969,
+      "load_cpu_s": 0.0,
+      "peak_rss_mb": 166.8,
+      "n_predictions": 312,
+      "fit_cpu_ms_per_prediction": 0.5509,
+      "infer_cpu_ms_per_prediction": 0.9515,
+      "load_cpu_ms_per_prediction": 0.0
+    },
+    {
+      "id": "lgbm_12_no_calendar",
+      "name": "lgbm_12_no_calendar",
+      "n": 312,
+      "mae": 3349.494,
+      "mape_pct": 4.3244,
+      "rmse": 4393.1547,
+      "bias": 1290.2934,
+      "features": [
+        "horizon_h",
+        "demand_lag_24h",
+        "demand_lag_48h",
+        "demand_lag_168h",
+        "demand_lag_336h",
+        "demand_same_hour_of_week_mean_4w",
+        "demand_last_1h",
+        "demand_roll_mean_24h",
+        "demand_roll_std_24h",
+        "demand_roll_min_24h",
+        "demand_roll_max_24h",
+        "demand_roll_mean_168h"
+      ],
+      "features_informative": 12,
+      "refits": 13,
+      "fit_anchor_utc": null,
+      "params": {
+        "objective": "l1",
+        "metric": "l1",
+        "learning_rate": 0.05,
+        "num_leaves": 63,
+        "min_data_in_leaf": 40,
+        "feature_fraction": 0.9,
+        "bagging_fraction": 0.9,
+        "bagging_freq": 1,
+        "lambda_l2": 1.0,
+        "num_threads": 1,
+        "verbose": -1,
+        "seed": 20260728,
+        "deterministic": true,
+        "force_row_wise": true
+      },
+      "context_hours": null,
+      "feature_reach_hours": 671,
+      "in_domain_training_hours": 2161,
+      "unscorable_by_own_failure": 0,
+      "folds_dropped_vs_intersection": [],
+      "weights": null,
+      "fit_cpu_s": 0.0,
+      "infer_cpu_s": 0.2812,
+      "load_cpu_s": 0.0,
+      "peak_rss_mb": 167.7,
+      "n_predictions": 312,
+      "fit_cpu_ms_per_prediction": 0.0,
+      "infer_cpu_ms_per_prediction": 0.9014,
+      "load_cpu_ms_per_prediction": 0.0
+    },
+    {
+      "id": "stub_zero_shot",
+      "name": "stub_zero_shot",
+      "n": 312,
+      "mae": 2675.5856,
+      "mape_pct": 3.2142,
+      "rmse": 3394.979,
+      "bias": 1201.4663,
+      "features": [],
+      "features_informative": 0,
+      "refits": 0,
+      "fit_anchor_utc": null,
+      "params": {},
+      "context_hours": 168,
+      "feature_reach_hours": 671,
+      "in_domain_training_hours": 0,
+      "unscorable_by_own_failure": 0,
+      "folds_dropped_vs_intersection": [],
+      "weights": null,
+      "fit_cpu_s": 0.0,
+      "infer_cpu_s": 0.0156,
+      "load_cpu_s": 0.0,
+      "peak_rss_mb": 167.7,
+      "n_predictions": 312,
+      "fit_cpu_ms_per_prediction": 0.0,
+      "infer_cpu_ms_per_prediction": 0.0501,
+      "load_cpu_ms_per_prediction": 0.0
+    }
+  ],
+  "uncertainty": {
+    "lgbm_12_no_calendar/lgbm_17_demand_only": {
+      "block": "cutoff_utc",
+      "n_blocks": 13,
+      "n_predictions": 312,
+      "n_resamples": 2000,
+      "seed": 20260806,
+      "mae_delta": {
+        "point": 4.342070133298876,
+        "ci95": [
+          -82.53668836143802,
+          98.02428463937187
+        ]
+      },
+      "mae_ratio": {
+        "point": 1.0012980188251965,
+        "ci95": [
+          0.9741391447252805,
+          1.0278925168777022
+        ]
+      }
+    },
+    "stub_zero_shot/lgbm_17_demand_only": {
+      "block": "cutoff_utc",
+      "n_blocks": 13,
+      "n_predictions": 312,
+      "n_resamples": 2000,
+      "seed": 20260806,
+      "mae_delta": {
+        "point": -669.5663184211039,
+        "ci95": [
+          -1069.0359446554344,
+          -251.44707621478068
+        ]
+      },
+      "mae_ratio": {
+        "point": 0.7998397862431856,
+        "ci95": [
+          0.7082936761073103,
+          0.9182450160303174
+        ]
+      }
+    }
+  }
+}

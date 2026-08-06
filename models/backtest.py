@@ -21,6 +21,7 @@ different problems) and pooled across folds.
 from __future__ import annotations
 
 import logging
+from collections.abc import Iterable, Sequence
 from dataclasses import dataclass, field
 
 import numpy as np
@@ -116,16 +117,31 @@ def run(
     weeks: int = DEFAULT_WEEKS,
     cutoff_hour: int = DEFAULT_CUTOFF_HOUR,
     min_history_hours: int = 168,
+    cutoffs: Sequence[pd.Timestamp] | None = None,
 ) -> BacktestResult:
     """Run the walk-forward backtest.
 
     `predict_fn(history, target_times, cutoff) -> Series` is the model. It gets
     only the pre-cutoff history; anything it returns is treated as the forecast
     for `target_times`.
+
+    `cutoffs` pins the **candidate** origins instead of deriving them from the
+    series. Two arms scored on two panels of different length would otherwise
+    get two different `make_cutoffs` answers, and "the same folds" would be a
+    sentence rather than a fact.
+
+    It pins candidates and nothing more. A fold is still dropped whole when any
+    horizon is unscorable (`_is_scorable`), and that depends on what the *model*
+    returned — so two arms handed the identical list can still finish with
+    different `folds`. Equalising the folds actually used is `rescore`'s job,
+    driven by `models.train.align_arms`.
     """
     series = series.dropna().sort_index()
     horizons = tuple(sorted(horizons))
-    cutoffs = make_cutoffs(series.index, weeks, horizons, cutoff_hour, min_history_hours)
+    if cutoffs is None:
+        cutoffs = make_cutoffs(series.index, weeks, horizons, cutoff_hour, min_history_hours)
+    else:
+        cutoffs = list(pd.DatetimeIndex(cutoffs))
 
     if not cutoffs:
         raise ValueError(
@@ -180,25 +196,7 @@ def run(
     predictions["abs_error"] = predictions["error"].abs()
     predictions["abs_pct_error"] = (predictions["abs_error"] / predictions["actual"].abs()) * 100.0
 
-    by_horizon = (
-        predictions.groupby("horizon_h")
-        .agg(
-            mae=("abs_error", "mean"),
-            mape_pct=("abs_pct_error", "mean"),
-            rmse=("error", lambda e: float(np.sqrt(np.mean(np.square(e))))),
-            bias=("error", "mean"),
-            n=("abs_error", "size"),
-        )
-        .reset_index()
-    )
-
-    overall = {
-        "mae": float(predictions["abs_error"].mean()),
-        "mape_pct": float(predictions["abs_pct_error"].mean()),
-        "rmse": float(np.sqrt(np.mean(np.square(predictions["error"])))),
-        "bias": float(predictions["error"].mean()),
-        "n": len(predictions),
-    }
+    by_horizon, overall = _summarise(predictions)
 
     log.info(
         "Backtest: %d fold(s), %d horizon(s), MAE=%.1f MAPE=%.2f%%",
@@ -215,6 +213,69 @@ def run(
         folds=used_folds,
         skipped_folds=skipped,
         warnings=warnings,
+    )
+
+
+def _summarise(predictions: pd.DataFrame) -> tuple[pd.DataFrame, dict]:
+    """Per-horizon table plus the pooled row, from scored predictions.
+
+    Factored out so `run` and `rescore` cannot drift apart: a metric computed
+    one way at first scoring and another way after re-scoring would make the
+    fold-identity guarantee cosmetic.
+    """
+    by_horizon = (
+        predictions.groupby("horizon_h")
+        .agg(
+            mae=("abs_error", "mean"),
+            mape_pct=("abs_pct_error", "mean"),
+            rmse=("error", lambda e: float(np.sqrt(np.mean(np.square(e))))),
+            bias=("error", "mean"),
+            n=("abs_error", "size"),
+        )
+        .reset_index()
+    )
+    overall = {
+        "mae": float(predictions["abs_error"].mean()),
+        "mape_pct": float(predictions["abs_pct_error"].mean()),
+        "rmse": float(np.sqrt(np.mean(np.square(predictions["error"])))),
+        "bias": float(predictions["error"].mean()),
+        "n": len(predictions),
+    }
+    return by_horizon, overall
+
+
+def rescore(result: BacktestResult, folds: Iterable[pd.Timestamp]) -> BacktestResult:
+    """The same run, restricted to `folds` and re-summarised.
+
+    Nothing is re-predicted: the predictions already exist and are filtered, so
+    this cannot change what a model said — only which folds are counted.
+
+    It exists because `cutoffs=` pins candidates, not folds. A fold is dropped
+    whole when any horizon is unscorable, which depends on the model's output,
+    so two arms can finish on different fold sets. Comparing them then is
+    comparing two different experiments; `models.train.align_arms` uses this to
+    put every arm back on one fold set before anything is compared.
+    """
+    keep = pd.DatetimeIndex(sorted(set(folds)))
+    if len(keep) == 0:
+        raise ValueError("Cannot rescore onto an empty fold set.")
+
+    missing = keep.difference(pd.DatetimeIndex(result.folds))
+    if len(missing):
+        raise ValueError(
+            f"Cannot rescore onto folds the run never scored: {list(missing[:3])}"
+            f"{' ...' if len(missing) > 3 else ''}"
+        )
+
+    predictions = result.predictions[result.predictions["cutoff_utc"].isin(keep)]
+    by_horizon, overall = _summarise(predictions)
+    return BacktestResult(
+        predictions=predictions,
+        by_horizon=by_horizon,
+        overall=overall,
+        folds=list(keep),
+        skipped_folds=result.skipped_folds,
+        warnings=result.warnings,
     )
 
 

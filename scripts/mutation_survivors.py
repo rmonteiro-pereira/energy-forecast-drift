@@ -130,7 +130,7 @@ RULES: list[Rule] = [
         "very first cutoff has empty history and it is reached on iteration one "
         "with `skipped == 0`. The sibling `-= 1` and `+= 2` mutants at this line "
         "are killed by the exact-count assertion; only this one is equivalent.",
-        locations=frozenset({("models/backtest.py", 144, "skipped += 1")}),
+        locations=frozenset({("models/backtest.py", 160, "skipped += 1")}),
     ),
     Rule(
         "accepted:equivalent-every-boundary",
@@ -142,7 +142,7 @@ RULES: list[Rule] = [
         "the same branch. The five sibling mutants at this line are killed by "
         "the `every=6`/`every=2` tests in tests/test_backtest.py; this boundary "
         "alone has no observable side.",
-        locations=frozenset({("models/backtest.py", 230, "if every > 1 else by_horizon")}),
+        locations=frozenset({("models/backtest.py", 291, "if every > 1 else by_horizon")}),
     ),
     # -----------------------------------------------------------------------
     # Accepted categories.
@@ -313,7 +313,7 @@ RULES: list[Rule] = [
         "they are equal length by construction. `strict=True` documents that "
         "invariant rather than enforcing a reachable one.",
         locations=frozenset(
-            {("models/backtest.py", 159, "zip(horizons, target_times, strict=True)")}
+            {("models/backtest.py", 175, "zip(horizons, target_times, strict=True)")}
         ),
     ),
     Rule(

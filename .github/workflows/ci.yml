@@ -66,6 +66,16 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
 
+    # Only the `uv sync` step below passes `--frozen`; every `uv run` after it
+    # re-resolves against pyproject.toml and rewrites uv.lock. That is not
+    # theoretical: adding one optional extra locally, then running `uv run`, took
+    # the lockfile from 152 to 185 packages -- including eighteen NVIDIA/CUDA
+    # wheels -- with no `uv lock` ever typed. On a runner the same behaviour turns
+    # a supposedly pinned install into a fresh resolve. UV_FROZEN makes every
+    # `uv run` in this job read the lock instead of the manifest.
+    env:
+      UV_FROZEN: "1"
+
     steps:
       - uses: actions/checkout@v7
 
@@ -101,6 +111,77 @@ jobs:
 
       - name: Tests
         run: uv run pytest -v
+
+      # ---------------------------------------------------------------------
+      # The foundation lane. Three gates, and each one exists because its
+      # earlier wording was green on the defect it was written to catch.
+      # ---------------------------------------------------------------------
+
+      # G5. Two of the three conditions here are true of a repository with no
+      # lane in it at all -- torch absent, sync line clean -- so on their own
+      # they are a gate with no reachable red state. The third one is the gate:
+      # the adapter must import without dragging torch in, because pytest fails
+      # at *collection* on a missing import while mypy reports Success on the
+      # same file (`ignore_missing_imports = true`). Two checkers, opposite
+      # verdicts, and only one of them is loud.
+      - name: The lane must not put torch in the test job
+        run: |
+          if uv run python -c "import torch" 2>/dev/null; then
+            echo "::error::torch is installed in the test job; it belongs to --extra foundation"
+            exit 1
+          fi
+          uv run python - <<'PY'
+          import sys
+          import foundation.tsfm  # noqa: F401 - imported for the side effect being asserted
+          if "torch" in sys.modules:
+              print("::error::importing foundation.tsfm pulled torch into sys.modules")
+              sys.exit(1)
+          print("foundation.tsfm imports clean, torch absent")
+          PY
+
+      # G6. The repo-wide size ceiling, measured against the *committed objects*.
+      # `find | grep -q` (the metrics/ guard above) answers a different question:
+      # it reads the working tree, so it flags a tracked file that is small in the
+      # index and bloated on disk, and misses nothing that is actually versioned.
+      # And a bare `awk '$4 > N'` prints the violation and exits 0 -- as a `run:`
+      # step that is a green tick over a red finding.
+      - name: Nothing versioned may exceed 5,242,880 bytes
+        run: |
+          git ls-tree -r -l HEAD \
+            | awk '$4 > 5242880 { print "::error::" $4 " bytes: " $5; bad = 1 } END { exit bad }'
+
+      # G9. `pyproject.toml` sets `addopts = "-q"`, so a second `-q` becomes `-qq`
+      # and pytest prints no summary line at all -- a gate parsing that output for
+      # "N skipped" is green precisely when there are skips. `-o addopts=` clears
+      # it. The lane may not skip: the smallest checkpoint is 6.6x the size
+      # ceiling and this job has no network, so a skipped lane test would be the
+      # whole lane reporting green while proving nothing.
+      #
+      # The file list is derived, not typed. A hand-kept list of test files is
+      # the failure this repository already designs against in
+      # `.github/mutation-paths.txt` ("two lists that must agree by hand is the
+      # failure mode this file designs out") — and it bit here immediately: the
+      # step named three lane test files while the lane had six.
+      # `tests/test_workflows.py` recomputes this set from the imports and fails
+      # if the step and the tree disagree.
+      - name: The foundation lane must run, not skip
+        run: |
+          files=$(grep -rlE '^(from foundation|import foundation|from models import .*\barms\b|from models\.arms)' tests/ | sort | tr '\n' ' ')
+          echo "lane test files: $files"
+          test -n "$files" || { echo "::error::no lane test files found"; exit 1; }
+          uv run python -m pytest -o addopts= -p no:cacheprovider --no-header -rN \
+            $files \
+            | tee /tmp/lane.txt
+          code=${PIPESTATUS[0]}
+          if [ "$code" != "0" ]; then exit "$code"; fi
+          if grep -qE '[0-9]+ skipped' /tmp/lane.txt; then
+            echo "::error::a foundation-lane test was skipped; a skipped test reports green"
+            exit 1
+          fi
+          grep -qE '[0-9]+ passed' /tmp/lane.txt || {
+            echo "::error::the lane suite collected nothing — the gate would pass vacuously"
+            exit 1
+          }
 
       # Smoke test the whole M1 path on the synthetic fixture, so a broken
       # backtest is caught here rather than by the daily cron.

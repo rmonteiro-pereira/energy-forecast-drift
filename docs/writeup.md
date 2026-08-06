@@ -54,7 +54,7 @@ dispatch of `train.yml` would change.
 | **EIA client** | ✅ **finished, and now proven against the live API** | Pagination, the 5000-row cap, respondent discovery against the facet endpoint, retries, secret redaction. On 2026-08-01 it pulled **17,520 hourly PJM rows** over a two-year window in four paged calls, with no missing hours. |
 | **Incremental + idempotent store** | ✅ real | Partitioned parquet, de-duplicated on `(entity, timestamp)` keeping the newest row, atomic temp-then-move writes. Re-running ingestion reports `+0 new rows`. |
 | **Feature builder** | ✅ real code | Origin-stamped design matrix; the no-leakage property is asserted by tests that poison the future and check no feature column moves. |
-| **Walk-forward backtest** | ✅ real code | 56 daily folds × 24 horizons, identical for every model. |
+| **Walk-forward backtest** | ✅ real code | 55 daily folds × 24 horizons, identical for every model. |
 | **LightGBM + MLflow registry** | ✅ real code | Refit at every fold cutoff; sqlite backend; `@champion` alias moves only on a genuine win. |
 | **Drift suite** | ✅ real code | Own PSI and KS (checked against `scipy.stats.ks_2samp` to 1e-12 on the statistic), four drift types, structured retrain verdict, Evidently as a second opinion. |
 | **Daily pipeline + serving** | ✅ real code | `python -m pipeline.daily` runs end to end locally; `/forecast` serves the registry champion over HTTP. |
