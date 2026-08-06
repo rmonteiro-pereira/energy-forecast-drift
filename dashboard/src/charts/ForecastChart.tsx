@@ -81,7 +81,7 @@ export function ForecastChart({
     return {
       ...baseOption(tokens),
       grid: mini
-        ? { left: 54, right: 12, top: 38, bottom: 24, containLabel: false }
+        ? { left: 54, right: 24, top: 38, bottom: 24,containLabel: false }
         : { left: 62, right: 24, top: 46, bottom: 78, containLabel: false },
       legend: {
         ...baseOption(tokens).legend,

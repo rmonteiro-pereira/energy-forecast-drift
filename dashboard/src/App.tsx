@@ -226,7 +226,11 @@ function Dashboard({
         <aside className="verdict-panel" aria-labelledby="verdict-heading">
           <div className="verdict-panel-head">
             <h2 id="verdict-heading">Today&rsquo;s drift verdict</h2>
-            <span className="tag tag-mono">rule {drift.verdict.rule}</span>
+            {/* Rule names run long; the chip ellipsizes, so the full name has to
+                stay reachable. */}
+            <span className="tag tag-mono" title={`rule ${drift.verdict.rule}`}>
+              rule {drift.verdict.rule}
+            </span>
           </div>
           <VerdictCard drift={drift} />
         </aside>
