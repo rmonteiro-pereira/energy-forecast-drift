@@ -1,52 +1,52 @@
 {
   "milestone": "M5",
-  "generated_at_utc": "2026-08-05T09:09:06+00:00",
+  "generated_at_utc": "2026-08-06T09:09:09+00:00",
   "is_real": true,
   "warning": null,
   "status": "ok",
   "error": null,
-  "started_at_utc": "2026-08-05T09:08:40+00:00",
-  "seconds": 26.48,
+  "started_at_utc": "2026-08-06T09:08:42+00:00",
+  "seconds": 27.24,
   "entrypoint": "python -m pipeline.daily",
   "verdict": {
-    "should_retrain": false,
-    "action": "watch",
+    "should_retrain": true,
+    "action": "retrain",
     "severity": "alert",
-    "rule": "R3b_distribution_without_measured_harm",
-    "rationale": "3 distribution signals are alerting (feature, target, prediction), but the frozen model's error was measured over the same windows and did not degrade. Inputs moved and the model tracked them: that is drift worth watching, not proof the champion needs refitting.",
+    "rule": "R2_distribution_alert_with_performance_warning",
+    "rationale": "feature, target drift is alerting and the error is already degrading: a plausible cause with a visible effect.",
     "signals": {
       "feature": "alert",
       "target": "alert",
-      "prediction": "alert",
-      "performance": "ok"
+      "prediction": "ok",
+      "performance": "warn"
     },
     "reasons": [
       {
         "drift_type": "feature",
         "severity": "alert",
         "metric": "psi",
-        "value": 21.292244,
+        "value": 22.417585,
         "threshold": 0.2,
-        "detail": "13/14 feature(s) above PSI 0.2; worst is demand_roll_max_24h at PSI 21.292"
+        "detail": "19/21 feature(s) above PSI 0.2; worst is demand_roll_max_24h at PSI 22.418"
       },
       {
         "drift_type": "target",
         "severity": "alert",
         "metric": "psi",
-        "value": 0.316566,
+        "value": 0.262793,
         "threshold": 0.2,
-        "detail": "actual demand PSI 0.317, mean moved +698 MWh between the reference and current windows"
+        "detail": "actual demand PSI 0.263, mean moved +3,217 MWh between the reference and current windows"
       },
       {
-        "drift_type": "prediction",
-        "severity": "alert",
-        "metric": "psi",
-        "value": 1.300909,
-        "threshold": 0.2,
-        "detail": "forecast PSI 1.301, mean moved -2,522 MWh (label-free signal: available before the actuals arrive)"
+        "drift_type": "performance",
+        "severity": "warn",
+        "metric": "mae_degradation",
+        "value": 0.264252,
+        "threshold": 0.15,
+        "detail": "MAE 2,840 -> 3,590 MWh (+26.4%), MAPE +0.57 pp"
       }
     ],
-    "evaluated_at_utc": "2026-08-05T09:09:01+00:00"
+    "evaluated_at_utc": "2026-08-06T09:09:03+00:00"
   },
   "served_model": {
     "source": "mlflow_registry",
@@ -70,7 +70,7 @@
     {
       "step": "ingest",
       "status": "ok",
-      "seconds": 14.24,
+      "seconds": 14.93,
       "sources": "all"
     },
     {
@@ -80,9 +80,9 @@
       "kind": "eia_api_v2",
       "is_real": true,
       "panel": {
-        "rows": 17589,
+        "rows": 17628,
         "start_utc": "2024-08-01T21:00:00+00:00",
-        "end_utc": "2026-08-04T17:00:00+00:00",
+        "end_utc": "2026-08-06T08:00:00+00:00",
         "missing_demand_hours": 0,
         "has_temperature": true,
         "has_weather_forecast": true
@@ -91,7 +91,7 @@
     {
       "step": "score",
       "status": "ok",
-      "seconds": 5.48,
+      "seconds": 5.76,
       "served_model": {
         "source": "mlflow_registry",
         "uri": "models:/energy-demand-forecaster@champion",
@@ -115,34 +115,34 @@
       "rows": {
         "train": 66020,
         "reference": 1344,
-        "current": 220
+        "current": 364
       }
     },
     {
       "step": "forecast",
       "status": "ok",
-      "seconds": 0.35,
-      "history_points": 400,
+      "seconds": 0.33,
+      "history_points": 436,
       "forward_points": 24
     },
     {
       "step": "monitor",
       "status": "ok",
-      "seconds": 0.21,
-      "severity": "ok",
-      "days": 17
+      "seconds": 0.2,
+      "severity": "warn",
+      "days": 19
     },
     {
       "step": "drift",
       "status": "ok",
-      "seconds": 5.84,
-      "action": "watch",
-      "should_retrain": false,
+      "seconds": 5.68,
+      "action": "retrain",
+      "should_retrain": true,
       "signals": {
         "feature": "alert",
         "target": "alert",
-        "prediction": "alert",
-        "performance": "ok"
+        "prediction": "ok",
+        "performance": "warn"
       }
     }
   ],
