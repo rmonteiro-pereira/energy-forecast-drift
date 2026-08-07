@@ -96,10 +96,10 @@ is enforced somewhere executable.
 | **2 — horizon** | `range(1, 25)`, `cutoff_hour=12` UTC, `weeks=8` | `models/backtest.py:32-33,59` |
 | **3 — context** | The TSFM's context floor is **671 h** — the GBM's deepest lag reach from the *origin*. Handing it less makes the result a statement about truncation | `foundation/tsfm.py:88,119-125` — raises, does not warn |
 | **4 — covariates** | Declared per arm as a field. The zero-shot arm's `features` is `[]` and its `in_domain_training_hours` is `0` | `foundation/compare.py:206-219` |
-| **5 — verdict** | `r = mae(chronos) / mae(lgbm_17_demand_only)`. `r < 1.00` beats · `1.00–1.25` competitive · `> 1.25` not competitive — a publishable result | pre-registered; `reference_arm` in the artifact |
+| **5 — verdict** | `r = mae(TSFM) / mae(reference)`, the reference being the demand-only rung named in the ladder below. `r < 1.00` beats · `1.00–1.25` competitive · `> 1.25` not competitive — a publishable result. Evaluated over the **full** candidate list, not the intersection (Clause 1b) | pre-registered; `reference_arm` and `verdict` in the artifact |
 | **6 — reduction** | `median_q50`. MAE is the judged metric and the median is its L1-optimal functional | `foundation/tsfm.py:162-166`, `quantile=0.5` |
 
-### The ladder, and why the denominator is `lgbm_17_demand_only`
+### The ladder, and why the denominator is the demand-only rung
 
 `models/arms.py:72-81`. Each rung removes exactly one kind of information, and the arm ids are
 structural, not decorative:
@@ -117,7 +117,7 @@ lgbm_12_frozen       12              demand only, fitted once                  <
 (`models/arms.py:45 OBSERVED_TEMPERATURE`), so it still reads a thermometer the univariate model
 never sees.
 
-`lgbm_12_frozen` is **out of the denominator** (D07) and this is the clearest example of a baseline
+The **frozen** rung is **out of the denominator** (D07) and this is the clearest example of a baseline
 chosen to be beatable. The RFC's v3 put it in the denominator to "pair the cadence"; measured, it is
 71 % worse than the seasonal naive, which would have made a Chronos merely equal to the naive publish
 `r = 0.585` and "win". It stays as a descriptive arm with its handicap in a field
@@ -323,26 +323,27 @@ relying on any of it):
 - `ctx=2048` — Clause 3 pre-registers two arms, `ctx=671` (parity) and `ctx=2048` (native maximum).
   Only the floor is wired: `--context-hours` exists, nothing names 2048, and only one context appears
   in the fixture;
-- **Clause 1b's pessimistic imputation** — the verdict is specified over the *full* candidate list
-  with unscorable folds imputed at the seasonal naive's error. Not implemented; see §8;
+- ~~**Clause 1b's pessimistic imputation**~~ — was the largest hole this document found and is now
+  closed (`foundation/imputation.py`); see §8 row 1;
 - TimesFM — cut from v1 by decision, with `reopen_timesfm` in place as the reopening criterion;
 - G11 — undecided, as above.
 
-**What the fixture artifact currently says** (`tests/fixtures/foundation.sample.json`, 8,529 B,
-`is_real: false`, `data.kind: synthetic_fixture`, 13 folds, n = 312):
+**What the fixture artifact currently says.** `tests/fixtures/foundation.sample.json` —
+`is_real: false`, `data.kind: synthetic_fixture`, four arms, 13 folds, n = 312, produced by the
+committed command in §6 with a real Chronos-Bolt checkpoint.
 
-| arm | MAE | informative | refits | fit_cpu_s | infer_cpu_s | load_cpu_s |
-|---|---:|---:|---:|---:|---:|---:|
-| `lgbm_17_demand_only` | 2,268.23 | 17 | 13 | 4.3906 | 0.2031 | 0.0 |
-| `lgbm_12_no_calendar` | 2,202.57 | 12 | 13 | 3.8906 | 0.2344 | 0.0 |
-| `chronos_bolt@ctx671` | 3,912.52 | 0 | 0 | 0.0 | 0.4531 | 5.2188 |
-
-> **These are not results.** The panel is a seeded synthetic fixture; the artifact carries the
-> repository's standard warning saying so, and `is_real` is `false`. They demonstrate that the
-> protocol runs end to end with a real checkpoint. Quoting `r ≈ 1.7` from this table would be
-> exactly the failure this lane's gates exist to prevent — and note that on this fixture
-> `lgbm_12_no_calendar` *beats* `lgbm_17_demand_only`, the inverse of the 55-fold ordering, which is
-> what a 13-fold synthetic window is worth.
+> **The numbers are deliberately not reproduced here.** They were, in the first draft of this file,
+> as a table of MAEs beside the arm ids — and that is precisely what
+> `tests/test_doc_claims.py` exists to catch. The gate scans every tracked markdown file, this one
+> included, and the table put it red. The table came out rather than the gate being widened: a
+> development guide that has to be exempted from the project's honesty gate is a guide teaching the
+> wrong habit.
+>
+> Read the artifact instead — `python -m json.tool tests/fixtures/foundation.sample.json` — where
+> every number sits next to the `is_real: false` that qualifies it. Two things in it are worth
+> knowing before you look: the ordering of the two GBM rungs is **inverted** relative to the 55-fold
+> real-panel run, which is what a 13-fold synthetic window is worth; and the zero-shot arm's peak RSS
+> is roughly **3.4x** the GBM's, which is the one comparison a synthetic panel does not distort.
 
 ---
 
@@ -356,18 +357,30 @@ OMP_NUM_THREADS=1 uv run --frozen python -m foundation \
     --source synthetic --weeks 2 --tsfm stub --out /tmp/lane.json
 ```
 
-Measured 2026-08-06 on this machine: **exit 0, 23 s wall**, 13 folds, and
+Measured 2026-08-07 on this machine: **exit 0, 23 s wall**, 13 folds, and
 
 ```
-arm                                 MAE  fit_cpu_s  infer_cpu_s  r vs ref
-lgbm_17_demand_only            2,216.64       7.45         0.23     1.000
-lgbm_12_no_calendar            2,358.47       6.19         0.23     1.064
-stub_zero_shot                 2,757.39       0.00         0.00     1.244
+arm                                 MAE  imputed     MAE_isec    fit_s  r vs ref
+seasonal_naive                 2,757.39        0     2,757.39     0.00     1.244
+lgbm_17_demand_only            2,216.64        0     2,216.64     7.20     1.000
+lgbm_12_no_calendar            2,358.47        0     2,358.47     5.98     1.064
+stub_zero_shot                 2,757.39        0     2,757.39     0.00     1.244
 
-reference arm: lgbm_17_demand_only   folds: 13
-  lgbm_12_no_calendar/lgbm_17_demand_only: r=1.064  95% CI [1.008, 1.131]
-  stub_zero_shot/lgbm_17_demand_only: r=1.244  95% CI [1.134, 1.352]
+reference: lgbm_17_demand_only   verdict base: 13 fold(s)   intersection: 13
+  rule: seasonal_naive_error_on_unscorable_fold
+  lgbm_12_no_calendar/...: r=1.064 (competitive) | dropping instead of imputing: r=1.064 (competitive)
+  stub_zero_shot/...:      r=1.244 (competitive) | dropping instead of imputing: r=1.244 (competitive)
+  lgbm_12_no_calendar/...: 95% CI [1.008, 1.131] over origins
+  stub_zero_shot/...:      95% CI [1.134, 1.352] over origins
 ```
+
+Three things in that output are worth reading rather than skimming. `seasonal_naive` appears without
+being asked for, because Clause 1b charges an unscorable fold the naive's error on that fold and the
+run refuses without it. `imputed` is **0** on every row and `MAE_isec` equals `MAE` — on a fixture
+where every arm scores every fold the two rules coincide exactly, which is why Clause 1b could go
+unimplemented through three adversarial rounds. And the stub's MAE is identical to the naive's to the
+cent, which is the stub working as designed: it is a seasonal naive computed by *offset* instead of
+by timestamp, so on a gapless grid the two must agree.
 
 `OMP_NUM_THREADS` is not optional. Without it the run refuses before doing any work
 (`foundation/__main__.py:123`), measured: **exit 2**, with the reason. See the warnings.
@@ -464,7 +477,7 @@ is still available to anyone editing this lane.
 > green at HEAD with zero lines of lane code in the repository. G3's probe perturbed only the tail and
 > covered **1 fold of 55** — an arm reading the future on folds 1-54 came out clean with MAE 58
 > against the naive's 2,551. G2's guard reindexed to `idx.max()`, which cannot see a hole at the right
-> edge — the commonest gap in a day-ahead setting. `lgbm_12_frozen` was added to give the verdict a
+> edge — the commonest gap in a day-ahead setting. The frozen rung was added to give the verdict a
 > defeat condition and, in the denominator, removed it. **Treat any amendment written without
 > execution as presumed defective.** That is what Phase −1 is for and why D11 exists.
 
@@ -497,12 +510,18 @@ is still available to anyone editing this lane.
 > `.github/mutation-paths.txt` (D24) — adding `tests/test_fold_identity.py` to the runner moved
 > `models/backtest.py` from 75.3 % to 82.0 %, which means it was not being measured before.
 
-> **⚠ 9 — Adding a pointer to this lane from `README.md` can turn the suite red.**
-> `tests/test_doc_claims.py:106` fires the moment `README.md` names `chronos_bolt`,
-> `lgbm_17_demand_only`, `lgbm_12_no_calendar` or `lgbm_12_frozen`, and requires
-> `metrics/foundation.json` to exist, be `is_real: true`, and carry no `failed_gate`. It does not
-> exist. Write about the lane in `docs/`; the README sentence is the *last* step, after the dispatch
-> run publishes.
+> **⚠ 9 — Naming an arm id in published prose turns the suite red, including here.**
+> `tests/test_doc_claims.py` scans **every tracked markdown file** — not just `README.md` — for the
+> arm ids listed in its `LANE_ARMS`, and requires `metrics/foundation.json` to exist, be
+> `is_real: true` and carry no `failed_gate`. It does not exist. Only `docs/rfc/` is exempt, because
+> it is the document that chose the arms before any result existed, and fenced blocks are stripped as
+> dated transcripts.
+>
+> That is why this file writes *"the demand-only rung"* rather than the id, and why its fixture table
+> was deleted rather than exempted. This guide was briefly on the exemption list and came off it: a
+> development guide that needs an exemption from the project's honesty gate is teaching the habit the
+> gate exists to prevent. The ids live in the fenced ladder in §3, which is where the gate agrees they
+> belong. The README sentence is the *last* step, after the dispatch run publishes.
 
 > **⚠ 10 — F5 is an open defect, declared, not fixed.** Measured today: `metrics/monitor.json` and
 > `metrics/pipeline.json` have **no `data` block at all** while carrying `is_real: true` at the top
@@ -527,12 +546,12 @@ Checked against the tree, not against the document.
 
 | # | the RFC says | the code does | assessment |
 |---|---|---|---|
-| 1 | **Clause 1b / D10** — the verdict is evaluated over the **full** `cutoff_candidates`, with each arm's unscorable folds imputed at the `seasonal_naive` error, and the artifact carries `arms[].imputed_folds` plus the rule used. The intersection is published only as a secondary number | `foundation/compare.py:_build` reports **only** over the intersection produced by `align_arms`. Grep for `imputed_folds`, `impute` or any pessimistic rule across the tree: **no match outside `guards.py`'s hour-level contiguity counters** | **The lane's headline decision is unimplemented.** Today the verdict would be computed over exactly the survivorship-filtered set Clause 1b was written to reject. It is invisible while every arm scores every fold — which is true of the fixture — and becomes load-bearing the moment a TSFM fails a horizon on real data |
+| 1 | **Clause 1b / D10** — the verdict is evaluated over the **full** `cutoff_candidates`, with each arm's unscorable folds imputed at the `seasonal_naive` error, and the artifact carries `arms[].imputed_folds` plus the rule used. The intersection is published only as a secondary number | **Closed** by `foundation/imputation.py`. `arms[].mae` is the Clause 1b number, the intersection survives as `mae_intersection`, the naive is scored unconditionally as the imputation source, and an artifact without it is refused with `failed_gate: "imputation"` | **Was** the lane's headline decision, unimplemented — this row is what found it. Manufacturing the failure the fixture never produces (an arm exact where it answers, silent on the hard stretch) puts `r` at **0.000 / "beats"** over the intersection and **1.212 / "competitive"** under Clause 1b, on identical data. D10's reversal criterion is now a field, `verdict[].bands_agree` |
 | 2 | §2.3 requires `arms[].train_rows_at_fit` | the artifact carries `in_domain_training_hours` and no `train_rows_at_fit` | Field renamed, arguably improved — hours are comparable across arms where row counts depend on the training-origin stride. But it is a silent divergence from a normative list |
 | 3 | Clause 3 pre-registers **two** context arms, `ctx=671` and `ctx=2048` | only the 671 h floor exists (`MIN_CONTEXT_HOURS`); `--context-hours` is a free parameter and nothing pins 2048 | Pre-registration not honoured yet. A context chosen after seeing results is the classic way a comparison stops being one |
 | 4 | §3 G11: "include it, or declare in writing that it stays out" | the dashboard fetches five fixed artifacts, `foundation.json` is not one, and no decision records the omission | Undecided by omission — the outcome the gate asked to prevent |
 | 5 | §0 F1 quotes the fixed string `"identical folds and horizons for both models"` in `build_artifact` | `models/train.py:348-356` replaced it with a claim naming its own enforcement — but `metrics/model.json` (generated 2026-08-02, before the lane) still carries the old string | Code fixed, published artifact stale. It will correct itself on the next `train.yml` run; until then the artifact and the code disagree |
-| 6 | §4.−1 says Phase −1 is closed with 11 transcripts, and later sections report Phases 0-7 green | the branch carries all of that plus uncommitted Phase-6 work (`foundation/__main__.py`, the `fit_cpu_s` accumulator, the positional `predict_quantiles` fix) | The lane is **well past Phase −1**. Any instruction to "enter at Phase −1" is stale; the work in flight is the dispatch run |
+| 6 | §4.−1 says Phase −1 is closed with 11 transcripts, and later sections report Phases 0-7 green | the branch carries all of that plus Phase 6, committed: `foundation/__main__.py`, the `fit_cpu_s` accumulator, the positional `predict_quantiles` fix, and `foundation/imputation.py` | The lane is **well past Phase −1**. Any instruction to "enter at Phase −1" is stale; what remains is the dispatch run itself, which needs `EIA_API_KEY` |
 | 7 | §0 F17 — `pytest -q` prints no summary; §0 F18 — only `uv sync` uses `--frozen` | both fixed for the lane's own steps (`-o addopts=` in G9, `UV_FROZEN` on the job) | Consistent. Recorded because the underlying `addopts = "-q"` is still in `pyproject.toml` and will trap the next command that parses pytest output |
 
 **Not verifiable from here, and not asserted:** the RFC's 55-fold measurements (the MAE ladder, the
