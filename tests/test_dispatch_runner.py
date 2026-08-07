@@ -174,7 +174,15 @@ def test_the_runner_produces_an_artifact_that_passes_its_own_gates(tmp_path, pin
     assert artifact["failed_gate"] is None
     assert artifact["is_real"] is False
     assert artifact["data"]["kind"] == "synthetic_fixture"
-    assert {a["id"] for a in artifact["arms"]} == {"lgbm_12_no_calendar", "stub_zero_shot"}
+    # `seasonal_naive` is present without being asked for, and that is the
+    # contract: Clause 1b charges an unscorable fold the naive's error on that
+    # fold, so the naive is the imputation source and the run refuses without it.
+    assert {a["id"] for a in artifact["arms"]} == {
+        "seasonal_naive",
+        "lgbm_12_no_calendar",
+        "stub_zero_shot",
+    }
+    assert artifact["imputation_rule"] == "seasonal_naive_error_on_unscorable_fold"
     assert len({a["n"] for a in artifact["arms"]}) == 1, "the arms were scored on different folds"
 
 
@@ -251,7 +259,11 @@ def test_every_gate_that_ran_leaves_its_report_in_the_record(tmp_path, pinned):
     )
     artifact = json.loads(out.read_text(encoding="utf-8"))
 
-    assert set(artifact["foresight"]) == {"lgbm_12_no_calendar", "stub_zero_shot"}
+    assert set(artifact["foresight"]) == {
+        "seasonal_naive",
+        "lgbm_12_no_calendar",
+        "stub_zero_shot",
+    }
     for arm_id, report in artifact["foresight"].items():
         assert report["probed"] >= 1, f"{arm_id}: clean over zero folds is not clean"
         assert report["clean"] is True

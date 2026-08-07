@@ -31,7 +31,7 @@ import pandas as pd
 
 from features import build as build_mod
 from foundation import cost as cost_mod
-from foundation import guards
+from foundation import guards, imputation
 from foundation.uncertainty import UncertaintyError, assert_block_is_origin, paired_block_bootstrap
 from models import arms as arms_mod
 from models import backtest, train
@@ -46,6 +46,7 @@ GATES = (
     "arm-cadence",
     "cost-provenance",
     "uncertainty-block",
+    "imputation",
 )
 
 
@@ -118,7 +119,12 @@ def build_artifact(
             warning=warning,
             foresight=foresight,
         )
-    except (guards.LaneGateError, arms_mod.ArmGateError, cost_mod.CostGateError) as exc:
+    except (
+        guards.LaneGateError,
+        arms_mod.ArmGateError,
+        cost_mod.CostGateError,
+        imputation.ImputationError,
+    ) as exc:
         return _refusal(exc.gate, str(exc), is_real, data_kind, warning)
     except train.FoldIdentityError as exc:
         return _refusal("fold-identity", str(exc), is_real, data_kind, warning)
@@ -174,14 +180,47 @@ def _build(
         )
 
     reference = reference_arm or "lgbm_17_demand_only"
+
+    # Clause 1b. Everything below this line is computed over the verdict base —
+    # the full candidate list, with each arm's unscorable folds charged the
+    # seasonal naive's error — and the intersection survives only as a secondary
+    # number. The order matters: `align_arms` above is what makes the filtering
+    # *visible*, and this is what stops it deciding anything.
+    if imputation.FILLER_ARM not in runs:
+        raise imputation.ImputationError(
+            f"no {imputation.FILLER_ARM} arm: Clause 1b charges an unscorable fold "
+            "the naive's error on that fold, so the naive has to have been scored. "
+            "Without it the verdict could only come from the intersection, which is "
+            "survivorship filtering."
+        )
+    filler = runs[imputation.FILLER_ARM].result
+    base, no_ground_truth = imputation.verdict_base(filler, cutoff_candidates)
+
+    imputed_frames, imputed_folds, overall = {}, {}, {}
+    for arm_id, run in runs.items():
+        frame, filled = imputation.impute(run.result, filler, base)
+        imputed_frames[arm_id] = frame
+        imputed_folds[arm_id] = filled
+        overall[arm_id] = imputation.summarise(frame)
+
     uncertainty = {}
-    if reference in aligned:
-        for arm_id, result in aligned.items():
+    if reference in imputed_frames:
+        for arm_id, frame in imputed_frames.items():
             if arm_id == reference:
                 continue
-            report = paired_block_bootstrap(result.predictions, aligned[reference].predictions)
-            assert_block_is_origin(report, len(fold_record["folds_intersected"]))
+            # Over the verdict base, not the intersection: an interval around a
+            # different estimand than the point estimate describes neither.
+            report = paired_block_bootstrap(frame, imputed_frames[reference])
+            assert_block_is_origin(report, len(base))
             uncertainty[f"{arm_id}/{reference}"] = report
+
+    verdict = {}
+    if reference in overall:
+        verdict = imputation.sensitivity(
+            {k: v["mae"] for k, v in overall.items()},
+            {k: v.overall["mae"] for k, v in aligned.items()},
+            reference,
+        )
 
     artifact = {
         "is_real": is_real,
@@ -189,20 +228,32 @@ def _build(
         "data": {"kind": data_kind, "is_real": is_real},
         "failed_gate": None,
         "cutoff_candidates": [pd.Timestamp(c).isoformat() for c in cutoff_candidates],
+        "folds_verdict_base": [t.isoformat() for t in base],
+        "candidates_without_ground_truth": no_ground_truth,
         "folds_intersected": fold_record["folds_intersected"],
+        "imputation_rule": imputation.IMPUTATION_RULE,
         "contiguity": contiguity,
         "foresight": foresight or {},
         "reference_arm": reference,
+        "verdict": verdict,
         "hardware": cost_mod.hardware_block(n_threads=n_threads),
         "arms": [
             {
                 "id": arm_id,
                 "name": arm_id.split("@")[0],
-                "n": aligned[arm_id].overall["n"],
-                "mae": round(aligned[arm_id].overall["mae"], 4),
-                "mape_pct": round(aligned[arm_id].overall["mape_pct"], 4),
-                "rmse": round(aligned[arm_id].overall["rmse"], 4),
-                "bias": round(aligned[arm_id].overall["bias"], 4),
+                # `mae` is the Clause 1b number and that is deliberate. Putting
+                # the intersection here and the verdict somewhere else invites
+                # exactly the mistake the clause exists to stop: a reader quotes
+                # the field called `mae`.
+                "n": overall[arm_id]["n"],
+                "mae": round(overall[arm_id]["mae"], 4),
+                "mape_pct": round(overall[arm_id]["mape_pct"], 4),
+                "rmse": round(overall[arm_id]["rmse"], 4),
+                "bias": round(overall[arm_id]["bias"], 4),
+                "imputed_folds": len(imputed_folds[arm_id]),
+                "imputed_cutoffs": imputed_folds[arm_id],
+                "n_intersection": aligned[arm_id].overall["n"],
+                "mae_intersection": round(aligned[arm_id].overall["mae"], 4),
                 "features": run.features,
                 "features_informative": len(run.features),
                 "refits": run.refits,

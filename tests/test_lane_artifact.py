@@ -121,9 +121,45 @@ def test_the_interval_is_blocked_on_origins(sample):
     assert sample["uncertainty"], "no interval: G10 would pass vacuously"
     for report in sample["uncertainty"].values():
         assert report["block"] == "cutoff_utc"
-        assert report["n_blocks"] == len(sample["folds_intersected"])
+        # The verdict base, not the intersection. An interval taken over a
+        # different set of folds than the point estimate describes neither, and
+        # on a fixture where nothing fails the two are equal — so this assertion
+        # would have looked right either way.
+        assert report["n_blocks"] == len(sample["folds_verdict_base"])
         low, high = report["mae_ratio"]["ci95"]
         assert low <= report["mae_ratio"]["point"] <= high
+
+
+def test_the_published_mae_is_the_clause_1b_number(sample):
+    """Not the intersection, which is survivorship filtering.
+
+    Both are in the artifact and only one of them is called `mae`, because the
+    field a reader quotes has to be the one that cannot be gamed by failing. On
+    a fixture where every arm scores every fold the two are identical, which is
+    exactly why this pins the *fields* and `tests/test_imputation.py` manufactures
+    the failure that makes them diverge.
+    """
+    assert sample["imputation_rule"] == "seasonal_naive_error_on_unscorable_fold"
+    assert sample["folds_verdict_base"], "no verdict base: the ratio has nothing to stand on"
+
+    filler = [a for a in sample["arms"] if a["id"] == "seasonal_naive"]
+    assert filler, "no seasonal_naive arm: nothing could have been imputed"
+
+    for arm in sample["arms"]:
+        assert isinstance(arm["imputed_folds"], int)
+        assert len(arm["imputed_cutoffs"]) == arm["imputed_folds"]
+        assert arm["n"] == len(sample["folds_verdict_base"]) * 24
+        if arm["imputed_folds"] == 0:
+            assert arm["mae"] == arm["mae_intersection"]
+
+
+def test_the_verdict_records_whether_the_band_survives_the_rule(sample):
+    """D10's reversal criterion is a field, so it can be read without rerunning."""
+    assert sample["verdict"], "no verdict block: D10 has no evaluated criterion"
+    for pair, call in sample["verdict"].items():
+        assert call["rule"] == "seasonal_naive_error_on_unscorable_fold"
+        assert call["band"] in {"beats", "competitive", "not competitive"}
+        assert isinstance(call["bands_agree"], bool), pair
 
 
 def test_a_refusal_is_stamped_not_raised():

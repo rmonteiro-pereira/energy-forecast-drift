@@ -66,6 +66,7 @@ chance of failing a horizon.
 | **F17** | major | `pyproject.toml:45` (`addopts = "-q"`) | Any invocation passing `-q` becomes `-qq` and pytest **prints no summary line at all**. Any gate parsing "N passed / N skipped" out of a `pytest -q` is green by construction. `[→ g9-pytest-q-nao-imprime-skipped]` | Measured. |
 | **F18** | major | `ci.yml:93,94,100,103,108,114,121,141` | Only the `uv sync` (`:89`) uses `--frozen`. Every `uv run` after it re-resolves against `pyproject.toml`. `[→ R2-E-g5-e-no-op]` | Read. |
 | **F19** | **blocker** | `foundation/tsfm.py:153` | The adapter passes the batch as `context=`, the parameter's name in `chronos-forecasting` **1.x**. `uv.lock` resolves **2.3.1**, where it is `inputs`. The lane's only path to a real forecast was dead, and no reading found it because the code is correct against the version its own docstring assumed. Found in §4.6, on the first line of this adapter ever executed with torch installed. | `TypeError: ChronosBoltPipeline.predict_quantiles() missing 1 required positional argument: 'inputs'`. |
+| **F21** | **blocker** | `foundation/compare.py:158` | **Clause 1b and D10 were never implemented.** The verdict came out of `align_arms` — the intersection — which the RFC, the decision register and `align_arms`' own docstring all call survivorship filtering. `imputed_folds`, the field D10 declares mandatory, had **zero occurrences in the tree**. Invisible on the fixture, where every arm scores every fold and the two answers are equal; live the moment a TSFM fails a horizon, which is the one case the clause was written for. Reported by a review of the lane, then reproduced. | Manufactured: an arm perfect where it answers and silent on the hard stretch is `beats` over the intersection and lands in a different band under Clause 1b. |
 | **F20** | major | `models/lgbm.py:133-160` + `tests/fixtures/foundation.sample.json` | A refit-per-fold arm reported that its refits were free. `WalkForwardLightGBM` refits **inside** the call the harness meters as inference, so no caller could start a `fit` timer — and the committed fixture carried `refits: 13` beside `fit_cpu_s: 0.0`. The existing test pinned only `refits == 0 -> fit_cpu_s == 0.0`; the converse was never asserted, and the refit is **96%** of this arm's measured cost. | `AssertionError: lgbm_12_no_calendar: 13 refit(s) at fit_cpu_s=0.0`. |
 
 ---
@@ -959,6 +960,59 @@ venv recriado do lock    : Success: no issues found in 43 source files
 No repository defect. Recorded because the first four rounds of that investigation all pointed at a
 cause that was not there, and *"my environment"* is a hypothesis that has to be tested rather than
 assumed — in either direction.
+
+### F21 — the clause the code did not honour
+
+Found by a review of the finished lane, not by the lane's own gates, and it is the most serious thing
+in this document: **Clause 1b and D10 were never implemented.** The verdict came out of `align_arms`
+— the intersection — while `imputed_folds`, the field D10 calls mandatory, had zero occurrences in
+the tree. Every gate was green because on the fixture every arm scores every fold, so the verdict
+base *is* the intersection and the two answers agree exactly.
+
+The failure is only reachable if a fold is manufactured, which is what
+`tests/test_imputation.py` does — an arm that answers perfectly where it answers and goes silent over
+the hard stretch:
+
+```
+candidatos                   : 22
+folds duros (o braco cala)   : 6
+imputed_folds do quitter     : 6
+r sobre a intersecao         : 0.000  -> banda "beats"
+r sob a Clausula 1b          : 1.212  -> banda "competitive"
+bands_agree                  : False
+```
+
+The `0.000` is not a rounding artefact and it is the cleanest statement of the defect available: the
+arm is *exact* on every fold it answers, so over the intersection its MAE is literally zero and it
+wins by an infinite margin. Under Clause 1b the same arm is charged the naive's error on the six days
+it declined and lands mid-band. Nothing about the arm changed between those two lines.
+
+Two rules, two bands, same data. The intersection removes the hard folds **from the arm being
+compared against as well**, so the quitter is credited with the days it chose to answer and the
+reference loses the days where it was winning. That is the whole content of "an arm gets flattered by
+its own failures", and nothing in the lane would have caught it: the counters that make the filtering
+visible were all present and correct, and reporting a bias is not the same as removing it.
+
+`foundation/imputation.py` charges an unscorable fold **the seasonal naive's own rows** on that fold —
+prediction and actual substituted whole, so the arm gets exactly the trivial model's error and no
+value is synthesised. Consequences worth naming:
+
+- `seasonal_naive` stops being optional. It is the imputation source, so the artifact is **refused**
+  (`failed_gate: "imputation"`) rather than quietly intersected when it is absent.
+- `arms[].mae` is now the Clause 1b number and the intersection survives as `mae_intersection`.
+  Putting the verdict anywhere other than the field called `mae` invites the exact mistake the clause
+  exists to stop.
+- The interval moved with it. A bootstrap over the intersection beside a point estimate over the base
+  describes neither.
+- A candidate the naive itself could not score is **excluded**, not imputed, and recorded in
+  `candidates_without_ground_truth`. There is no ground truth there for anyone; charging an arm the
+  error of a model that also failed would invent the comparison rather than make it pessimistic.
+- D10's reversal criterion is now evaluated instead of described: `verdict[].bands_agree` recomputes
+  the band under "drop the fold" and says whether it moves.
+
+The first draft of `band()` also collapsed Clause 5's two boundaries into one `<=` loop, which puts an
+exact `r = 1.00` in **beats** instead of **competitive** — the single value most likely to be argued
+over, in the wrong direction. Both boundaries are parametrised by test now.
 
 ### What is NOT done, and will not be declared done
 

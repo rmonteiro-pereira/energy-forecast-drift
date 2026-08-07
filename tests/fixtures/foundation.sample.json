@@ -21,6 +21,22 @@
     "2026-07-25T12:00:00+00:00",
     "2026-07-26T12:00:00+00:00"
   ],
+  "folds_verdict_base": [
+    "2026-07-14T12:00:00+00:00",
+    "2026-07-15T12:00:00+00:00",
+    "2026-07-16T12:00:00+00:00",
+    "2026-07-17T12:00:00+00:00",
+    "2026-07-18T12:00:00+00:00",
+    "2026-07-19T12:00:00+00:00",
+    "2026-07-20T12:00:00+00:00",
+    "2026-07-21T12:00:00+00:00",
+    "2026-07-22T12:00:00+00:00",
+    "2026-07-23T12:00:00+00:00",
+    "2026-07-24T12:00:00+00:00",
+    "2026-07-25T12:00:00+00:00",
+    "2026-07-26T12:00:00+00:00"
+  ],
+  "candidates_without_ground_truth": [],
   "folds_intersected": [
     "2026-07-14T12:00:00+00:00",
     "2026-07-15T12:00:00+00:00",
@@ -36,6 +52,7 @@
     "2026-07-25T12:00:00+00:00",
     "2026-07-26T12:00:00+00:00"
   ],
+  "imputation_rule": "seasonal_naive_error_on_unscorable_fold",
   "contiguity": {
     "imputed_hours": 0,
     "imputed_runs": 0,
@@ -44,6 +61,12 @@
     "actuals_untouched_from": "2026-07-26T11:00:00+00:00"
   },
   "foresight": {
+    "seasonal_naive": {
+      "probed": 3,
+      "caught": [],
+      "clean": true,
+      "coverage": "3/13"
+    },
     "lgbm_17_demand_only": {
       "probed": 3,
       "caught": [],
@@ -64,6 +87,32 @@
     }
   },
   "reference_arm": "lgbm_17_demand_only",
+  "verdict": {
+    "seasonal_naive/lgbm_17_demand_only": {
+      "rule": "seasonal_naive_error_on_unscorable_fold",
+      "r": 1.179592,
+      "band": "competitive",
+      "r_if_folds_dropped": 1.179592,
+      "band_if_folds_dropped": "competitive",
+      "bands_agree": true
+    },
+    "lgbm_12_no_calendar/lgbm_17_demand_only": {
+      "rule": "seasonal_naive_error_on_unscorable_fold",
+      "r": 0.971051,
+      "band": "beats",
+      "r_if_folds_dropped": 0.971051,
+      "band_if_folds_dropped": "beats",
+      "bands_agree": true
+    },
+    "chronos_bolt@ctx671/lgbm_17_demand_only": {
+      "rule": "seasonal_naive_error_on_unscorable_fold",
+      "r": 1.724922,
+      "band": "not competitive",
+      "r_if_folds_dropped": 1.724922,
+      "band_if_folds_dropped": "not competitive",
+      "bands_agree": true
+    }
+  },
   "hardware": {
     "cpu_model": "AMD64 Family 25 Model 97 Stepping 2, AuthenticAMD",
     "n_threads": 1,
@@ -75,6 +124,38 @@
   },
   "arms": [
     {
+      "id": "seasonal_naive",
+      "name": "seasonal_naive",
+      "n": 312,
+      "mae": 2675.5856,
+      "mape_pct": 3.2142,
+      "rmse": 3394.979,
+      "bias": 1201.4663,
+      "imputed_folds": 0,
+      "imputed_cutoffs": [],
+      "n_intersection": 312,
+      "mae_intersection": 2675.5856,
+      "features": [],
+      "features_informative": 0,
+      "refits": 0,
+      "fit_anchor_utc": null,
+      "params": {},
+      "context_hours": null,
+      "feature_reach_hours": 671,
+      "in_domain_training_hours": 0,
+      "unscorable_by_own_failure": 0,
+      "folds_dropped_vs_intersection": [],
+      "weights": null,
+      "fit_cpu_s": 0.0,
+      "infer_cpu_s": 0.0156,
+      "load_cpu_s": 0.0,
+      "peak_rss_mb": 159.0,
+      "n_predictions": 312,
+      "fit_cpu_ms_per_prediction": 0.0,
+      "infer_cpu_ms_per_prediction": 0.0501,
+      "load_cpu_ms_per_prediction": 0.0
+    },
+    {
       "id": "lgbm_17_demand_only",
       "name": "lgbm_17_demand_only",
       "n": 312,
@@ -82,6 +163,10 @@
       "mape_pct": 2.7535,
       "rmse": 2848.9187,
       "bias": 1002.7907,
+      "imputed_folds": 0,
+      "imputed_cutoffs": [],
+      "n_intersection": 312,
+      "mae_intersection": 2268.2301,
       "features": [
         "horizon_h",
         "hour",
@@ -126,12 +211,12 @@
       "unscorable_by_own_failure": 0,
       "folds_dropped_vs_intersection": [],
       "weights": null,
-      "fit_cpu_s": 4.3906,
+      "fit_cpu_s": 4.2344,
       "infer_cpu_s": 0.2031,
       "load_cpu_s": 0.0,
-      "peak_rss_mb": 179.9,
+      "peak_rss_mb": 180.5,
       "n_predictions": 312,
-      "fit_cpu_ms_per_prediction": 14.0725,
+      "fit_cpu_ms_per_prediction": 13.5717,
       "infer_cpu_ms_per_prediction": 0.651,
       "load_cpu_ms_per_prediction": 0.0
     },
@@ -143,6 +228,10 @@
       "mape_pct": 2.6637,
       "rmse": 2755.2943,
       "bias": 728.1185,
+      "imputed_folds": 0,
+      "imputed_cutoffs": [],
+      "n_intersection": 312,
+      "mae_intersection": 2202.5664,
       "features": [
         "horizon_h",
         "demand_lag_24h",
@@ -182,13 +271,13 @@
       "unscorable_by_own_failure": 0,
       "folds_dropped_vs_intersection": [],
       "weights": null,
-      "fit_cpu_s": 3.8906,
-      "infer_cpu_s": 0.2344,
+      "fit_cpu_s": 3.7344,
+      "infer_cpu_s": 0.2188,
       "load_cpu_s": 0.0,
-      "peak_rss_mb": 182.2,
+      "peak_rss_mb": 182.1,
       "n_predictions": 312,
-      "fit_cpu_ms_per_prediction": 12.47,
-      "infer_cpu_ms_per_prediction": 0.7512,
+      "fit_cpu_ms_per_prediction": 11.9692,
+      "infer_cpu_ms_per_prediction": 0.7011,
       "load_cpu_ms_per_prediction": 0.0
     },
     {
@@ -199,6 +288,10 @@
       "mape_pct": 4.6139,
       "rmse": 4784.7753,
       "bias": 267.3083,
+      "imputed_folds": 0,
+      "imputed_cutoffs": [],
+      "n_intersection": 312,
+      "mae_intersection": 3912.5203,
       "features": [],
       "features_informative": 0,
       "refits": 0,
@@ -222,16 +315,37 @@
         "verified_utc": "2026-08-06"
       },
       "fit_cpu_s": 0.0,
-      "infer_cpu_s": 0.4531,
-      "load_cpu_s": 5.2188,
-      "peak_rss_mb": 618.5,
+      "infer_cpu_s": 0.4375,
+      "load_cpu_s": 4.7969,
+      "peak_rss_mb": 620.1,
       "n_predictions": 312,
       "fit_cpu_ms_per_prediction": 0.0,
-      "infer_cpu_ms_per_prediction": 1.4523,
-      "load_cpu_ms_per_prediction": 16.7268
+      "infer_cpu_ms_per_prediction": 1.4022,
+      "load_cpu_ms_per_prediction": 15.3746
     }
   ],
   "uncertainty": {
+    "seasonal_naive/lgbm_17_demand_only": {
+      "block": "cutoff_utc",
+      "n_blocks": 13,
+      "n_predictions": 312,
+      "n_resamples": 2000,
+      "seed": 20260806,
+      "mae_delta": {
+        "point": 407.3555145057844,
+        "ci95": [
+          240.74507081705036,
+          571.7875689685313
+        ]
+      },
+      "mae_ratio": {
+        "point": 1.1795917976995942,
+        "ci95": [
+          1.1039978477406325,
+          1.2569474031532035
+        ]
+      }
+    },
     "lgbm_12_no_calendar/lgbm_17_demand_only": {
       "block": "cutoff_utc",
       "n_blocks": 13,

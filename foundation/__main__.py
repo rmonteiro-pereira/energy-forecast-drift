@@ -45,10 +45,10 @@ from pathlib import Path
 import pandas as pd
 
 from features import panel as panel_mod
-from foundation import compare, cost, guards, stub
+from foundation import compare, cost, guards, imputation, stub
 from ingest.config import METRICS_DIR
 from models import arms as arms_mod
-from models import backtest, lgbm
+from models import backtest, baseline, lgbm
 from models.data import NoRealDataError, resolve_panel
 
 log = logging.getLogger("foundation")
@@ -286,6 +286,35 @@ def run_lane(args: argparse.Namespace) -> dict:
     runs: dict[str, compare.ArmRun] = {}
     foresight: dict[str, dict] = {}
 
+    # The seasonal naive is scored first and unconditionally, because Clause 1b
+    # charges an arm's unscorable fold the naive's error *on that fold* — so the
+    # naive is not one arm among several here, it is the imputation source, and
+    # without it the verdict could only come out of the intersection. It is also
+    # the trivial floor the ladder is read against, which is why it is published
+    # as an arm rather than hidden as machinery.
+    log.info("scoring %s", imputation.FILLER_ARM)
+    naive_meter = cost.CostMeter()
+    with naive_meter.timing("infer"):
+        naive_result = backtest.run(guarded, baseline.predict, horizons=horizons, cutoffs=cutoffs)
+    runs[imputation.FILLER_ARM] = compare.ArmRun(
+        arm_id=imputation.FILLER_ARM,
+        result=naive_result,
+        cost=naive_meter.block(len(naive_result.predictions)),
+        features=[],
+        refits=0,
+        fit_anchor_utc=None,
+        params={},
+        in_domain_training_hours=0,
+    )
+    foresight[imputation.FILLER_ARM] = _probe(
+        lambda _s: baseline.predict,
+        guarded,
+        cutoffs,
+        horizons,
+        args.probe_gbm_folds,
+        imputation.FILLER_ARM,
+    )
+
     for arm_id in arm_ids:
         log.info("scoring %s", arm_id)
         runs[arm_id] = _score_gbm_arm(arm_id, gbm_panel, guarded, cutoffs, horizons, args.n_threads)
@@ -366,17 +395,36 @@ def _report(artifact: dict) -> None:
     reference = artifact["reference_arm"]
     rows = {a["id"]: a for a in artifact["arms"]}
     print()
-    print(f"{'arm':<26} {'MAE':>12} {'fit_cpu_s':>10} {'infer_cpu_s':>12} {'r vs ref':>9}")
+    # ASCII only. The console this runs on is cp1252 and a `∩` in a header is
+    # enough to end the run with UnicodeEncodeError after every arm has been
+    # scored — measured, and this repository has met the same encoding before.
+    print(f"{'arm':<26} {'MAE':>12} {'imputed':>8} {'MAE_isec':>12} {'fit_s':>8} {'r vs ref':>9}")
     for arm in artifact["arms"]:
         ratio = arm["mae"] / rows[reference]["mae"] if reference in rows else float("nan")
         print(
-            f"{arm['id']:<26} {arm['mae']:>12,.2f} {arm['fit_cpu_s']:>10.2f} "
-            f"{arm['infer_cpu_s']:>12.2f} {ratio:>9.3f}"
+            f"{arm['id']:<26} {arm['mae']:>12,.2f} {arm['imputed_folds']:>8} "
+            f"{arm['mae_intersection']:>12,.2f} {arm['fit_cpu_s']:>8.2f} {ratio:>9.3f}"
         )
-    print(f"\nreference arm: {reference}   folds: {len(artifact['folds_intersected'])}")
+    print(
+        f"\nreference: {reference}   verdict base: {len(artifact['folds_verdict_base'])} fold(s)"
+        f"   intersection: {len(artifact['folds_intersected'])}"
+        f"   rule: {artifact['imputation_rule']}"
+    )
+    if artifact["candidates_without_ground_truth"]:
+        print(
+            f"  {len(artifact['candidates_without_ground_truth'])} candidate(s) had no actual "
+            "for the naive either and are out of the base entirely"
+        )
+    for pair, call in artifact["verdict"].items():
+        flag = "" if call["bands_agree"] else "   <<< THE BAND MOVES IF THE RULE CHANGES"
+        print(
+            f"  {pair}: r={call['r']:.3f} ({call['band']}) | "
+            f"dropping instead of imputing: r={call['r_if_folds_dropped']:.3f} "
+            f"({call['band_if_folds_dropped']}){flag}"
+        )
     for pair, report in artifact["uncertainty"].items():
         low, high = report["mae_ratio"]["ci95"]
-        print(f"  {pair}: r={report['mae_ratio']['point']:.3f}  95% CI [{low:.3f}, {high:.3f}]")
+        print(f"  {pair}: 95% CI [{low:.3f}, {high:.3f}] over origins")
 
 
 def main(argv: list[str] | None = None) -> int:

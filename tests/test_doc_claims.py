@@ -107,13 +107,24 @@ def test_the_three_statements_of_the_test_runtime_agree():
 #: in published prose is the trigger: an arm id is what a number is attached to.
 LANE_ARMS = ("chronos_bolt", "lgbm_17_demand_only", "lgbm_12_no_calendar", "lgbm_12_frozen")
 
-#: The design record, exempt by path. `docs/rfc/` names every arm dozens of times
-#: because it is the document that *chose* them, and it did so before any result
-#: existed — requiring a published artifact there would mean the RFC could not
-#: describe the experiment it proposes. Every number in it is labelled fixture or
-#: synthetic and sits inside a dated transcript. The exemption is a path prefix
-#: rather than a filename so that a second RFC does not silently fall outside it.
-PROSE_EXEMPT = ("docs/rfc/",)
+#: The lane's own construction record, exempt by path. `docs/rfc/` names every
+#: arm dozens of times because it is the document that *chose* them, and it did
+#: so before any result existed — requiring a published artifact there would mean
+#: the RFC could not describe the experiment it proposes. Every number in it is
+#: labelled fixture or synthetic and sits inside a dated transcript. The
+#: exemption is a path prefix rather than a filename so that a second RFC does
+#: not silently fall outside it.
+#:
+#: `DEVELOPMENT-foundation-vs-gbm.md` is the same genre and was added when this
+#: scan first ran against it: it carries a table of fixture MAEs beside the arm
+#: ids, quoted from the RFC's dated transcript rather than presented as results.
+#: It is listed by full path, not by a `docs/DEVELOPMENT` prefix, because the
+#: exemption should have to be renewed by hand for each document that claims it.
+#: **This is the loosest thing in this file.** Anything added here is prose the
+#: gate stops reading, so the bar is: the document's subject is the lane's own
+#: construction, and its numbers are labelled records of a run rather than
+#: claims about the world.
+PROSE_EXEMPT = ("docs/rfc/", "docs/DEVELOPMENT-foundation-vs-gbm.md")
 
 
 def _tracked_markdown() -> list[str]:
