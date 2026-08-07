@@ -1,6 +1,6 @@
 {
   "milestone": "M5",
-  "generated_at_utc": "2026-08-05T09:09:00+00:00",
+  "generated_at_utc": "2026-08-07T07:44:34+00:00",
   "is_real": true,
   "warning": null,
   "units": {
@@ -30,7 +30,7 @@
   "windows": {
     "strategy": "time-ordered train / reference / current; the booster is fitted on the train window only, so both scored windows are out of sample",
     "panel_start_utc": "2024-08-01T21:00:00+00:00",
-    "panel_end_utc": "2026-08-04T17:00:00+00:00",
+    "panel_end_utc": "2026-08-07T06:00:00+00:00",
     "reference_start_utc": "2026-07-19T00:00:00+00:00",
     "current_start_utc": "2026-08-02T00:00:00+00:00",
     "reference_days": 14,
@@ -65,7 +65,7 @@
     "rows": {
       "train": 66020,
       "reference": 1344,
-      "current": 220
+      "current": 460
     },
     "booster_source": "fitted_on_train_window"
   },
@@ -77,17 +77,17 @@
     "bias": 590.5457
   },
   "current": {
-    "n": 220,
-    "mae": 3142.1128,
-    "mape_pct": 2.8069,
-    "rmse": 4527.9518,
-    "bias": -2629.2861
+    "n": 460,
+    "mae": 3994.9191,
+    "mape_pct": 3.5004,
+    "rmse": 5064.5005,
+    "bias": -3713.1252
   },
-  "mae_degradation": 0.106378,
-  "mape_degradation_pp": 0.1821,
+  "mae_degradation": 0.406662,
+  "mape_degradation_pp": 0.8756,
   "alert_line_mae": 3692.0,
-  "severity": "ok",
-  "summary": "MAE 2,840 -> 3,142 MWh (+10.6%), MAPE +0.18 pp",
+  "severity": "alert",
+  "summary": "MAE 2,840 -> 3,995 MWh (+40.7%), MAPE +0.88 pp",
   "daily": [
     {
       "day_utc": "2026-07-19T00:00:00+00:00",
@@ -242,22 +242,52 @@
     {
       "day_utc": "2026-08-03T00:00:00+00:00",
       "window": "current",
-      "mae": 3454.66,
-      "mape_pct": 2.9156,
-      "bias": -3281.35,
-      "mae_rolling": 2478.14,
-      "mape_rolling": 2.2701,
-      "n": 94
+      "mae": 3622.8,
+      "mape_pct": 3.0335,
+      "bias": -3453.1,
+      "mae_rolling": 2502.16,
+      "mape_rolling": 2.2869,
+      "n": 96
     },
     {
       "day_utc": "2026-08-04T00:00:00+00:00",
       "window": "current",
-      "mae": 5533.66,
-      "mape_pct": 4.7566,
-      "bias": -4984.15,
-      "mae_rolling": 3075.32,
-      "mape_rolling": 2.7773,
-      "n": 30
+      "mae": 3511.65,
+      "mape_pct": 3.023,
+      "bias": -3167.06,
+      "mae_rolling": 2810.48,
+      "mape_rolling": 2.5465,
+      "n": 96
+    },
+    {
+      "day_utc": "2026-08-05T00:00:00+00:00",
+      "window": "current",
+      "mae": 5418.53,
+      "mape_pct": 4.8226,
+      "bias": -5418.53,
+      "mae_rolling": 3270.79,
+      "mape_rolling": 2.9439,
+      "n": 96
+    },
+    {
+      "day_utc": "2026-08-06T00:00:00+00:00",
+      "window": "current",
+      "mae": 5455.68,
+      "mape_pct": 4.6523,
+      "bias": -5452.79,
+      "mae_rolling": 3783.13,
+      "mape_rolling": 3.3543,
+      "n": 72
+    },
+    {
+      "day_utc": "2026-08-07T00:00:00+00:00",
+      "window": "current",
+      "mae": 9812.9,
+      "mape_pct": 7.517,
+      "bias": -9812.9,
+      "mae_rolling": 4839.86,
+      "mape_rolling": 4.1337,
+      "n": 4
     }
   ]
 }
