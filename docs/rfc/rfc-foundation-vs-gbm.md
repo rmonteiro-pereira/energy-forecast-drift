@@ -1014,6 +1014,41 @@ The first draft of `band()` also collapsed Clause 5's two boundaries into one `<
 exact `r = 1.00` in **beats** instead of **competitive** — the single value most likely to be argued
 over, in the wrong direction. Both boundaries are parametrised by test now.
 
+### F22 — the no-skip gate could not see the leakage guard
+
+G9's file list is derived rather than typed, which was the right decision and still left a hole: it
+matched **imports of the lane's packages**, and `tests/test_fold_identity.py` imports `models.train`.
+So the test of the fold contract — the leakage guarantee the entire comparison rests on — sat outside
+the gate built to catch skips.
+
+Seen both ways, with the same one-line skip:
+
+```
+padrao ANTIGO (so imports), 7 arquivos : 123 passed
+  >>> VERDE sobre o defeito: o skip e invisivel
+padrao NOVO (imports + simbolos), 9    : 171 passed, 1 skipped
+  >>> G9 REPROVA
+```
+
+The pattern gains a second clause matching **use of the fold-identity contract** — `align_arms`,
+`FoldIdentityError`, `backtest.rescore` — and `--include='*.py'`, because a stale `__pycache__/*.pyc`
+matches the symbol clause and would be handed to pytest as a test path.
+
+**The deeper defect was in the test that was supposed to catch this.**
+`test_the_lane_step_derives_its_file_list_instead_of_naming_them` recomputed the step's file list
+*using the step's own regex* and compared the two. Two copies of one rule agree by construction; it
+could verify that the step had a pattern, never that the pattern was right. It now reads the regex
+**out of `ci.yml`** instead of carrying a copy, and a second test derives the requirement from the
+opposite direction — a `LANE_SYMBOLS` list, written in the test and nowhere else, that the step's
+pattern must cover. The two derivations are independent, so a pattern that stops covering a lane test
+fails instead of quietly shrinking the gate.
+
+Extracting the regex bit immediately, and loudly: `grep -rlE[^']*'([^']+)'` captured the
+`--include='*.py'` glob rather than the pattern, which compiled to `*.py` and raised `nothing to
+repeat`. It failed rather than passing, but the same slip on a quoted token that happens to be a
+valid regex would have passed while checking the wrong string — so the capture is now anchored on the
+trailing ` tests/` **and** asserted to contain `foundation`.
+
 ### What is NOT done, and will not be declared done
 
 **The verdict.** `r = mae(chronos_bolt@ctx671) / mae(lgbm_17_demand_only)` on the real panel does not

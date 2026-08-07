@@ -162,11 +162,34 @@ jobs:
       # `.github/mutation-paths.txt` ("two lists that must agree by hand is the
       # failure mode this file designs out") — and it bit here immediately: the
       # step named three lane test files while the lane had six.
-      # `tests/test_workflows.py` recomputes this set from the imports and fails
-      # if the step and the tree disagree.
+      #
+      # Two clauses, because the lane does not live in one package. The first
+      # matches imports of `foundation/` and `models/arms.py`. The second matches
+      # **use of the fold-identity contract** the lane forced into `models/` —
+      # `align_arms`, `FoldIdentityError`, `backtest.rescore`. Without it
+      # `tests/test_fold_identity.py` sat outside this gate: it imports
+      # `models.train`, matches no import clause, and is the test of the leakage
+      # guarantee the whole comparison rests on. A skip added there was invisible
+      # to the gate built to catch skips.
+      #
+      # `--include='*.py'` because a stale `__pycache__/*.pyc` matches the symbol
+      # clause and would be handed to pytest as a test path.
+      #
+      # The symbol clause also selects `tests/test_workflows.py`, which names
+      # those symbols in order to check this step. That is not an accident to be
+      # worked around: a skip there would silently disable the tests guarding
+      # this gate, so it belongs under the no-skip rule too. Over-selection only
+      # ever adds a requirement; under-selection removes a test from the gate
+      # without saying so, which is what happened here.
+      #
+      # `tests/test_workflows.py` checks this from the other side: it reads *this
+      # pattern* out of this file rather than keeping a copy, and asserts that
+      # every test naming a lane symbol is selected by it. Two copies of one rule
+      # agree with each other by construction — which is exactly how the miss
+      # above survived.
       - name: The foundation lane must run, not skip
         run: |
-          files=$(grep -rlE '^(from foundation|import foundation|from models import .*\barms\b|from models\.arms)' tests/ | sort | tr '\n' ' ')
+          files=$(grep -rlE --include='*.py' '^(from foundation|import foundation|from models import .*\barms\b|from models\.arms)|align_arms|FoldIdentityError|backtest\.rescore' tests/ | sort | tr '\n' ' ')
           echo "lane test files: $files"
           test -n "$files" || { echo "::error::no lane test files found"; exit 1; }
           uv run python -m pytest -o addopts= -p no:cacheprovider --no-header -rN \

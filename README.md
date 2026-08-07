@@ -61,7 +61,7 @@ a run with nothing on the far side of that boundary publishes
 
 | | Status | Notes |
 |---|---|---|
-| **The code** | ✅ real, complete, tested | 529 Python tests + 7 dashboard tests, no network. Every path below runs today, and [`docs/REPRODUCE.md`](docs/REPRODUCE.md) has the transcripts. The tests are themselves measured — see [mutation testing](docs/MUTATION-TESTING.md). |
+| **The code** | ✅ real, complete, tested | 530 Python tests + 7 dashboard tests, no network. Every path below runs today, and [`docs/REPRODUCE.md`](docs/REPRODUCE.md) has the transcripts. The tests are themselves measured — see [mutation testing](docs/MUTATION-TESTING.md). |
 | **EIA hourly demand** | ✅ **real** | 17,520 hourly PJM rows, 2024-08-01 → 2026-08-01, **0 missing hours**, pulled by the finished client the day the key landed. |
 | **Open-Meteo weather** | ✅ **real, and it now reaches the model** | It always reached [`docs/DRIFT-EVALUATION.md`](docs/DRIFT-EVALUATION.md) — real Philadelphia ERA5, derived results committed, raw series cached under gitignored `reports/`. It could not reach the *model* while `resolve_panel` fell back to the fixture as a whole; with real demand in the lake it no longer does. **Caveat on the committed artifacts:** they were produced on 2026-08-01 and record `"weather_site": "philadelphia_pa"`, i.e. one city. The nine-metro blend and the archived day-ahead forecast landed *after* them; no published run has used those yet. |
 | **`forecast.json`, `monitor.json`, `drift.json`, `pipeline.json`** | ✅ **real** | `"is_real": true`, `"kind": "eia_api_v2"`. The rolling MAE, the MAPE, the bias, the PSI/KS signals and the retrain verdict are all measurements of PJM load. |
@@ -179,7 +179,7 @@ uv run python -m drift.run --out metrics/drift.json   # M4: 4 drift types + retr
 uv run python -m pipeline.daily  # M5: the whole loop -> metrics/*.json + PNGs
 uv run python -m serving         # M5: FastAPI on :8000, /forecast from @champion
 
-uv run pytest -v               # 529 tests, no network
+uv run pytest -v               # 530 tests, no network
 
 cd dashboard && npm ci && npm test && npm run build   # M6: static dist/ over metrics/*.json
 ```
@@ -728,7 +728,7 @@ metrics/    committed artifacts: baseline.json, model.json, drift.json,
             forecast.json, monitor.json, pipeline.json + tables + 2 PNGs
 dashboard/  Vite + React + ECharts over metrics/*.json — no deploy step here
             components.test.tsx  the banner tests (vitest)
-tests/      529 Python tests: idempotency, leakage (backtest *and* features),
+tests/      530 Python tests: idempotency, leakage (backtest *and* features),
             retries, secret redaction, registry wiring, PSI/KS vs scipy, drift
             injection, threshold boundaries, the daily chain, the HTTP surface,
             both workflow YAMLs, and the artifacts' own honesty contract

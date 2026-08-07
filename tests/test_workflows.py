@@ -737,32 +737,106 @@ def test_ci_forbids_the_lane_from_skipping():
     assert "skipped" in commands
 
 
+#: Symbols that make a test file part of the lane, written **here** and nowhere
+#: else. This list is the independent half of the check below: the workflow
+#: selects files by one rule, this names what the selection must cover, and the
+#: two are only allowed to disagree by failing.
+#:
+#: `align_arms` and `FoldIdentityError` are on it because of how this test used
+#: to work. It recomputed the step's file list *with the step's own regex* and
+#: compared the two — two copies of one rule, which agree by construction and
+#: cannot notice that the rule is wrong. It was: `tests/test_fold_identity.py`
+#: imports `models.train`, matched no clause, and sat outside the no-skip gate
+#: while testing the leakage guarantee the whole comparison rests on.
+LANE_SYMBOLS = (
+    "from foundation",
+    "import foundation",
+    "models.arms",
+    "align_arms",
+    "FoldIdentityError",
+    "backtest.rescore",
+)
+
+
+def _lane_step_pattern() -> str:
+    """The regex the workflow actually runs, read out of the workflow.
+
+    Not a copy. A copy is what let the previous version of this test agree with
+    a pattern that was missing a file.
+
+    Anchored on the trailing ` tests/` because the grep also carries
+    `--include='*.py'`, and the obvious `[^']*'([^']+)'` captures *that* glob
+    instead — which compiled to `*.py` and raised `nothing to repeat`. It failed
+    loudly, but the same slip with a quoted token that happens to be a valid
+    regex would have passed while checking the wrong string, so the capture is
+    checked rather than trusted.
+    """
+    commands = run_commands(load(CI), "test")
+    match = re.search(r"grep -rlE\b[^\n]*?'([^']+)' tests/", commands)
+    assert match, (
+        "the lane step no longer derives its file list with `grep -rlE '<pattern>' tests/`"
+    )
+
+    pattern = match.group(1)
+    assert "foundation" in pattern, (
+        f"the captured string is not the lane pattern: {pattern!r}. Some other "
+        "quoted argument on that line matched first."
+    )
+    return pattern
+
+
 def test_the_lane_step_derives_its_file_list_instead_of_naming_them():
     """A hand-kept list of test files rots, and this one rotted immediately.
 
     The step originally named three lane test files. The lane reached six within
     the same session and the three newest were silently outside the no-skip gate.
-    `.github/mutation-paths.txt` already states the principle — "two lists that
-    must agree by hand is the failure mode this file designs out" — so the step
-    greps for the lane's imports, and this recomputes the same set and compares.
+    `.github/mutation-paths.txt` already states the principle: "two lists that
+    must agree by hand is the failure mode this file designs out".
     """
-    commands = run_commands(load(CI), "test")
-    assert "grep -rlE" in commands, "the lane step names files by hand again"
+    assert _lane_step_pattern(), "the lane step names files by hand again"
 
     tests_dir = WORKFLOWS.parent.parent / "tests"
-    expected = {
-        path.name
-        for path in tests_dir.glob("test_*.py")
-        if re.search(
-            r"^(from foundation|import foundation|from models import .*\barms\b|from models\.arms)",
-            path.read_text(encoding="utf-8"),
-            re.MULTILINE,
-        )
-    }
-    assert expected, "no test file imports the lane; the derived list would be empty"
-    assert len(expected) >= 5, (
-        f"only {len(expected)} lane test file(s) match the step's pattern: {sorted(expected)}. "
+    selected = _selected_by_the_step(tests_dir)
+
+    assert selected, "the step's pattern selects nothing; the gate would be vacuous"
+    assert len(selected) >= 5, (
+        f"only {len(selected)} lane test file(s) match the step's pattern: {sorted(selected)}. "
         "A lane test that the pattern misses is outside the no-skip gate."
+    )
+
+
+def _selected_by_the_step(tests_dir) -> set[str]:
+    pattern = re.compile(_lane_step_pattern(), re.MULTILINE)
+    return {
+        path.name for path in tests_dir.glob("test_*.py") if pattern.search(path.read_text("utf-8"))
+    }
+
+
+def test_every_test_naming_a_lane_symbol_is_inside_the_no_skip_gate():
+    """The other side of the derivation, and the reason this test exists twice.
+
+    The step selects files by matching a regex. This names the *symbols* that
+    make a file part of the lane and asserts the step's pattern reaches every
+    file mentioning one. The two derivations are independent, so a pattern that
+    stops covering a lane test fails here instead of quietly shrinking the gate.
+
+    Deliberately about coverage, not equality: a pattern that selects *more* than
+    this is safe — a non-lane file merely gains a no-skip requirement — while one
+    that selects less removes a test from the gate without saying so.
+    """
+    tests_dir = WORKFLOWS.parent.parent / "tests"
+    selected = _selected_by_the_step(tests_dir)
+
+    missed = {
+        path.name: [symbol for symbol in LANE_SYMBOLS if symbol in path.read_text("utf-8")]
+        for path in tests_dir.glob("test_*.py")
+        if path.name not in selected
+        and any(symbol in path.read_text("utf-8") for symbol in LANE_SYMBOLS)
+    }
+
+    assert not missed, (
+        f"these test files name lane symbols and are outside the no-skip gate: {missed}. "
+        "A skip added to one of them reports green."
     )
 
 
