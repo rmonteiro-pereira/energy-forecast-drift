@@ -65,6 +65,39 @@ Note the asymmetry, because it is the whole state of the project: everything tha
 *measures what happened* is real, and everything that *compares one model to
 another* is not.
 
+## The foundation lane waits on the same key
+
+`python -m foundation` is the dispatch run for the zero-shot-vs-GBM comparison
+(`docs/rfc/rfc-foundation-vs-gbm.md`). Everything it needs exists and is tested —
+the arms, the gates, the cost accounting, the interval, the adapter against real
+Chronos-Bolt weights — **except the demand panel**. It refuses `--source real`
+with the same message as every other entrypoint here, and it refuses to write
+`metrics/foundation.json` from a fixture, so there is no way to produce that file
+by accident:
+
+```
+$ uv run python -m foundation --source real --tsfm chronos
+error: No EIA demand in the lake. Run `uv run python -m ingest` first
+       (requires EIA_API_KEY — see docs/BLOCKED.md), or use `--source synthetic`.
+```
+
+With the key in `.env` and the lake filled, the run is:
+
+```bash
+OMP_NUM_THREADS=1 uv sync --extra dev --extra foundation --frozen
+OMP_NUM_THREADS=1 uv run python -m foundation --source real --tsfm chronos --arms all
+```
+
+Two things about that command are load-bearing. `--extra foundation` installs
+torch and is **never** what CI installs. `OMP_NUM_THREADS=1` is checked, not
+assumed: the run refuses to start without it, because `num_threads` in the
+LightGBM parameters does not serialise OpenMP and the cost table would then
+describe a machine nobody configured.
+
+Against the synthetic fixture the same command runs today and proves the
+plumbing — and nothing else. Those numbers are a smoke test; the comparison is
+only a comparison on the real panel.
+
 ## Unblocking it
 
 **Steps 1–3 are done.** The key is registered and stored in repository secrets,

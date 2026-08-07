@@ -24,6 +24,7 @@ evaluation protocol is untouched — only the model behind it changes.
 from __future__ import annotations
 
 import logging
+import time
 from dataclasses import dataclass, field
 
 import lightgbm as lgb
@@ -112,6 +113,17 @@ class WalkForwardLightGBM:
     fits: int = field(init=False, default=0)
     last_booster: lgb.Booster | None = field(init=False, default=None, repr=False)
     last_train_rows: int = field(init=False, default=0)
+    #: CPU-seconds spent inside `train_booster`, accumulated across refits.
+    #:
+    #: Metered here because there is nowhere else it can be. The refit happens
+    #: *inside* the `__call__` that the harness meters as inference, so a caller
+    #: wrapping `backtest.run` can only ever produce one number for both. The
+    #: lane's cost contract keeps `fit` and `infer` on separate lines precisely
+    #: because the refit is 98.7% of this model's cost and a zero-shot model
+    #: refits never — collapsing them hands the foundation model a ~76x win that
+    #: belongs to the protocol. The first lane artifact declared `refits: 13`
+    #: next to `fit_cpu_s: 0.0` for exactly this reason.
+    fit_cpu_s: float = field(init=False, default=0.0)
 
     def __post_init__(self) -> None:
         origins = build_mod.training_origins(
@@ -152,7 +164,9 @@ class WalkForwardLightGBM:
             train = self.training_slice(fit_at)
             if train.empty:
                 raise ValueError(f"No training rows available before {fit_at}.")
+            started = time.process_time()
             booster = train_booster(train, self.params, self.num_boost_round)
+            self.fit_cpu_s += time.process_time() - started
             self.fits += 1
             self.last_booster = booster
             self.last_train_rows = len(train)

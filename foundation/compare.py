@@ -93,6 +93,7 @@ def build_artifact(
     n_threads: int = 1,
     reference_arm: str | None = None,
     warning: str | None = None,
+    foresight: dict | None = None,
 ) -> dict:
     """Every gate, then the record. Refusals are stamped, not raised at the caller.
 
@@ -100,6 +101,10 @@ def build_artifact(
     pytest half of this repository's honesty check *skips* an artifact whose
     `data` block has no `is_real`, so an artifact of a new shape could slip past
     both halves of the gate that exists to catch exactly that.
+
+    `foresight` carries G3's report per arm. It is a field rather than a
+    side-effect because a gate that runs and leaves no trace in the record is
+    indistinguishable, to a reader, from a gate that never ran.
     """
     try:
         return _build(
@@ -111,6 +116,7 @@ def build_artifact(
             n_threads=n_threads,
             reference_arm=reference_arm,
             warning=warning,
+            foresight=foresight,
         )
     except (guards.LaneGateError, arms_mod.ArmGateError, cost_mod.CostGateError) as exc:
         return _refusal(exc.gate, str(exc), is_real, data_kind, warning)
@@ -143,6 +149,7 @@ def _build(
     n_threads: int,
     reference_arm: str | None,
     warning: str | None,
+    foresight: dict | None = None,
 ) -> dict:
     if not runs:
         raise guards.LaneGateError("fold-identity", "no arms: the artifact would be vacuous")
@@ -184,6 +191,7 @@ def _build(
         "cutoff_candidates": [pd.Timestamp(c).isoformat() for c in cutoff_candidates],
         "folds_intersected": fold_record["folds_intersected"],
         "contiguity": contiguity,
+        "foresight": foresight or {},
         "reference_arm": reference,
         "hardware": cost_mod.hardware_block(n_threads=n_threads),
         "arms": [

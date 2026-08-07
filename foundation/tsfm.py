@@ -150,8 +150,17 @@ class ChronosArm:
         # `median_q50` is pre-registered: MAE is the judged metric and the median
         # is the L1-optimal functional. The GBM is trained with `objective: "l1"`,
         # so this is the only reduction that pairs with it.
+        #
+        # The batch goes in **positionally**, and that is not a style choice. The
+        # first argument is named `context` in chronos-forecasting 1.x and
+        # `inputs` in 2.x; this file was written against the 1.x name while
+        # `uv.lock` resolves 2.3.1, so `context=` landed in `**kwargs` and the
+        # call died with "missing 1 required positional argument: 'inputs'" —
+        # measured, on the first line of this adapter ever to run with torch
+        # installed. Positionally the same call is correct under both, and the
+        # declared floor (`chronos-forecasting>=1.5`) stays honest.
         quantiles, _mean = self._pipeline.predict_quantiles(
-            context=context.unsqueeze(0),
+            context.unsqueeze(0),
             prediction_length=len(target_times),
             quantile_levels=[self.quantile],
         )

@@ -27,6 +27,7 @@ Decisions with reversal criteria: [`DECISIONS-foundation-vs-gbm.md`](DECISIONS-f
 | **v2** | — | Synthesis naming the conflicts; §0; contracts; gates; phases. |
 | **v3** | **R1, 6 lenses + 6 verifiers** | **73 findings: 12 blockers, 44 majors, 17 minors, 0 refuted.** Blockers in three groups: G1 in the wrong place, at the wrong time, with the wrong mechanism; G2 and G3 with no mechanism; the primary contrast still biased. **Three pieces of evidence in my own §0 were falsified** (F1, F4) and the cost table was labelled CPU while holding wall-clock. |
 | **v4** | **R2, 4 lenses + 4 verifiers, amendments only** | **60 verdicts: 56 confirmed (11 blockers, 24 majors, 21 minors), 4 REFUTED.** Unanimous `not ready`. **Four of v3's amendments reintroduced the defect they were fixing** (G5, G3, G2, `lgbm_12_frozen`). The cost table was mislabelled **for the second time**. |
+| **execution** | Phases −1 → 7, then 6 | The document stopped; the defects did not. Every phase after the stop rule found something no further reading would have surfaced, **including in gates this RFC had just finished specifying**. §0 grew from F18 to **F20**: the adapter had never been run and did not work (F19), and a refit-per-fold arm was reporting that its refits were free (F20). §4.6 records what Phase 6 closed and what it did not. |
 
 **Honesty about the verification stages.** R1 returned 73/73 `CONFIRMED` — zero refuted is a sign of
 a complacent verifier, not of good lenses. I independently reproduced three of R1's confirmations
@@ -64,6 +65,8 @@ chance of failing a horizon.
 | **F16** | major | `.github/mutation-paths.txt` | `models/**`, `pyproject.toml`, `uv.lock` and `models/backtest.py` are all in the allowlist. **`foundation/` does not avoid the 60-minute `mutate` job**, because Phases 1 and 3 touch three of those paths. | `mutation_relevance.py`. |
 | **F17** | major | `pyproject.toml:45` (`addopts = "-q"`) | Any invocation passing `-q` becomes `-qq` and pytest **prints no summary line at all**. Any gate parsing "N passed / N skipped" out of a `pytest -q` is green by construction. `[→ g9-pytest-q-nao-imprime-skipped]` | Measured. |
 | **F18** | major | `ci.yml:93,94,100,103,108,114,121,141` | Only the `uv sync` (`:89`) uses `--frozen`. Every `uv run` after it re-resolves against `pyproject.toml`. `[→ R2-E-g5-e-no-op]` | Read. |
+| **F19** | **blocker** | `foundation/tsfm.py:153` | The adapter passes the batch as `context=`, the parameter's name in `chronos-forecasting` **1.x**. `uv.lock` resolves **2.3.1**, where it is `inputs`. The lane's only path to a real forecast was dead, and no reading found it because the code is correct against the version its own docstring assumed. Found in §4.6, on the first line of this adapter ever executed with torch installed. | `TypeError: ChronosBoltPipeline.predict_quantiles() missing 1 required positional argument: 'inputs'`. |
+| **F20** | major | `models/lgbm.py:133-160` + `tests/fixtures/foundation.sample.json` | A refit-per-fold arm reported that its refits were free. `WalkForwardLightGBM` refits **inside** the call the harness meters as inference, so no caller could start a `fit` timer — and the committed fixture carried `refits: 13` beside `fit_cpu_s: 0.0`. The existing test pinned only `refits == 0 -> fit_cpu_s == 0.0`; the converse was never asserted, and the refit is **96%** of this arm's measured cost. | `AssertionError: lgbm_12_no_calendar: 13 refit(s) at fit_cpu_s=0.0`. |
 
 ---
 
@@ -799,6 +802,178 @@ evidence, because that is indistinguishable from nobody having looked.
 The fold window postdates every released checkpoint, so the target **value** cannot be memorised. That
 protects against memorising the value, not the **shape**, and a daily-and-weekly electricity load
 profile is ordinary material in these corpora.
+
+---
+
+## §4.6 — EXECUTED 2026-08-06. Phase 6, and the half of it that is not done
+
+Phase 6 was written as **[DISPATCH]** on two premises about the implementer's machine. One was
+verified false and one true, and checking rather than assuming is what made the difference:
+
+```
+pypi.org/simple/                                      HTTP 200
+huggingface.co/.../chronos-bolt-small/config.json     HTTP 307   -> rede DISPONIVEL
+EIA_API_KEY no ambiente                               ausente
+.env no repo                                          nao existe
+.env dos outros projetos que mencionam EIA            nenhum
+data/raw/                                             so weather_hourly, 2 arquivos, 24 KB
+```
+
+So the checkpoint, the library and the adapter were reachable and the **demand panel was not**. Phase
+6 splits along exactly that line.
+
+### The runner did not exist
+
+`foundation.compare.score_arm` and `build_artifact` were called by nothing but tests. The lane had
+every gate and no command — *"Phase 6 is a dispatch step"* named an action nobody could take.
+`foundation/__main__.py` is that command, with `tests/test_dispatch_runner.py` (15) behind it.
+
+Three refusals, each seen firing:
+
+```
+$ python -m foundation --source synthetic --tsfm stub          # sem --out
+error: refusing to write .../metrics/foundation.json: it is defined as real or
+       absent, and this run is is_real=False kind='synthetic_fixture'.
+EXIT=3        metrics/foundation.json: nao existe  <- nada foi escrito
+
+$ python -m foundation --source real --tsfm stub
+error: No EIA demand in the lake. Run `uv run python -m ingest` first ...
+EXIT=2
+
+$ OMP_NUM_THREADS=8 python -m foundation --source synthetic ... --n-threads 1
+error: OMP_NUM_THREADS='8' but --n-threads=1. ... the cost lines would describe
+       a machine nobody configured.
+EXIT=2
+```
+
+### F19 — the adapter had never been run, and did not work
+
+`uv.lock` resolves `chronos-forecasting==2.3.1`, whose signature is
+`predict_quantiles(inputs, ...)`. The adapter was written against the 1.x name, `context=`:
+
+```
+TypeError: ChronosBoltPipeline.predict_quantiles() missing 1 required positional argument: 'inputs'
+  File "foundation/tsfm.py", line 153, in __call__
+load OK, pipeline = ChronosBoltPipeline          <- load() funcionava; a chamada nao
+```
+
+Fixed by passing the batch **positionally**, which is correct under both versions, so the declared
+floor `>=1.5` stays honest. Pinned by `test_the_pipeline_call_passes_its_batch_positionally`, which
+reads the call out of the AST — the only way to hold this rule in a job that must never install torch.
+After the fix, the contract measured rather than asserted:
+
+```
+tipo Series | len 24 | indice==alvo True | nome timestamp_utc | float64 | NaN 0
+mesma saida com historico cortado em 671h : True     <- MIN_CONTEXT_HOURS aplicado de fato
+history alcancando o cutoff -> RuntimeError "not strictly before"
+```
+
+### Phase 0's numbers, verified against the file instead of the API
+
+The `WEIGHTS` pin was resolved from the HTTP headers without downloading. Now downloaded and hashed:
+
+```
+bytes  : declarado 190888824 | medido 190888824 | CONFERE
+sha256 : declarado 06a6a19bbe74bc10a9cd193bd4bf2bf638ae07f7e0d51653ae7ab8ea968a21dd
+         medido    06a6a19bbe74bc10a9cd193bd4bf2bf638ae07f7e0d51653ae7ab8ea968a21dd  CONFERE
+```
+
+### G5's third condition had never been in a position to fail
+
+The only condition of G5 with a reachable red state asserts that importing the adapter leaves torch
+out of `sys.modules` — and it had only ever run where **torch was not installed**, so the branch it
+guards was unreachable. With `--extra foundation` installed:
+
+```
+torch instalado neste venv : True
+G5 cond.3 hoje             : 1 passed
+CANARIO: `import torch` no escopo do modulo
+  E  + True
+  FAILED tests/test_foundation_lane.py::test_importing_the_adapter_does_not_import_torch
+revertido                  : 1 passed
+```
+
+### F20 — a refit-per-fold arm was reporting that the refit was free
+
+The committed fixture declared `refits: 13` beside `fit_cpu_s: 0.0` on `lgbm_12_no_calendar`. The
+cause was structural: `WalkForwardLightGBM` refits *inside* the call the harness meters as inference,
+so no caller could ever start a `fit` timer. The existing test pinned only the other direction
+(`refits == 0 -> fit_cpu_s == 0.0`).
+
+```
+CANARIO (a assercao que faltava, contra o fixture publicado):
+  AssertionError: lgbm_12_no_calendar: 13 refit(s) at fit_cpu_s=0.0
+depois de instrumentar models/lgbm.py:
+  lgbm_17_demand_only  fit=4.39s  infer=0.20s   <- refit = 96% do custo do braco
+  chronos_bolt@ctx671  fit=0.00s  infer=0.45s  load=5.22s
+```
+
+### The fixture is now produced by the committed command
+
+`tests/fixtures/foundation.sample.json` was hand-assembled. It is now the output of
+
+```
+OMP_NUM_THREADS=1 python -m foundation --source synthetic --fixture-days 90 --weeks 2 \
+    --tsfm chronos --out tests/fixtures/foundation.sample.json
+```
+
+which also gives the schema gates a subject they never had: `weights` was `null` on every arm and
+`load_cpu_s` was `0.0` on every arm, so two thirds of the provenance block and one of the three cost
+lines were only ever checked against absence.
+
+```
+arm                       MAE       fit_cpu_s  infer_cpu_s  load_cpu_s  peak_rss_mb
+lgbm_17_demand_only   2.268,23        4,3906       0,2031        0,00        179,9
+lgbm_12_no_calendar   2.202,57        3,8906       0,2344        0,00        182,2
+chronos_bolt@ctx671   3.912,52        0,0000       0,4531        5,22        618,5
+```
+
+**These are not a result.** Synthetic fixture, `is_real: false`, warning attached — a smoke test of the
+plumbing. The memory line is the one thing worth reading: **3.4x the GBM's peak RSS**, which is why
+§2.4 reports it beside the CPU lines rather than instead of them.
+
+### G3 has power over the Chronos path, and that had to be shown separately
+
+A zero-shot arm reads only `history`, so it is *structurally* incapable of seeing the future — which
+means a clean probe proves the harness slices correctly and says nothing about the gate working. With
+a deliberately leaking arm (the honest forecast plus 1% of the post-cutoff series):
+
+```
+CONTROLE NEGATIVO (ChronosArm real)  : {'probed': 2, 'caught': [], 'clean': True}
+CONTROLE POSITIVO (vaza 1% do futuro): {'probed': 2, 'caught': ['2026-07-21T12:00', '2026-07-22T12:00']}
+  >>> LaneGateError: forecast changed when only the post-cutoff future changed, on 2 of 2
+```
+
+### A false alarm, chased to the end because it looked like a defect
+
+`uv run mypy` — the exact CI command — reported **38 errors in 13 files**, mostly pandas plumbing in
+files this session never touched. Bisected: not torch, not transformers, not accelerate, not chronos,
+not setuptools, not the mypy cache; the two environments ended with **164 packages each, differing in
+two patch versions**, and still gave 38 against 2. Deleting and re-creating the virtualenv resolved it:
+
+```
+venv acumulado na sessao : Found 38 errors in 13 files (checked 43 source files)
+venv recriado do lock    : Success: no issues found in 43 source files
+```
+
+No repository defect. Recorded because the first four rounds of that investigation all pointed at a
+cause that was not there, and *"my environment"* is a hypothesis that has to be tested rather than
+assumed — in either direction.
+
+### What is NOT done, and will not be declared done
+
+**The verdict.** `r = mae(chronos_bolt@ctx671) / mae(lgbm_17_demand_only)` on the real panel does not
+exist and cannot be produced here: it needs `EIA_API_KEY`, which is a repository secret and is not on
+this machine, plus one `python -m ingest` run to fill the lake. `metrics/foundation.json` therefore
+still does not exist, which is the state the lane's own gate defines as correct.
+
+The pre-registered reading stands unchanged, and the command is in `docs/BLOCKED.md`:
+
+| `r` | verdict |
+|---|---|
+| `< 1.00` | the zero-shot model wins |
+| `1.00 – 1.25` | competitive |
+| `> 1.25` | not competitive |
 
 ---
 

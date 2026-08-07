@@ -12,6 +12,7 @@ honest case is not a gate; a gate that cannot fire at all is decoration.
 
 from __future__ import annotations
 
+import ast
 import subprocess
 import sys
 import tomllib
@@ -111,6 +112,51 @@ def test_the_foundation_extra_is_present_in_the_lockfile():
     for dep in project["optional-dependencies"]["foundation"]:
         name = dep.split(">")[0].split("=")[0].split("[")[0].strip()
         assert f'name = "{name}"' in lock, f"{name} is in the extra but not in uv.lock"
+
+
+# --------------------------------------------------------------------------
+# The adapter's call convention. Read from the source, because the only other
+# way to check it is to install the library CI is forbidden to install.
+# --------------------------------------------------------------------------
+
+
+def test_the_pipeline_call_passes_its_batch_positionally():
+    """The first line of this adapter ever to run with torch installed died here.
+
+    `predict_quantiles` takes the batch as `context` in chronos-forecasting 1.x
+    and as `inputs` in 2.x. The adapter was written against the 1.x name while
+    `uv.lock` resolves 2.3.1, so `context=` fell into `**kwargs` and the call
+    raised `missing 1 required positional argument: 'inputs'` — a defect no
+    amount of reading the adapter would have surfaced, because the code is
+    correct against the version its docstring assumed.
+
+    Passing the batch positionally is right under both, so the rule is pinned
+    here rather than the version being pinned in `pyproject.toml`: the declared
+    floor stays `>=1.5` and honest.
+
+    Static, and deliberately so. Exercising the call needs `chronos`, which
+    needs torch, which the `test` job must never install — and a test that skips
+    itself in CI reports green, which is the failure this lane exists to avoid.
+    """
+    source = (REPO / "foundation" / "tsfm.py").read_text(encoding="utf-8")
+    calls = [
+        node
+        for node in ast.walk(ast.parse(source))
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Attribute)
+        and node.func.attr == "predict_quantiles"
+    ]
+
+    assert len(calls) == 1, f"expected exactly one predict_quantiles call, found {len(calls)}"
+    call = calls[0]
+    assert call.args, (
+        "the batch is passed by keyword; the parameter is named `context` in "
+        "chronos 1.x and `inputs` in 2.x, so any keyword name is wrong on one of them"
+    )
+    by_keyword = {kw.arg for kw in call.keywords}
+    assert not by_keyword & {"context", "inputs"}, (
+        f"the batch is passed as a keyword ({by_keyword & {'context', 'inputs'}})"
+    )
 
 
 # --------------------------------------------------------------------------

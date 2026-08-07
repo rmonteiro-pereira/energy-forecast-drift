@@ -103,6 +103,69 @@ def test_the_three_statements_of_the_test_runtime_agree():
     assert len(values) == 1, f"the pytest runtime is stated inconsistently: {seen}"
 
 
+#: The foundation-lane arms, by the ids they carry in the artifact. Naming one
+#: in published prose is the trigger: an arm id is what a number is attached to.
+LANE_ARMS = ("chronos_bolt", "lgbm_17_demand_only", "lgbm_12_no_calendar", "lgbm_12_frozen")
+
+#: The design record, exempt by path. `docs/rfc/` names every arm dozens of times
+#: because it is the document that *chose* them, and it did so before any result
+#: existed — requiring a published artifact there would mean the RFC could not
+#: describe the experiment it proposes. Every number in it is labelled fixture or
+#: synthetic and sits inside a dated transcript. The exemption is a path prefix
+#: rather than a filename so that a second RFC does not silently fall outside it.
+PROSE_EXEMPT = ("docs/rfc/",)
+
+
+def _tracked_markdown() -> list[str]:
+    """Every markdown file the repository actually publishes, git-relative.
+
+    Tracked, not `docs/**/*.md` on disk. An untracked draft is not published, and
+    a gate that reddens on a working-copy scratch file while staying green in CI
+    is worse than no gate: it trains its own author to ignore it. The index is
+    also the earliest honest moment — `git add` is when a file becomes part of
+    the repository, which is before the commit that CI would catch.
+    """
+    out = subprocess.run(
+        ["git", "ls-files", "--", "*.md"],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        cwd=REPO,
+        check=True,
+    ).stdout
+    return sorted(line.strip() for line in out.splitlines() if line.strip())
+
+
+def _prose_without_transcripts(path: Path) -> str:
+    """`_live_prose`, minus fenced blocks.
+
+    Same rule as this module's opening paragraph: a transcript is a dated record
+    of what a run printed, and holding one to the current state of the world
+    would force it to be falsified. `_live_prose` itself is left alone — two
+    other tests read fenced content on purpose.
+    """
+    return re.sub(r"```.*?```", "", _live_prose(path), flags=re.DOTALL)
+
+
+def test_the_lane_prose_scan_reads_the_files_it_claims_to():
+    """Anti-vacuum. The scan below is silent when it finds nothing to scan.
+
+    Every assertion in `test_any_lane_number_in_prose_is_read_from_an_artifact`
+    is true of an empty file list, so a broken `git ls-files`, a widened
+    exemption or a typo'd glob would turn that gate off and report green. This
+    names three files it must reach — the reader-facing entry point, the
+    contributor's page, and the document that carries the dispatch command.
+    """
+    scanned = set(_tracked_markdown()) - {
+        name for name in _tracked_markdown() if name.startswith(PROSE_EXEMPT)
+    }
+
+    assert len(scanned) >= 10, f"the prose scan reaches only {len(scanned)} file(s)"
+    for required in ("README.md", "CONTRIBUTING.md", "docs/BLOCKED.md"):
+        assert required in scanned, f"{required} is not reached by the lane prose scan"
+
+
 def test_any_lane_number_in_prose_is_read_from_an_artifact():
     """Armed before there is anything to arm it against, and that is the point.
 
@@ -111,20 +174,32 @@ def test_any_lane_number_in_prose_is_read_from_an_artifact():
     today and stays green until the day someone writes the first sentence about
     the lane — which is exactly when nobody is looking at this test.
 
-    So the assertion is conditional and fires on the *prose*: the moment the
-    README names a foundation-lane arm, a published artifact has to exist for the
-    number to have come from. Until then it records, in a runnable place, that the
-    obligation is outstanding.
+    So the assertion is conditional and fires on the *prose*: the moment a
+    published document names a foundation-lane arm, a published artifact has to
+    exist for the number to have come from. Until then it records, in a runnable
+    place, that the obligation is outstanding.
+
+    It scanned only `README.md` at first, which left the hole wide: the dispatch
+    command lives in `docs/BLOCKED.md`, the lane's own development guide is under
+    `docs/`, and a lane number in either would have been unguarded. The trigger is
+    the arm id, so prose that discusses the lane without quoting a result — as
+    `docs/BLOCKED.md` does — stays legal.
     """
-    readme = _live_prose(REPO / "README.md")
-    arm_names = ("chronos_bolt", "lgbm_17_demand_only", "lgbm_12_no_calendar", "lgbm_12_frozen")
-    mentions = [name for name in arm_names if name in readme]
+    mentions = {}
+    for relative in _tracked_markdown():
+        if relative.startswith(PROSE_EXEMPT):
+            continue
+        prose = _prose_without_transcripts(REPO / relative)
+        found = [name for name in LANE_ARMS if name in prose]
+        if found:
+            mentions[relative] = found
+
     if not mentions:
         return
 
     published = REPO / "metrics" / "foundation.json"
     assert published.exists(), (
-        f"README names lane arm(s) {mentions} but metrics/foundation.json does not "
+        f"{mentions} name lane arm(s) but metrics/foundation.json does not "
         "exist — the numbers beside them cannot have come from a published artifact"
     )
     payload = json.loads(published.read_text(encoding="utf-8"))

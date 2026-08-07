@@ -94,6 +94,29 @@ def test_the_zero_shot_arm_declares_no_in_domain_training(sample):
         assert arm["fit_cpu_s"] == 0.0
 
 
+def test_an_arm_that_refits_reports_what_the_refit_cost(sample):
+    """The converse of the test above, and it was missing for a reason.
+
+    `test_the_zero_shot_arm_declares_no_in_domain_training` pins `refits == 0 ->
+    fit_cpu_s == 0.0`. Nothing pinned the other direction, and the fixture was
+    already sitting in the hole: `lgbm_12_no_calendar` declared **13 refits and
+    `fit_cpu_s: 0.0`**. Fifty-five refits of a GBM are 98.7% of its cost and the
+    whole reason the three lines are kept apart — a zero there hands the
+    foundation model the comparison for free.
+
+    The cause was structural, not a typo: `WalkForwardLightGBM` refits *inside*
+    the call the harness meters as inference, so there was no instant at which
+    the caller could start a `fit` timer. `models.lgbm` now accumulates its own
+    `fit_cpu_s` and `foundation.__main__` reads it.
+    """
+    for arm in sample["arms"]:
+        if arm["refits"] >= 1:
+            assert arm["fit_cpu_s"] > 0.0, (
+                f"{arm['id']}: {arm['refits']} refit(s) at fit_cpu_s=0.0 — "
+                "the refit line is the GBM's whole cost"
+            )
+
+
 def test_the_interval_is_blocked_on_origins(sample):
     assert sample["uncertainty"], "no interval: G10 would pass vacuously"
     for report in sample["uncertainty"].values():

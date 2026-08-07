@@ -41,3 +41,17 @@ That was the right call and the implementation proved it the hard way. Every
 phase after the stop found defects no further reading would have surfaced,
 including in gates the RFC had just finished specifying, and including a finding
 the last round had wrongly refuted.
+
+The last phase made the point twice over. The Chronos adapter — specified,
+reviewed across three adversarial rounds, and covered by tests — **did not work**:
+it called the library with a keyword argument that library had renamed, and the
+first line of it ever executed with torch installed raised `TypeError`. In the
+same phase, a gate whose only falsifiable condition had spent its whole life in
+an environment where it could not fail was finally put in one where it could.
+
+## What is not in here
+
+The verdict. `metrics/foundation.json` needs `EIA_API_KEY` and a filled lake, and
+the lane is written so that the file is **real or absent** — enforced by a test
+and again by the runner, which refuses to write it from a fixture. `§4.6` records
+that boundary rather than blurring it, and `docs/BLOCKED.md` has the command.

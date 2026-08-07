@@ -1,6 +1,6 @@
 {
   "is_real": false,
-  "warning": "SYNTHETIC FIXTURE, NOT a benchmark. Schema subject for the lane's gates; the numbers are a smoke test.",
+  "warning": "These numbers come from a SEEDED SYNTHETIC FIXTURE, not from EIA data. They are a smoke test of the pipeline, NOT a benchmark. The real baseline is pending the EIA API key \u2014 see docs/BLOCKED.md.",
   "data": {
     "kind": "synthetic_fixture",
     "is_real": false
@@ -43,6 +43,26 @@
     "grid_hours": 2124,
     "actuals_untouched_from": "2026-07-26T11:00:00+00:00"
   },
+  "foresight": {
+    "lgbm_17_demand_only": {
+      "probed": 3,
+      "caught": [],
+      "clean": true,
+      "coverage": "3/13"
+    },
+    "lgbm_12_no_calendar": {
+      "probed": 3,
+      "caught": [],
+      "clean": true,
+      "coverage": "3/13"
+    },
+    "chronos_bolt@ctx671": {
+      "probed": 13,
+      "caught": [],
+      "clean": true,
+      "coverage": "all"
+    }
+  },
   "reference_arm": "lgbm_17_demand_only",
   "hardware": {
     "cpu_model": "AMD64 Family 25 Model 97 Stepping 2, AuthenticAMD",
@@ -58,10 +78,10 @@
       "id": "lgbm_17_demand_only",
       "name": "lgbm_17_demand_only",
       "n": 312,
-      "mae": 3345.1519,
-      "mape_pct": 4.3227,
-      "rmse": 4367.9749,
-      "bias": 1349.2576,
+      "mae": 2268.2301,
+      "mape_pct": 2.7535,
+      "rmse": 2848.9187,
+      "bias": 1002.7907,
       "features": [
         "horizon_h",
         "hour",
@@ -102,27 +122,27 @@
       },
       "context_hours": null,
       "feature_reach_hours": 671,
-      "in_domain_training_hours": 2161,
+      "in_domain_training_hours": 2124,
       "unscorable_by_own_failure": 0,
       "folds_dropped_vs_intersection": [],
       "weights": null,
-      "fit_cpu_s": 0.1719,
-      "infer_cpu_s": 0.2969,
+      "fit_cpu_s": 4.3906,
+      "infer_cpu_s": 0.2031,
       "load_cpu_s": 0.0,
-      "peak_rss_mb": 166.8,
+      "peak_rss_mb": 179.9,
       "n_predictions": 312,
-      "fit_cpu_ms_per_prediction": 0.5509,
-      "infer_cpu_ms_per_prediction": 0.9515,
+      "fit_cpu_ms_per_prediction": 14.0725,
+      "infer_cpu_ms_per_prediction": 0.651,
       "load_cpu_ms_per_prediction": 0.0
     },
     {
       "id": "lgbm_12_no_calendar",
       "name": "lgbm_12_no_calendar",
       "n": 312,
-      "mae": 3349.494,
-      "mape_pct": 4.3244,
-      "rmse": 4393.1547,
-      "bias": 1290.2934,
+      "mae": 2202.5664,
+      "mape_pct": 2.6637,
+      "rmse": 2755.2943,
+      "bias": 728.1185,
       "features": [
         "horizon_h",
         "demand_lag_24h",
@@ -158,46 +178,57 @@
       },
       "context_hours": null,
       "feature_reach_hours": 671,
-      "in_domain_training_hours": 2161,
+      "in_domain_training_hours": 2124,
       "unscorable_by_own_failure": 0,
       "folds_dropped_vs_intersection": [],
       "weights": null,
-      "fit_cpu_s": 0.0,
-      "infer_cpu_s": 0.2812,
+      "fit_cpu_s": 3.8906,
+      "infer_cpu_s": 0.2344,
       "load_cpu_s": 0.0,
-      "peak_rss_mb": 167.7,
+      "peak_rss_mb": 182.2,
       "n_predictions": 312,
-      "fit_cpu_ms_per_prediction": 0.0,
-      "infer_cpu_ms_per_prediction": 0.9014,
+      "fit_cpu_ms_per_prediction": 12.47,
+      "infer_cpu_ms_per_prediction": 0.7512,
       "load_cpu_ms_per_prediction": 0.0
     },
     {
-      "id": "stub_zero_shot",
-      "name": "stub_zero_shot",
+      "id": "chronos_bolt@ctx671",
+      "name": "chronos_bolt",
       "n": 312,
-      "mae": 2675.5856,
-      "mape_pct": 3.2142,
-      "rmse": 3394.979,
-      "bias": 1201.4663,
+      "mae": 3912.5203,
+      "mape_pct": 4.6139,
+      "rmse": 4784.7753,
+      "bias": 267.3083,
       "features": [],
       "features_informative": 0,
       "refits": 0,
       "fit_anchor_utc": null,
       "params": {},
-      "context_hours": 168,
+      "context_hours": 671,
       "feature_reach_hours": 671,
       "in_domain_training_hours": 0,
       "unscorable_by_own_failure": 0,
       "folds_dropped_vs_intersection": [],
-      "weights": null,
+      "weights": {
+        "repo": "amazon/chronos-bolt-small",
+        "revision": "772f3d25d38aec6d914c8949dab4462e2d46f5d8",
+        "sha256": "06a6a19bbe74bc10a9cd193bd4bf2bf638ae07f7e0d51653ae7ab8ea968a21dd",
+        "bytes": 190888824,
+        "license": "apache-2.0",
+        "gated": false,
+        "pretraining_corpus_declared": "The model card states only \"trained on nearly 100 billion time series observations\" and enumerates no dataset. It also claims the 27 benchmark datasets were held out: \"despite having no prior exposure to these datasets during training\". Neither statement identifies the corpus.",
+        "energy_domain_in_corpus": "undeclared",
+        "energy_domain_evidence": "arXiv:2403.07815 organises its dataset appendix by domain with a named B.1 Energy subsection, and Table 1 records Benchmark I (15 datasets, 97,272 series) as 'pretraining and in-domain evaluation' \u2014 so pretraining is not disjoint from the benchmark. The row-level usage split for the individual electricity datasets was not retrieved, so this stays undeclared rather than yes.",
+        "verified_utc": "2026-08-06"
+      },
       "fit_cpu_s": 0.0,
-      "infer_cpu_s": 0.0156,
-      "load_cpu_s": 0.0,
-      "peak_rss_mb": 167.7,
+      "infer_cpu_s": 0.4531,
+      "load_cpu_s": 5.2188,
+      "peak_rss_mb": 618.5,
       "n_predictions": 312,
       "fit_cpu_ms_per_prediction": 0.0,
-      "infer_cpu_ms_per_prediction": 0.0501,
-      "load_cpu_ms_per_prediction": 0.0
+      "infer_cpu_ms_per_prediction": 1.4523,
+      "load_cpu_ms_per_prediction": 16.7268
     }
   ],
   "uncertainty": {
@@ -208,38 +239,38 @@
       "n_resamples": 2000,
       "seed": 20260806,
       "mae_delta": {
-        "point": 4.342070133298876,
+        "point": -65.66362217053847,
         "ci95": [
-          -82.53668836143802,
-          98.02428463937187
+          -187.47268013941218,
+          47.09514617914505
         ]
       },
       "mae_ratio": {
-        "point": 1.0012980188251965,
+        "point": 0.9710507222091221,
         "ci95": [
-          0.9741391447252805,
-          1.0278925168777022
+          0.9196925196534295,
+          1.0220270560401796
         ]
       }
     },
-    "stub_zero_shot/lgbm_17_demand_only": {
+    "chronos_bolt@ctx671/lgbm_17_demand_only": {
       "block": "cutoff_utc",
       "n_blocks": 13,
       "n_predictions": 312,
       "n_resamples": 2000,
       "seed": 20260806,
       "mae_delta": {
-        "point": -669.5663184211039,
+        "point": 1644.29019249056,
         "ci95": [
-          -1069.0359446554344,
-          -251.44707621478068
+          1290.0129526097446,
+          1971.1525133263904
         ]
       },
       "mae_ratio": {
-        "point": 0.7998397862431856,
+        "point": 1.724922140718923,
         "ci95": [
-          0.7082936761073103,
-          0.9182450160303174
+          1.5345944084833865,
+          1.9481858643998118
         ]
       }
     }
