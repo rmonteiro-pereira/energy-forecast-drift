@@ -252,11 +252,17 @@ code {
 .hero {
   display: grid;
   grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) minmax(340px, 400px);
+  /* The verdict spans the KPI row AND the forecast row: it is the tallest block
+     on the page, and pairing it with the KPI row alone forced four stat cards to
+     stretch to its height, which is where the dead space came from. The loop is
+     a horizontal strip, so it gets the full width instead of a narrow column. */
   grid-template-areas:
-    "kpis kpis verdict"
-    "ovforecast ovforecast ovmonitor"
-    "ovhorizon ovhorizon ovloop";
-  gap: 10px 14px;
+    "kpis       kpis       verdict"
+    "ovforecast ovforecast verdict"
+    "ovhorizon  ovhorizon  ovmonitor"
+    "ovloop     ovloop     ovloop";
+  grid-template-rows: auto auto auto auto;
+  gap: 12px 14px;
   padding: 12px 0 6px;
   align-items: stretch;
 }
@@ -361,18 +367,22 @@ code {
   height: 205px;
 }
 
-.chart.chart-mini2 {
-  height: 148px;
-}
-
 /* In the overview the loop is a compact roster — all six steps visible,
-   no horizontal scroll, no rail. The full strip lives in section 04. */
+   no horizontal scroll, no rail. The full strip lives in section 04.
+   It spans the full width, so the six steps read as one row rather than a
+   3x2 block stacked in a narrow column. */
 .ov-loop .loop-strip {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 3px 14px;
+  grid-template-columns: repeat(6, minmax(0, 1fr));
+  gap: 3px 18px;
   padding: 4px 0 6px;
   overflow: visible;
+}
+
+@media (max-width: 1320px) {
+  .ov-loop .loop-strip {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
 }
 
 .ov-loop .loop-step {
@@ -411,7 +421,9 @@ code {
   display: flex;
   align-items: center;
   gap: 12px;
-  margin: 26px 0 0;
+  /* Was 26px above and 8px below (the banner's collapsed margin), which read as
+     the divider belonging to the block beneath it. */
+  margin: 28px 0 14px;
   color: var(--text-secondary);
   font-family: var(--mono);
   font-size: 11.5px;
@@ -431,8 +443,10 @@ code {
   grid-area: kpis;
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: 12px;
-  align-self: stretch;
+  /* Same gutter as the outer grid, so the KPI/verdict seam matches the
+     KPI/KPI seams instead of being 2px wider. */
+  gap: 14px;
+  align-self: start;
 }
 
 .kpi {
@@ -499,18 +513,35 @@ code {
   display: flex;
   flex-direction: column;
   gap: 10px;
-  min-height: 100%;
+  /* No min-height: it resolved against a content-derived grid area and could
+     push the panel past its own row. The panel spans two rows now, so the
+     signal grid is pinned to the bottom rather than leaving a tail of space. */
+  justify-content: space-between;
 }
 
+/* The rule name is unbounded (`R3b_distribution_without_measured_harm`) and the
+   chip cannot wrap, so it has to be allowed to drop to its own line and then
+   ellipsize. Without this it pushed straight out of the panel and squeezed the
+   heading into three lines. */
 .verdict-panel-head {
   display: flex;
   align-items: baseline;
   justify-content: space-between;
-  gap: 10px;
+  flex-wrap: wrap;
+  gap: 4px 10px;
+}
+
+.verdict-panel-head .tag-mono {
+  display: inline-block;
+  min-width: 0;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .verdict-panel-head h2 {
   margin: 0;
+  min-width: 0;
   font-size: 13px;
   font-weight: 600;
   text-transform: uppercase;

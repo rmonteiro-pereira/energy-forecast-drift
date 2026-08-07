@@ -47,7 +47,7 @@ export function HorizonChart({
     return {
       ...baseOption(tokens),
       grid: mini
-        ? { left: 46, right: 8, top: 36, bottom: 34, containLabel: false }
+        ? { left: 46, right: 18, top: 36, bottom: 34, containLabel: false }
         : { left: 62, right: 24, top: 46, bottom: 44, containLabel: false },
       legend: {
         ...baseOption(tokens).legend,
@@ -121,7 +121,7 @@ export function HorizonChart({
     return (
       <Chart
         option={option}
-        className="chart chart-mini2"
+        className="chart chart-mini"
         label="Grouped bar chart of MAPE per forecast horizon, model against seasonal-naive baseline. The model section below has the full version with a MAE toggle and a table view."
       />
     );

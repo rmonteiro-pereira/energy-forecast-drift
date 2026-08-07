@@ -68,7 +68,7 @@ export function MaeTrendChart({
     return {
       ...baseOption(tokens),
       grid: mini
-        ? { left: 50, right: 8, top: 36, bottom: 24, containLabel: false }
+        ? { left: 50, right: 26, top: 36, bottom: 24, containLabel: false }
         : baseOption(tokens).grid,
       legend: { ...baseOption(tokens).legend, data: ["daily MAE", "rolling mean"] },
       xAxis: timeAxis(tokens),
@@ -107,7 +107,12 @@ export function MaeTrendChart({
                   silent: true,
                   itemStyle: { color: tokens["series-2"], opacity: 0.06 },
                   label: {
-                    position: "insideTopLeft",
+                    /* The band is anchored at the right end of the series, so a
+                       left-aligned label runs straight off the canvas — the mini
+                       chart showed "current wi". Drawn leftwards from the band's
+                       right edge instead. */
+                    position: "insideTopRight",
+                    align: "right",
                     color: tokens["text-muted"],
                     fontSize: 11,
                     fontWeight: "normal",

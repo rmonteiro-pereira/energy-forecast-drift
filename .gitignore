@@ -39,3 +39,9 @@ mutants/
 Thumbs.db
 .idea/
 .vscode/
+
+# --- agent lane scratch ---
+# Lane worktrees and their uv.lock copies land in the repo root as untracked
+# files (~868 KB each). `git add -A` would sweep them into a commit; the parent
+# directory's .gitignore does not reach inside this repo.
+.lane-*
