@@ -6,7 +6,16 @@ name: ci
 
 on:
   push:
-    branches: [main]
+    # `metrics/daily-*` is the branch daily.yml force-pushes before opening its
+    # PR. That PR is created with `github.token`, and GitHub deliberately does
+    # not fire `pull_request` workflows for events made with the default token
+    # — the recursion guard. So on the daily PR neither `test` nor any other
+    # Actions check ever reported: the only ticks were CodeRabbit and Vercel,
+    # which are external Apps and not subject to the guard. `test` is a
+    # required context on main, so auto-merge sat armed against a check that
+    # could never arrive and the PR stayed BLOCKED for ever. Running on the
+    # push gives the head SHA its status, which is what the branch rule reads.
+    branches: [main, "metrics/daily-*"]
   pull_request:
   workflow_dispatch:
 
