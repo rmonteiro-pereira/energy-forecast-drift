@@ -1,12 +1,12 @@
 {
   "milestone": "M5",
-  "generated_at_utc": "2026-08-05T09:09:06+00:00",
+  "generated_at_utc": "2026-11-01T13:31:15+00:00",
   "is_real": true,
   "warning": null,
   "status": "ok",
   "error": null,
-  "started_at_utc": "2026-08-05T09:08:40+00:00",
-  "seconds": 26.48,
+  "started_at_utc": "2026-11-01T13:30:52+00:00",
+  "seconds": 22.97,
   "entrypoint": "python -m pipeline.daily",
   "verdict": {
     "should_retrain": false,
@@ -25,28 +25,28 @@
         "drift_type": "feature",
         "severity": "alert",
         "metric": "psi",
-        "value": 21.292244,
+        "value": 22.856536,
         "threshold": 0.2,
-        "detail": "13/14 feature(s) above PSI 0.2; worst is demand_roll_max_24h at PSI 21.292"
+        "detail": "17/21 feature(s) above PSI 0.2; worst is demand_roll_max_24h at PSI 22.857"
       },
       {
         "drift_type": "target",
         "severity": "alert",
         "metric": "psi",
-        "value": 0.316566,
+        "value": 0.459303,
         "threshold": 0.2,
-        "detail": "actual demand PSI 0.317, mean moved +698 MWh between the reference and current windows"
+        "detail": "actual demand PSI 0.459, mean moved -8,075 MWh between the reference and current windows"
       },
       {
         "drift_type": "prediction",
         "severity": "alert",
         "metric": "psi",
-        "value": 1.300909,
+        "value": 0.579693,
         "threshold": 0.2,
-        "detail": "forecast PSI 1.301, mean moved -2,522 MWh (label-free signal: available before the actuals arrive)"
+        "detail": "forecast PSI 0.580, mean moved -10,423 MWh (label-free signal: available before the actuals arrive)"
       }
     ],
-    "evaluated_at_utc": "2026-08-05T09:09:01+00:00"
+    "evaluated_at_utc": "2026-11-01T13:31:07+00:00"
   },
   "served_model": {
     "source": "mlflow_registry",
@@ -70,19 +70,19 @@
     {
       "step": "ingest",
       "status": "ok",
-      "seconds": 14.24,
+      "seconds": 9.03,
       "sources": "all"
     },
     {
       "step": "features",
       "status": "ok",
-      "seconds": 0.34,
+      "seconds": 0.47,
       "kind": "eia_api_v2",
       "is_real": true,
       "panel": {
-        "rows": 17589,
+        "rows": 19720,
         "start_utc": "2024-08-01T21:00:00+00:00",
-        "end_utc": "2026-08-04T17:00:00+00:00",
+        "end_utc": "2026-11-01T12:00:00+00:00",
         "missing_demand_hours": 0,
         "has_temperature": true,
         "has_weather_forecast": true
@@ -91,7 +91,7 @@
     {
       "step": "score",
       "status": "ok",
-      "seconds": 5.48,
+      "seconds": 5.65,
       "served_model": {
         "source": "mlflow_registry",
         "uri": "models:/energy-demand-forecaster@champion",
@@ -115,27 +115,27 @@
       "rows": {
         "train": 66020,
         "reference": 1344,
-        "current": 220
+        "current": 8740
       }
     },
     {
       "step": "forecast",
       "status": "ok",
-      "seconds": 0.35,
-      "history_points": 400,
+      "seconds": 0.33,
+      "history_points": 505,
       "forward_points": 24
     },
     {
       "step": "monitor",
       "status": "ok",
-      "seconds": 0.21,
+      "seconds": 0.31,
       "severity": "ok",
-      "days": 17
+      "days": 106
     },
     {
       "step": "drift",
       "status": "ok",
-      "seconds": 5.84,
+      "seconds": 7.18,
       "action": "watch",
       "should_retrain": false,
       "signals": {
